@@ -1,0 +1,118 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ============================================================ */
+/* DS-11 — CSS Variable Contract (PRD v1.4 Design System)      */
+/* Light mode defaults on :root; dark mode on [data-theme=dark] */
+/* ============================================================ */
+
+:root {
+  /* Backgrounds */
+  --color-bg-primary: #FBFBFD;
+  --color-bg-elevated: #FFFFFF;
+  --color-bg-subtle: #F5F5F7;
+
+  /* Text */
+  --color-text-primary: #1D1D1F;
+  --color-text-secondary: #6E6E73;
+  --color-text-tertiary: #86868B;
+
+  /* Structure */
+  --color-hairline: rgba(0, 0, 0, 0.08);
+
+  /* Accents */
+  --color-accent-default: #D4920A;
+  --color-accent: var(--color-accent-default);
+
+  /* Semantic */
+  --color-success: #34C759;
+  --color-warning: #FF9F0A;
+  --color-danger: #FF3B30;
+
+  /* Shadow */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 2px 8px rgba(0, 0, 0, 0.04);
+
+  /* Radius */
+  --radius-input: 8px;
+  --radius-card: 12px;
+  --radius-modal: 16px;
+
+  /* Transitions */
+  --transition-default: 200ms ease-out;
+  --transition-slow: 300ms ease-out;
+
+  /* Typography */
+  --font-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+                  'Helvetica Neue', Arial, sans-serif;
+  --font-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text',
+               'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Monaco', Consolas, monospace;
+}
+
+[data-theme='dark'] {
+  --color-bg-primary: #1C1C1E;
+  --color-bg-elevated: #2C2C2E;
+  --color-bg-subtle: #3A3A3C;
+  --color-text-primary: #F5F5F7;
+  --color-text-secondary: #AEAEB2;
+  --color-text-tertiary: #6E6E73;
+  --color-hairline: rgba(255, 255, 255, 0.1);
+  --shadow-card: none;
+}
+
+/* ============================================================ */
+/* Base styles                                                   */
+/* ============================================================ */
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
+  font-family: var(--font-text);
+  font-size: 15px;
+  font-weight: 400;
+  line-height: 1.47;
+  letter-spacing: -0.003em;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  margin: 0;
+  color: var(--color-text-primary);
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--color-text-primary);
+}
+
+/* ============================================================ */
+/* Focus-visible rings — accent-colored, no glow                 */
+/* ============================================================ */
+
+*:focus {
+  outline: none;
+}
+
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-input);
+}
