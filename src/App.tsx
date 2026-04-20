@@ -6,11 +6,13 @@ import { LoginScreen } from '@/components/LoginScreen'
 import { TenantPickerModal } from '@/components/TenantPickerModal'
 import { NavBar } from '@/components/NavBar'
 import { Banner } from '@/components/Banner'
-import { OverviewPlaceholder } from '@/components/OverviewPlaceholder'
+import { Dashboard } from '@/components/Dashboard'
+import { AdminPanel } from '@/components/AdminPanel'
 
 export default function App() {
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
+  const [adminOpen, setAdminOpen] = useState(false)
 
   const currentUser = useStore((s) => s.currentUser)
   const setCurrentUser = useStore((s) => s.setCurrentUser)
@@ -157,13 +159,22 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-bg-primary)' }}>
       <Banner />
-      <NavBar activeTab={activeTab} onTabChange={setActiveTab} />
+      <NavBar
+        activeTab={activeTab}
+        onTabChange={setActiveTab}
+        onOpenAdmin={() => setAdminOpen(true)}
+      />
 
       {/* Tenant picker blocks UI if needed (State B or C) */}
       <TenantPickerModal />
 
       {/* Main content — only renders when tenant is resolved */}
-      {tenantResolutionState === 'ready' && activeTenant && <OverviewPlaceholder />}
+      {tenantResolutionState === 'ready' && activeTenant && (
+        <Dashboard activeTab={activeTab} />
+      )}
+
+      {/* Admin panel overlay (SuperAdmin/Admin only) */}
+      {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {tenantResolutionState === 'loading' && (
         <div

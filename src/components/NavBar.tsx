@@ -14,9 +14,10 @@ const TABS = [
 interface NavBarProps {
   activeTab: string
   onTabChange: (tab: string) => void
+  onOpenAdmin?: () => void
 }
 
-export function NavBar({ activeTab, onTabChange }: NavBarProps) {
+export function NavBar({ activeTab, onTabChange, onOpenAdmin }: NavBarProps) {
   const currentUser = useStore((s) => s.currentUser)
   const activeTenant = useStore((s) => s.activeTenant)
   const clearActiveTenant = useStore((s) => s.clearActiveTenant)
@@ -110,6 +111,25 @@ export function NavBar({ activeTab, onTabChange }: NavBarProps) {
             {activeTenant.name}
             {isAdminOrSuperAdmin && ' ·'}
           </span>
+        )}
+
+        {/* Admin button */}
+        {isAdminOrSuperAdmin && onOpenAdmin && (
+          <button
+            onClick={onOpenAdmin}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-text-primary)',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              padding: '0',
+              fontFamily: 'inherit',
+            }}
+          >
+            Admin
+          </button>
         )}
 
         {/* Tenant switcher (Admin/SuperAdmin only) */}
