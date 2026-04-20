@@ -3,6 +3,7 @@ import { Modal } from '@/components/Modal'
 import { Button } from '@/components/Button'
 import { Field, TextInput, TextArea } from '@/components/FormInputs'
 import { supabase } from '@/lib/supabase'
+import { fetchJson } from '@/lib/fetchJson'
 import type { SourceBucket, SourceType } from '@/lib/types'
 
 type Mode = 'fetch' | 'paste' | 'upload' | 'highergov'
@@ -173,14 +174,13 @@ function WebsiteFetcher({
     setLoading(true)
     setErr(null)
     try {
-      const resp = await fetch('/.netlify/functions/fetch-website', {
+      const resp = await fetchJson<{ title: string; text: string }>('/.netlify/functions/fetch-website', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url }),
       })
-      const data = await resp.json()
-      if (!resp.ok) throw new Error(data.error || `${resp.status}`)
-      setPreview({ title: data.title || url, text: data.text })
+      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Fetch failed')
+      setPreview({ title: resp.data.title || url, text: resp.data.text })
     } catch (e: any) {
       setErr(e.message || 'Fetch failed')
     } finally {
@@ -259,14 +259,16 @@ function HigherGovFetcher({
     setLoading(true)
     setErr(null)
     try {
-      const resp = await fetch('/.netlify/functions/fetch-highergov', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(mode === 'uei' ? { uei } : { company_name: name }),
-      })
-      const data = await resp.json()
-      if (!resp.ok) throw new Error(data.error || `${resp.status}`)
-      setPreview({ summary: data.summary, awardCount: (data.awards || []).length })
+      const resp = await fetchJson<{ summary: string; awards?: any[] }>(
+        '/.netlify/functions/fetch-highergov',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(mode === 'uei' ? { uei } : { company_name: name }),
+        }
+      )
+      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Fetch failed')
+      setPreview({ summary: resp.data.summary, awardCount: (resp.data.awards || []).length })
     } catch (e: any) {
       setErr(e.message || 'Fetch failed')
     } finally {
@@ -400,96 +402,87 @@ function DocumentUploader({
   const [label, setLabel] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
-  const [preview, setPreview] = useState<{ text: string } | null>(null)
 
-  async function extract() {
+  async function uploadAndSave() {
     if (!file) return
     setLoading(true)
     setErr(null)
     try {
-      const base64 = await fileToBase64(file)
-      const resp = await fetch('/.netlify/functions/extract-pdf-text', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ filename: file.name, pdf_base64: base64 }),
+      // Unique path: tenantId/bucket/timestamp-filename
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
+      const path = `${tenantId}/${bucket}/${Date.now()}-${safeName}`
+
+      const { error: uploadErr } = await supabase.storage
+        .from('profile-documents')
+        .upload(path, file, {
+          contentType: file.type || 'application/pdf',
+          upsert: false,
+        })
+      if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`)
+
+      const { error: insertErr } = await supabase.from('profile_sources').insert({
+        tenant_id: tenantId,
+        bucket,
+        source_type: type,
+        label: label.trim() || file.name,
+        url: null,
+        // No extracted_text yet — it gets extracted server-side during profile synthesis
+        raw_content: null,
+        extracted_text: null,
+        metadata: {
+          filename: file.name,
+          size: file.size,
+          content_type: file.type,
+          storage_path: path,
+          storage_bucket: 'profile-documents',
+          needs_extraction: true,
+        },
+        fetched_at: new Date().toISOString(),
       })
-      const data = await resp.json()
-      if (!resp.ok) throw new Error(data.error || `${resp.status}`)
-      setPreview({ text: data.text })
-      if (!label) setLabel(file.name)
+      if (insertErr) throw new Error(`Save failed: ${insertErr.message}`)
+
+      onDone()
     } catch (e: any) {
-      setErr(e.message || 'Extract failed')
+      setErr(e.message || 'Upload failed')
     } finally {
       setLoading(false)
     }
   }
 
-  async function save() {
-    if (!preview || !file) return
-    setLoading(true)
-    await supabase.from('profile_sources').insert({
-      tenant_id: tenantId,
-      bucket,
-      source_type: type,
-      label: label || file.name,
-      extracted_text: preview.text,
-      metadata: { filename: file.name, size: file.size },
-      fetched_at: new Date().toISOString(),
-    })
-    setLoading(false)
-    onDone()
-  }
-
   return (
     <PanelContainer>
-      <Field label="File" hint="PDF, up to ~25MB">
+      <Field label="File" hint="PDF, up to ~25MB. Text will be extracted when you build the profile.">
         <input
           type="file"
           accept="application/pdf"
-          onChange={(e) => setFile(e.target.files?.[0] || null)}
+          onChange={(e) => {
+            const f = e.target.files?.[0] || null
+            setFile(f)
+            if (f && !label) setLabel(f.name.replace(/\.pdf$/i, ''))
+          }}
           style={{ fontSize: '13px', fontFamily: 'inherit' }}
         />
       </Field>
-      {file && !preview && (
+      {file && (
         <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
           Selected: {file.name} ({(file.size / 1024).toFixed(0)} KB)
         </div>
       )}
+      {file && (
+        <Field label="Label">
+          <TextInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder={file.name} />
+        </Field>
+      )}
       {err && <ErrorLine msg={err} />}
 
-      {!preview ? (
-        <FooterRow>
-          <Button variant="secondary" onClick={onBack}>Back</Button>
-          <Button onClick={extract} disabled={!file || loading}>
-            {loading ? 'Extracting…' : 'Extract text'}
-          </Button>
-        </FooterRow>
-      ) : (
-        <>
-          <Field label="Label">
-            <TextInput value={label} onChange={(e) => setLabel(e.target.value)} />
-          </Field>
-          <Preview title={label || file?.name || 'Document'} text={preview.text} />
-          <FooterRow>
-            <Button variant="secondary" onClick={() => setPreview(null)}>Re-extract</Button>
-            <Button onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save source'}</Button>
-          </FooterRow>
-        </>
-      )}
+      <FooterRow>
+        <Button variant="secondary" onClick={onBack}>Back</Button>
+        <Button onClick={uploadAndSave} disabled={!file || loading}>
+          {loading ? 'Uploading…' : 'Upload & save'}
+        </Button>
+      </FooterRow>
     </PanelContainer>
   )
-}
-
-function fileToBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      resolve(result.split(',')[1])
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(file)
-  })
 }
 
 /* -------------------------------------------------------------------------- */

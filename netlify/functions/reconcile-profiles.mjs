@@ -24,17 +24,20 @@ export const handler = async (event) => {
     .replace(/\{\{federal_profile\}\}/g, federal_profile_text || '(no federal profile built yet — company may not be federally registered)')
 
   try {
-    const { text } = await callClaude(prompt, { maxTokens: 6000 })
+    const { text } = await callClaude(prompt, { maxTokens: 8000 })
     const structured = extractJsonBlock(text)
     const cleaned = text.replace(/```json[\s\S]*?```/i, '').trim()
 
     // Parse sections by header
     const sections = splitSections(cleaned)
 
+    // For framework mode, the standard reconcile sections won't all match,
+    // so the full cleaned narrative is also returned for the UI to display.
     return json(200, {
       alignment: sections.alignment || '',
       divergence: sections.divergence || '',
       suggestions: sections.suggestions || '',
+      narrative: cleaned,
       structured,
       raw_text: text,
     })

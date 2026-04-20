@@ -6,6 +6,33 @@
 [build.environment]
   NODE_VERSION = "20"
 
+# Function-level config — Claude synthesis functions need longer timeouts
+# Paid plan allows up to 900s (background function limit). These are synchronous
+# invocations so we stay well under, but raise above the 10s free-tier default.
+[functions]
+  node_bundler = "esbuild"
+
+[functions."build-commercial-profile"]
+  timeout = 120
+
+[functions."build-federal-profile"]
+  timeout = 120
+
+[functions."reconcile-profiles"]
+  timeout = 120
+
+[functions."extract-pdf-text"]
+  timeout = 120
+
+[functions."fetch-highergov"]
+  timeout = 60
+
+[functions."fetch-website"]
+  timeout = 60
+
+[functions."claude-enrich"]
+  timeout = 120
+
 # SPA routing — all unknown routes fall through to index.html
 [[redirects]]
   from = "/*"

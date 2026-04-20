@@ -36,6 +36,7 @@ export interface Tenant {
   id: string                    // slug
   name: string
   status: 'active' | 'inactive'
+  federal_posture: 'unknown' | 'has_federal' | 'no_federal'
   client_logo_url: string | null
   client_color: string          // defaults to #D4920A
   cobrand_name: string | null
@@ -177,6 +178,7 @@ export interface FederalProfile {
 export interface Reconciliation {
   id: string
   tenant_id: string
+  mode: 'reconcile' | 'framework'
   alignment: string | null
   divergence: string | null
   suggestions: string | null
