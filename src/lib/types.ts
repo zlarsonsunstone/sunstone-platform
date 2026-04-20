@@ -112,3 +112,93 @@ export type BannerState =
   | { kind: 'none' }
   | { kind: 'tenant-view'; tenantName: string; actorName: string }
   | { kind: 'impersonation'; impersonatedUserName: string; tenantName: string }
+
+// ============================================================
+// Profile Architecture (PRD v1.5 — commercial/federal/reconciliation/strategic)
+// ============================================================
+
+export type SourceBucket = 'commercial' | 'federal'
+
+export type SourceType =
+  | 'website'
+  | 'linkedin'
+  | 'press_release'
+  | 'uploaded_doc'
+  | 'free_text'
+  | 'highergov'
+  | 'sam_gov'
+  | 'sba_dsbs'
+  | 'usaspending'
+  | 'gsa_elibrary'
+  | 'cape_statement'
+
+export interface ProfileSource {
+  id: string
+  tenant_id: string
+  bucket: SourceBucket
+  source_type: SourceType
+  label: string
+  url: string | null
+  raw_content: string | null
+  extracted_text: string | null
+  metadata: Record<string, any> | null
+  fetched_at: string | null
+  created_at: string
+  created_by: string | null
+}
+
+export interface CommercialProfile {
+  id: string
+  tenant_id: string
+  synthesized_text: string | null
+  structured_data: Record<string, any> | null
+  last_built_at: string | null
+  source_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface FederalProfile {
+  id: string
+  tenant_id: string
+  synthesized_text: string | null
+  structured_data: Record<string, any> | null
+  naics_codes: string[] | null
+  certifications: string[] | null
+  psc_codes: string[] | null
+  uei: string | null
+  cage: string | null
+  last_built_at: string | null
+  source_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface Reconciliation {
+  id: string
+  tenant_id: string
+  alignment: string | null
+  divergence: string | null
+  suggestions: string | null
+  structured_data: Record<string, any> | null
+  version: number
+  last_built_at: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface StrategicProfile {
+  id: string
+  tenant_id: string
+  name: string
+  description: string | null
+  positioning: string | null
+  target_agencies: string[] | null
+  target_naics: string[] | null
+  target_psc: string[] | null
+  is_default: boolean
+  created_at: string
+  updated_at: string
+  created_by: string | null
+  deleted_at: string | null
+}

@@ -5,6 +5,10 @@ import type {
   Tenant,
   TenantResolutionState,
   BannerState,
+  CommercialProfile,
+  FederalProfile,
+  Reconciliation,
+  StrategicProfile,
 } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 
@@ -31,6 +35,13 @@ interface StoreState {
   // Impersonation
   impersonatedUserId: string | null
 
+  // Profile architecture (v1.5)
+  commercialProfile: CommercialProfile | null
+  federalProfile: FederalProfile | null
+  reconciliation: Reconciliation | null
+  strategicProfiles: StrategicProfile[]
+  activeStrategicProfileId: string | null
+
   // Actions
   setCurrentUser: (user: User | null) => void
   setActiveTenant: (tenantId: string) => Promise<void>
@@ -39,6 +50,8 @@ interface StoreState {
   loadAvailableTenants: () => Promise<void>
   startImpersonation: (userId: string, userName: string, tenantName: string) => void
   stopImpersonation: () => void
+  loadProfileData: (tenantId: string) => Promise<void>
+  setActiveStrategicProfile: (id: string | null) => void
 }
 
 export const useStore = create<StoreState>()(
@@ -51,6 +64,13 @@ export const useStore = create<StoreState>()(
       availableTenants: [],
       banner: { kind: 'none' },
       impersonatedUserId: null,
+
+      // Profile architecture initial state
+      commercialProfile: null,
+      federalProfile: null,
+      reconciliation: null,
+      strategicProfiles: [],
+      activeStrategicProfileId: null,
 
       setCurrentUser: (user) => {
         set({ currentUser: user })
@@ -104,6 +124,9 @@ export const useStore = create<StoreState>()(
             },
           })
         }
+
+        // Load profile data (commercial/federal/reconciliation/strategic)
+        await get().loadProfileData(tenantId)
       },
 
       clearActiveTenant: () => {
@@ -112,6 +135,11 @@ export const useStore = create<StoreState>()(
           activeTenant: null,
           tenantResolutionState: 'needs-picker',
           banner: { kind: 'none' },
+          commercialProfile: null,
+          federalProfile: null,
+          reconciliation: null,
+          strategicProfiles: [],
+          activeStrategicProfileId: null,
         })
         // Reset accent color to default
         document.documentElement.style.removeProperty('--color-accent')
@@ -207,11 +235,51 @@ export const useStore = create<StoreState>()(
           set({ banner: { kind: 'none' } })
         }
       },
+
+      loadProfileData: async (tenantId: string) => {
+        const [cp, fp, rec, sp] = await Promise.all([
+          supabase.from('commercial_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
+          supabase.from('federal_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
+          supabase
+            .from('reconciliation')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .order('version', { ascending: false })
+            .limit(1)
+            .maybeSingle(),
+          supabase
+            .from('strategic_profiles')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .is('deleted_at', null)
+            .order('is_default', { ascending: false })
+            .order('created_at'),
+        ])
+        const strategicProfiles = (sp.data as StrategicProfile[]) || []
+        const existingActive = get().activeStrategicProfileId
+        const defaultStrat =
+          strategicProfiles.find((s) => s.id === existingActive) ||
+          strategicProfiles.find((s) => s.is_default) ||
+          strategicProfiles[0] ||
+          null
+        set({
+          commercialProfile: (cp.data as CommercialProfile) || null,
+          federalProfile: (fp.data as FederalProfile) || null,
+          reconciliation: (rec.data as Reconciliation) || null,
+          strategicProfiles,
+          activeStrategicProfileId: defaultStrat?.id || null,
+        })
+      },
+
+      setActiveStrategicProfile: (id: string | null) => set({ activeStrategicProfileId: id }),
     }),
     {
       name: 'sunstone.store',
-      // Only persist tenant selection — NOT user, NOT banner, NOT impersonation
-      partialize: (state) => ({ activeTenantId: state.activeTenantId }),
+      // Only persist tenant selection and strategic profile — NOT user, NOT banner, NOT impersonation
+      partialize: (state) => ({
+        activeTenantId: state.activeTenantId,
+        activeStrategicProfileId: state.activeStrategicProfileId,
+      }),
     }
   )
 )
