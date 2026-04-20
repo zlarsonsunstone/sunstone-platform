@@ -46,3 +46,4 @@ After migration: add `v2` to exposed schemas in Project Settings > API.
 - Placeholder dashboard shell
 
 Features land progressively per PRD v1.4 Application Structure section.
+
