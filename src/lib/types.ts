@@ -252,3 +252,28 @@ export interface SearchScope {
   updated_at: string
   deleted_at: string | null
 }
+
+// ============================================================
+// Round 1 Keyword Bank (picked from dataset analysis)
+// ============================================================
+
+export interface Round1Keyword {
+  id: string
+  tenant_id: string
+  phrase: string
+  dollar_volume: number | null
+  award_count: number | null
+  avg_contract: number | null
+  relevance_score: number | null
+  relevance_rationale: string | null
+  claude_context: string | null
+  source_scope_id: string | null
+  source_scope_tag: string | null
+  source_session_id: string | null
+  notes: string | null
+  picked_by: string | null
+  picked_at: string
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}

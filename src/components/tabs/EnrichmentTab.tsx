@@ -193,7 +193,7 @@ export function EnrichmentTab() {
       setSelectedScopeId('')
 
       // Auto-trigger market analysis for the new session
-      runMarketAnalysis(session)
+      runKeywordAnalysis(session)
     } catch (err: any) {
       setError(err?.message || 'Upload failed')
       setUploading(false)
@@ -207,14 +207,18 @@ export function EnrichmentTab() {
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  const runMarketAnalysis = async (session: SessionRow) => {
+  const runKeywordAnalysis = async (session: SessionRow) => {
     if (!tenant) return
+    if (!commercialProfile?.synthesized_text) {
+      setError('Build the commercial profile on the Onboard tab before running keyword analysis.')
+      return
+    }
     setAnalyzing(true)
     setError(null)
     try {
       const { data: allRecords } = await supabase
         .from('enrichment_records')
-        .select('awardee, agency, obligated, description, naics_code, contract_number')
+        .select('obligated, description')
         .eq('session_id', session.session_id)
         .is('deleted_at', null)
 
@@ -224,104 +228,74 @@ export function EnrichmentTab() {
         return
       }
 
-      // Prepare the corpus. If it's huge, truncate each description to 400 chars
-      // so we fit inside a sensible prompt budget.
-      const lines: string[] = allRecords.map((r: any) => {
-        const desc = (r.description || '').slice(0, 400)
-        const val = typeof r.obligated === 'number' ? r.obligated : 0
-        return `[$${val.toLocaleString()}] agency=${r.agency || '?'} | awardee=${r.awardee || '?'} | NAICS=${r.naics_code || '?'} :: ${desc}`
-      })
-
-      // Compute total + top-level stats in JS (cheaper, more accurate)
+      // Compute total dollars in JS for the prompt header
       const totalDollars = allRecords.reduce((sum: number, r: any) => {
         return sum + (typeof r.obligated === 'number' ? r.obligated : 0)
       }, 0)
 
-      // Vendor and agency concentration (computed in JS for accuracy)
-      const vendorMap: Record<string, { count: number; dollars: number }> = {}
-      const agencyMap: Record<string, { count: number; dollars: number }> = {}
-      const naicsMap: Record<string, { count: number; dollars: number }> = {}
-      for (const r of allRecords as any[]) {
-        const v = typeof r.obligated === 'number' ? r.obligated : 0
-        if (r.awardee) {
-          const key = r.awardee.trim()
-          if (!vendorMap[key]) vendorMap[key] = { count: 0, dollars: 0 }
-          vendorMap[key].count += 1
-          vendorMap[key].dollars += v
-        }
-        if (r.agency) {
-          const key = r.agency.trim()
-          if (!agencyMap[key]) agencyMap[key] = { count: 0, dollars: 0 }
-          agencyMap[key].count += 1
-          agencyMap[key].dollars += v
-        }
-        if (r.naics_code) {
-          const key = String(r.naics_code).trim()
-          if (!naicsMap[key]) naicsMap[key] = { count: 0, dollars: 0 }
-          naicsMap[key].count += 1
-          naicsMap[key].dollars += v
-        }
-      }
+      // Prepare the corpus — truncate long descriptions to keep prompt bounded
+      const lines: string[] = allRecords.map((r: any) => {
+        const desc = (r.description || '').slice(0, 500)
+        const val = typeof r.obligated === 'number' ? r.obligated : 0
+        return `[$${val.toLocaleString()}] ${desc}`
+      })
 
-      const topVendors = Object.entries(vendorMap)
-        .map(([name, s]) => ({ name, count: s.count, dollars: s.dollars }))
-        .sort((a, b) => b.dollars - a.dollars)
-        .slice(0, 25)
+      // If dataset is large, cap at 600 records in the prompt. We're asking Claude
+      // to extract phrase frequency patterns, not parse every row — a representative
+      // sample works fine and keeps us well under context limits.
+      const sampleSize = Math.min(lines.length, 600)
+      const corpusSample = lines.slice(0, sampleSize).join('\n')
 
-      const topAgencies = Object.entries(agencyMap)
-        .map(([name, s]) => ({ name, count: s.count, dollars: s.dollars }))
-        .sort((a, b) => b.dollars - a.dollars)
-        .slice(0, 15)
+      const prompt = `You are analyzing a federal contract dataset to extract candidate Round 1 search keywords for ${tenant.name}.
 
-      const topNaics = Object.entries(naicsMap)
-        .map(([code, s]) => ({ code, count: s.count, dollars: s.dollars }))
-        .sort((a, b) => b.dollars - a.dollars)
-        .slice(0, 12)
+## ABOUT ${tenant.name.toUpperCase()}
+${commercialProfile.synthesized_text}
 
-      // Claude call: value-weighted phrase extraction
-      const corpusSample = lines.slice(0, 400).join('\n')  // cap at 400 records to keep prompt bounded
+## DATASET
+${allRecords.length.toLocaleString()} contract records. Total obligated: $${totalDollars.toLocaleString()}.
+${lines.length > sampleSize ? `(Showing ${sampleSize.toLocaleString()} representative records — phrase frequency patterns are consistent across the full dataset.)` : ''}
 
-      const prompt = `You are analyzing a federal contract dataset for market intelligence. The goal is to surface the vocabulary and concentration patterns that a federal contracting officer or capture manager would find useful — in the language those officers actually use in SOWs.
-
-DATASET: ${allRecords.length} contract records. Total obligated: $${totalDollars.toLocaleString()}.
-${lines.length > 400 ? `(Analyzing first 400 records; same distribution applies.)` : ''}
-
-Each line below is one contract: [dollar value] agency | awardee | NAICS :: description
+Each line below is one contract: [dollar value] description
 
 ${corpusSample}
 
-EXTRACT VALUE-WEIGHTED PHRASES from the contract descriptions. Phrases should be:
-- 1-3 words each, in the language contracting officers used (not marketing language)
-- Specific enough to be useful as Round 2 search terms
-- NOT generic filler ("services", "support", "contract")
-- NOT vendor or agency names
-- NOT PSC labels or NAICS labels
+## TASK
+Extract candidate search keywords from the contract descriptions — phrases a contracting officer would use in SOW language. For each phrase, provide:
 
-For each phrase, estimate:
-- dollar_volume: approximate total contract dollars associated with records containing this phrase
-- count: approximate number of contracts containing this phrase
-- avg_contract: dollar_volume / count
-- context: 1 short sentence on what kind of work this phrase signals
+1. **Value-weighted frequency data:**
+   - \`dollar_volume\`: total contract dollars across records containing this phrase
+   - \`count\`: number of contracts containing this phrase
+   - \`avg_contract\`: dollar_volume / count
+   - \`context\`: 1 short sentence on what kind of work this phrase signals
 
-Return 20-30 phrases ranked by dollar_volume descending.
+2. **Relevance score to ${tenant.name} (1-10):**
+   - 10 = perfect capability match, direct bullseye
+   - 8-9 = strong match, core capability applies
+   - 6-7 = clear adjacent application
+   - 4-5 = tangentially relevant, would need positioning work
+   - 1-3 = weak match, unlikely fit
+   - Include a \`relevance_rationale\`: 1 sentence on why this score
 
-Also provide:
-- headline_insight: 2-3 sentences summarizing the key takeaway from the dataset — where the money is flowing, what's surprising, what stands out
-- market_shape: 1-2 sentences on concentration — is this a few giant contracts or many small ones? Is it vendor-concentrated or fragmented?
+Rules:
+- Phrases must be 1-3 words
+- Use contracting-officer language from the actual descriptions, not marketing terms
+- NO vendor names, agency names, NAICS/PSC labels, or generic filler ("services", "support")
+- Return 30-50 phrases so the user has a strong list to pick from
+- Score relevance honestly — low scores are fine and informative, don't inflate
 
 Return ONLY valid JSON in a \`\`\`json block, no other text:
 
 \`\`\`json
 {
-  "headline_insight": "...",
-  "market_shape": "...",
   "phrases": [
     {
       "phrase": "...",
       "dollar_volume": 12500000,
       "count": 15,
       "avg_contract": 833333,
-      "context": "..."
+      "context": "...",
+      "relevance_score": 8,
+      "relevance_rationale": "..."
     }
   ]
 }
@@ -329,21 +303,32 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
-        maxTokens: 4000,
+        maxTokens: 6000,
       })
 
       const parsed = extractJsonBlock(text)
-      if (!parsed) throw new Error('Market analysis returned no parseable output')
+      if (!parsed || !Array.isArray(parsed.phrases)) {
+        throw new Error('Keyword analysis returned no parseable output')
+      }
+
+      // Normalize and clamp each phrase
+      const normalized = parsed.phrases.map((p: any) => ({
+        phrase: String(p.phrase || '').trim(),
+        dollar_volume: typeof p.dollar_volume === 'number' ? p.dollar_volume : 0,
+        count: typeof p.count === 'number' ? p.count : 0,
+        avg_contract: typeof p.avg_contract === 'number' ? p.avg_contract : 0,
+        context: p.context || '',
+        relevance_score:
+          typeof p.relevance_score === 'number'
+            ? Math.max(1, Math.min(10, Math.round(p.relevance_score)))
+            : null,
+        relevance_rationale: p.relevance_rationale || '',
+      })).filter((p: any) => p.phrase.length > 0)
 
       const analysis = {
         total_records: allRecords.length,
         total_dollars: totalDollars,
-        headline_insight: parsed.headline_insight || '',
-        market_shape: parsed.market_shape || '',
-        phrases: Array.isArray(parsed.phrases) ? parsed.phrases : [],
-        top_vendors: topVendors,
-        top_agencies: topAgencies,
-        top_naics: topNaics,
+        phrases: normalized,
       }
 
       await supabase
@@ -355,7 +340,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         .eq('session_id', session.session_id)
 
       await loadSessions()
-      // Reload active session's records so the UI picks up the new market_analysis
+      // Reload active session to pick up the new analysis
       const { data: updatedSession } = await supabase
         .from('enrichment_sessions')
         .select('*')
@@ -366,8 +351,39 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       }
       setAnalyzing(false)
     } catch (err: any) {
-      setError(err?.message || 'Market analysis failed')
+      setError(err?.message || 'Keyword analysis failed')
       setAnalyzing(false)
+    }
+  }
+
+  async function saveKeywordsToBank(phrases: any[], session: SessionRow) {
+    if (!tenant || phrases.length === 0) return
+    const scopeId = (session.source_scope_ids && session.source_scope_ids[0]) || null
+    const scopeTag = (session.source_scope_tags && session.source_scope_tags[0]) || null
+
+    const inserts = phrases.map((p: any) => ({
+      tenant_id: tenant.id,
+      phrase: p.phrase,
+      dollar_volume: p.dollar_volume || null,
+      award_count: p.count || null,
+      avg_contract: p.avg_contract || null,
+      relevance_score: p.relevance_score || null,
+      relevance_rationale: p.relevance_rationale || null,
+      claude_context: p.context || null,
+      source_scope_id: scopeId,
+      source_scope_tag: scopeTag,
+      source_session_id: session.session_id,
+    }))
+
+    // Use upsert-style insert with onConflict on (tenant_id, phrase)
+    // If a keyword already picked, silently skip (user can see it in bank anyway)
+    const { error: insertError } = await supabase
+      .from('round_1_keywords')
+      .upsert(inserts, { onConflict: 'tenant_id,phrase', ignoreDuplicates: true })
+
+    if (insertError) {
+      setError(`Failed to save keywords: ${insertError.message}`)
+      return
     }
   }
 
@@ -593,12 +609,13 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         </div>
       )}
 
-      {/* Market Analysis panel */}
+      {/* Keyword Analysis panel */}
       {activeSession && (activeSession.market_analysis || analyzing) && (
-        <MarketAnalysisPanel
+        <KeywordAnalysisPanel
           session={activeSession}
           analyzing={analyzing}
-          onRerun={() => runMarketAnalysis(activeSession)}
+          onRerun={() => runKeywordAnalysis(activeSession)}
+          onSaveKeywords={(phrases) => saveKeywordsToBank(phrases, activeSession)}
         />
       )}
 
@@ -618,14 +635,14 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         >
           <div>
             <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '4px' }}>
-              Market analysis not run yet
+              Keyword analysis not run yet
             </div>
             <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-              Extract value-weighted phrases, top vendors, top agencies, and NAICS distribution from this dataset.
+              Extract candidate Round 1 keywords from the contract descriptions, weighted by dollar volume and scored for relevance to {tenant.name}.
             </div>
           </div>
-          <Button size="small" onClick={() => runMarketAnalysis(activeSession)}>
-            Run market analysis
+          <Button size="small" onClick={() => runKeywordAnalysis(activeSession)}>
+            Run keyword analysis
           </Button>
         </div>
       )}
@@ -1302,16 +1319,42 @@ function ScopeOption({
 /* Market Analysis Panel                                                      */
 /* ========================================================================== */
 
-function MarketAnalysisPanel({
+/* ========================================================================== */
+/* Keyword Analysis Panel                                                     */
+/* ========================================================================== */
+
+interface KeywordPhrase {
+  phrase: string
+  dollar_volume: number
+  count: number
+  avg_contract: number
+  context: string
+  relevance_score: number | null
+  relevance_rationale: string
+}
+
+type KeywordSortKey = 'relevance' | 'dollars' | 'count' | 'avg' | 'phrase'
+
+function KeywordAnalysisPanel({
   session,
   analyzing,
   onRerun,
+  onSaveKeywords,
 }: {
   session: SessionRow
   analyzing: boolean
   onRerun: () => void
+  onSaveKeywords: (phrases: KeywordPhrase[]) => Promise<void>
 }) {
   const analysis = session.market_analysis
+  const allPhrases: KeywordPhrase[] = analysis?.phrases || []
+
+  const [sortKey, setSortKey] = useState<KeywordSortKey>('relevance')
+  const [sortDesc, setSortDesc] = useState(true)
+  const [selectedPhrases, setSelectedPhrases] = useState<Set<string>>(new Set())
+  const [minRelevance, setMinRelevance] = useState<number>(1)
+  const [saving, setSaving] = useState(false)
+  const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   if (analyzing) {
     return (
@@ -1326,10 +1369,10 @@ function MarketAnalysisPanel({
         }}
       >
         <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
-          Running market analysis…
+          Analyzing dataset…
         </div>
         <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-          Extracting value-weighted phrases, ranking vendors and agencies, computing NAICS distribution. ~30 seconds.
+          Reading contract descriptions, weighting by dollar value, scoring relevance. ~30-60 seconds.
         </div>
       </div>
     )
@@ -1337,13 +1380,76 @@ function MarketAnalysisPanel({
 
   if (!analysis) return null
 
+  // Apply filters and sort
+  const filtered = allPhrases.filter((p) => (p.relevance_score ?? 0) >= minRelevance)
+  const sorted = [...filtered].sort((a, b) => {
+    let cmp = 0
+    switch (sortKey) {
+      case 'relevance':
+        cmp = (a.relevance_score ?? 0) - (b.relevance_score ?? 0)
+        break
+      case 'dollars':
+        cmp = (a.dollar_volume || 0) - (b.dollar_volume || 0)
+        break
+      case 'count':
+        cmp = (a.count || 0) - (b.count || 0)
+        break
+      case 'avg':
+        cmp = (a.avg_contract || 0) - (b.avg_contract || 0)
+        break
+      case 'phrase':
+        cmp = a.phrase.localeCompare(b.phrase)
+        break
+    }
+    return sortDesc ? -cmp : cmp
+  })
+
+  const toggleSort = (key: KeywordSortKey) => {
+    if (sortKey === key) {
+      setSortDesc(!sortDesc)
+    } else {
+      setSortKey(key)
+      setSortDesc(true)
+    }
+  }
+
+  const togglePhrase = (phrase: string) => {
+    const next = new Set(selectedPhrases)
+    if (next.has(phrase)) next.delete(phrase)
+    else next.add(phrase)
+    setSelectedPhrases(next)
+  }
+
+  const selectAllVisible = () => {
+    setSelectedPhrases(new Set(sorted.map((p) => p.phrase)))
+  }
+
+  const clearSelection = () => setSelectedPhrases(new Set())
+
+  const handleSave = async () => {
+    setSaving(true)
+    setSaveMessage(null)
+    const toSave = sorted.filter((p) => selectedPhrases.has(p.phrase))
+    try {
+      await onSaveKeywords(toSave)
+      setSaveMessage(`Saved ${toSave.length} keyword${toSave.length === 1 ? '' : 's'} to Round 1 bank`)
+      setSelectedPhrases(new Set())
+      setTimeout(() => setSaveMessage(null), 4000)
+    } catch (err: any) {
+      setSaveMessage(`Error: ${err.message || 'save failed'}`)
+    }
+    setSaving(false)
+  }
+
+  const selectedCount = selectedPhrases.size
+
   return (
     <div style={{ marginBottom: '32px' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '16px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <h2 style={{ fontSize: '22px', fontWeight: 600, margin: 0 }}>Market analysis</h2>
+            <h2 style={{ fontSize: '22px', fontWeight: 600, margin: 0 }}>Round 1 keyword candidates</h2>
             {session.source_scope_tags && session.source_scope_tags.length > 0 && (
               <code style={{ fontSize: '11px', padding: '2px 8px', background: 'var(--color-bg-subtle)', borderRadius: '4px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
                 #{session.source_scope_tags[0]}
@@ -1351,217 +1457,274 @@ function MarketAnalysisPanel({
             )}
           </div>
           <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-            {analysis.total_records?.toLocaleString() || '?'} records · ${(analysis.total_dollars || 0).toLocaleString()} total obligated
-            {session.market_analysis_at && ` · Analyzed ${new Date(session.market_analysis_at).toLocaleString()}`}
+            Extracted from {analysis.total_records?.toLocaleString() || '?'} records · ${(analysis.total_dollars || 0).toLocaleString()} total · {allPhrases.length} candidate phrases
+            {session.market_analysis_at && ` · ${new Date(session.market_analysis_at).toLocaleString()}`}
           </div>
         </div>
         <Button variant="secondary" size="small" onClick={onRerun}>
-          Re-run
+          Re-analyze
         </Button>
       </div>
 
-      {/* Headline insight + market shape */}
-      {(analysis.headline_insight || analysis.market_shape) && (
-        <Card padding="large">
-          {analysis.headline_insight && (
-            <div style={{ marginBottom: analysis.market_shape ? '12px' : 0 }}>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
-                Headline insight
-              </div>
-              <div style={{ fontSize: '14px', color: 'var(--color-text-primary)', lineHeight: 1.6 }}>
-                {analysis.headline_insight}
-              </div>
-            </div>
-          )}
-          {analysis.market_shape && (
-            <div>
-              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '6px' }}>
-                Market shape
-              </div>
-              <div style={{ fontSize: '14px', color: 'var(--color-text-primary)', lineHeight: 1.6 }}>
-                {analysis.market_shape}
-              </div>
-            </div>
-          )}
-        </Card>
+      {/* Controls */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          marginBottom: '12px',
+          flexWrap: 'wrap',
+          padding: '12px 16px',
+          background: 'var(--color-bg-elevated)',
+          borderRadius: 'var(--radius-card)',
+          boxShadow: 'var(--shadow-card)',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Min relevance
+          </span>
+          <select
+            value={minRelevance}
+            onChange={(e) => setMinRelevance(parseInt(e.target.value, 10))}
+            style={{
+              fontSize: '13px',
+              padding: '4px 8px',
+              border: '1px solid var(--color-hairline)',
+              borderRadius: 'var(--radius-input)',
+              background: 'var(--color-bg-primary)',
+              color: 'var(--color-text-primary)',
+              fontFamily: 'inherit',
+              cursor: 'pointer',
+            }}
+          >
+            {[1, 3, 5, 7, 8, 9].map((n) => (
+              <option key={n} value={n}>
+                ≥ {n}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div style={{ flex: 1 }} />
+
+        {selectedCount > 0 && (
+          <span style={{ fontSize: '12px', color: 'var(--color-accent)', fontWeight: 500 }}>
+            {selectedCount} selected
+          </span>
+        )}
+
+        <Button variant="secondary" size="small" onClick={selectAllVisible} disabled={sorted.length === 0}>
+          Select all visible
+        </Button>
+        <Button variant="secondary" size="small" onClick={clearSelection} disabled={selectedCount === 0}>
+          Clear
+        </Button>
+        <Button size="small" onClick={handleSave} disabled={selectedCount === 0 || saving}>
+          {saving ? 'Saving…' : `Add ${selectedCount || ''} to Round 1`.trim()}
+        </Button>
+      </div>
+
+      {saveMessage && (
+        <div
+          style={{
+            fontSize: '12px',
+            color: 'var(--color-success)',
+            padding: '8px 14px',
+            marginBottom: '12px',
+            background: 'rgba(52,199,89,0.08)',
+            borderRadius: 'var(--radius-input)',
+            border: '1px solid rgba(52,199,89,0.2)',
+          }}
+        >
+          ✓ {saveMessage}
+        </div>
       )}
 
-      {/* Two-column grid: phrases + (vendors / agencies / naics stacked) */}
-      <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '16px', marginTop: '16px' }}>
-        <PhraseTable phrases={analysis.phrases || []} />
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-          <ConcentrationList
-            title="Top vendors"
-            items={(analysis.top_vendors || []).slice(0, 15)}
-            keyField="name"
-          />
-          <ConcentrationList
-            title="Top agencies"
-            items={(analysis.top_agencies || []).slice(0, 10)}
-            keyField="name"
-          />
-          <ConcentrationList
-            title="Top NAICS"
-            items={(analysis.top_naics || []).slice(0, 10)}
-            keyField="code"
-            mono
-          />
+      {/* Keyword table */}
+      <Card padding="standard">
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px',
+            gap: '8px',
+            padding: '10px 12px',
+            fontSize: '11px',
+            color: 'var(--color-text-tertiary)',
+            textTransform: 'uppercase',
+            letterSpacing: '0.04em',
+            borderBottom: '1px solid var(--color-hairline)',
+            alignItems: 'center',
+          }}
+        >
+          <span></span>
+          <SortHeader active={sortKey === 'phrase'} desc={sortDesc} onClick={() => toggleSort('phrase')}>
+            Phrase
+          </SortHeader>
+          <SortHeader active={sortKey === 'relevance'} desc={sortDesc} onClick={() => toggleSort('relevance')} align="right">
+            Relevance
+          </SortHeader>
+          <SortHeader active={sortKey === 'dollars'} desc={sortDesc} onClick={() => toggleSort('dollars')} align="right">
+            $ volume
+          </SortHeader>
+          <SortHeader active={sortKey === 'count'} desc={sortDesc} onClick={() => toggleSort('count')} align="right">
+            Count
+          </SortHeader>
+          <SortHeader active={sortKey === 'avg'} desc={sortDesc} onClick={() => toggleSort('avg')} align="right">
+            Avg
+          </SortHeader>
         </div>
-      </div>
+
+        {sorted.length === 0 ? (
+          <div style={{ padding: '40px', textAlign: 'center', fontSize: '13px', color: 'var(--color-text-tertiary)' }}>
+            No phrases meet the current filter.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column' }}>
+            {sorted.map((p, i) => (
+              <KeywordRow
+                key={`${p.phrase}-${i}`}
+                phrase={p}
+                selected={selectedPhrases.has(p.phrase)}
+                onToggle={() => togglePhrase(p.phrase)}
+              />
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   )
 }
 
-function PhraseTable({ phrases }: { phrases: any[] }) {
-  const [sortKey, setSortKey] = useState<'dollars' | 'count' | 'avg'>('dollars')
-
-  const sorted = [...phrases].sort((a, b) => {
-    switch (sortKey) {
-      case 'dollars':
-        return (b.dollar_volume || 0) - (a.dollar_volume || 0)
-      case 'count':
-        return (b.count || 0) - (a.count || 0)
-      case 'avg':
-        return (b.avg_contract || 0) - (a.avg_contract || 0)
-    }
-  })
-
-  return (
-    <Card padding="large">
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '12px' }}>
-        <h3 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>Value-weighted phrases</h3>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <SortMini active={sortKey === 'dollars'} onClick={() => setSortKey('dollars')}>$</SortMini>
-          <SortMini active={sortKey === 'count'} onClick={() => setSortKey('count')}>Count</SortMini>
-          <SortMini active={sortKey === 'avg'} onClick={() => setSortKey('avg')}>Avg</SortMini>
-        </div>
-      </div>
-
-      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginBottom: '8px', display: 'grid', gridTemplateColumns: '2.5fr 1fr 0.8fr 1fr', gap: '8px', padding: '0 4px' }}>
-        <span>Phrase</span>
-        <span style={{ textAlign: 'right' }}>$ volume</span>
-        <span style={{ textAlign: 'right' }}>Count</span>
-        <span style={{ textAlign: 'right' }}>Avg</span>
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column' }}>
-        {sorted.map((p, i) => (
-          <div
-            key={i}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '2.5fr 1fr 0.8fr 1fr',
-              gap: '8px',
-              padding: '8px 4px',
-              borderBottom: '0.5px solid var(--color-hairline)',
-              alignItems: 'baseline',
-              fontSize: '13px',
-            }}
-            title={p.context || ''}
-          >
-            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-              {p.phrase}
-            </span>
-            <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
-              {formatDollarsBrief(p.dollar_volume)}
-            </span>
-            <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
-              {p.count?.toLocaleString() || '—'}
-            </span>
-            <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', color: 'var(--color-text-tertiary)' }}>
-              {formatDollarsBrief(p.avg_contract)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </Card>
-  )
-}
-
-function ConcentrationList({
-  title,
-  items,
-  keyField,
-  mono,
-}: {
-  title: string
-  items: Array<{ name?: string; code?: string; count: number; dollars: number }>
-  keyField: 'name' | 'code'
-  mono?: boolean
-}) {
-  if (!items || items.length === 0) {
-    return (
-      <Card padding="standard">
-        <h4 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 8px 0' }}>{title}</h4>
-        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</div>
-      </Card>
-    )
-  }
-  const totalDollars = items.reduce((sum, i) => sum + (i.dollars || 0), 0)
-
-  return (
-    <Card padding="standard">
-      <h4 style={{ fontSize: '14px', fontWeight: 600, margin: '0 0 10px 0' }}>{title}</h4>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-        {items.map((item, i) => {
-          const pct = totalDollars > 0 ? (item.dollars / totalDollars) * 100 : 0
-          const label = item[keyField] || '?'
-          return (
-            <div key={i} style={{ fontSize: '12px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', marginBottom: '2px' }}>
-                <span
-                  style={{
-                    fontFamily: mono ? 'var(--font-mono)' : 'inherit',
-                    color: 'var(--color-text-primary)',
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    flex: 1,
-                  }}
-                  title={label}
-                >
-                  {label}
-                </span>
-                <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)', flexShrink: 0 }}>
-                  {formatDollarsBrief(item.dollars)}
-                </span>
-              </div>
-              <div style={{ background: 'var(--color-bg-subtle)', height: '3px', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ background: 'var(--color-accent)', height: '100%', width: `${pct}%` }} />
-              </div>
-            </div>
-          )
-        })}
-      </div>
-    </Card>
-  )
-}
-
-function SortMini({
+function SortHeader({
   active,
+  desc,
   onClick,
+  align = 'left',
   children,
 }: {
   active: boolean
+  desc: boolean
   onClick: () => void
+  align?: 'left' | 'right'
   children: React.ReactNode
 }) {
   return (
     <button
       onClick={onClick}
       style={{
+        background: 'transparent',
+        border: 'none',
+        padding: 0,
         fontSize: '11px',
-        padding: '3px 8px',
-        border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-hairline)'}`,
-        borderRadius: '4px',
-        background: active ? 'var(--color-accent)' : 'transparent',
-        color: active ? 'white' : 'var(--color-text-secondary)',
-        cursor: 'pointer',
         fontFamily: 'inherit',
+        color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+        textTransform: 'uppercase',
+        letterSpacing: '0.04em',
+        fontWeight: active ? 600 : 400,
+        textAlign: align,
+        cursor: 'pointer',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '3px',
+        justifyContent: align === 'right' ? 'flex-end' : 'flex-start',
       }}
     >
       {children}
+      {active && <span style={{ fontSize: '9px' }}>{desc ? '▼' : '▲'}</span>}
     </button>
+  )
+}
+
+function KeywordRow({
+  phrase,
+  selected,
+  onToggle,
+}: {
+  phrase: KeywordPhrase
+  selected: boolean
+  onToggle: () => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+
+  const rs = phrase.relevance_score
+  const relevanceColor = rs === null ? '#86868B' : rs >= 8 ? '#34C759' : rs >= 6 ? '#007AFF' : rs >= 4 ? '#D4920A' : '#FF3B30'
+  const relevanceBg = rs === null ? 'rgba(134,134,139,0.12)' : rs >= 8 ? 'rgba(52,199,89,0.12)' : rs >= 6 ? 'rgba(0,122,255,0.12)' : rs >= 4 ? 'rgba(212,146,10,0.12)' : 'rgba(255,59,48,0.12)'
+
+  return (
+    <div
+      style={{
+        borderBottom: '0.5px solid var(--color-hairline)',
+        background: selected ? 'rgba(var(--color-accent-rgb, 212, 146, 10), 0.04)' : 'transparent',
+      }}
+    >
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px',
+          gap: '8px',
+          padding: '10px 12px',
+          alignItems: 'center',
+          cursor: 'pointer',
+        }}
+        onClick={() => setExpanded(!expanded)}
+      >
+        <input
+          type="checkbox"
+          checked={selected}
+          onChange={(e) => {
+            e.stopPropagation()
+            onToggle()
+          }}
+          onClick={(e) => e.stopPropagation()}
+          style={{ cursor: 'pointer', width: '16px', height: '16px' }}
+        />
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500 }}>
+          {phrase.phrase}
+        </span>
+        <div style={{ textAlign: 'right' }}>
+          <span
+            style={{
+              display: 'inline-block',
+              padding: '2px 8px',
+              fontSize: '12px',
+              fontFamily: 'var(--font-mono)',
+              fontWeight: 600,
+              color: relevanceColor,
+              background: relevanceBg,
+              borderRadius: '4px',
+              minWidth: '36px',
+              textAlign: 'center',
+            }}
+          >
+            {rs !== null ? `${rs}/10` : '—'}
+          </span>
+        </div>
+        <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+          {formatDollarsBrief(phrase.dollar_volume)}
+        </span>
+        <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+          {phrase.count?.toLocaleString() || '—'}
+        </span>
+        <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+          {formatDollarsBrief(phrase.avg_contract)}
+        </span>
+      </div>
+      {expanded && (phrase.context || phrase.relevance_rationale) && (
+        <div style={{ padding: '0 12px 12px 60px', fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+          {phrase.context && (
+            <div style={{ marginBottom: phrase.relevance_rationale ? '6px' : 0 }}>
+              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>Context:</span> {phrase.context}
+            </div>
+          )}
+          {phrase.relevance_rationale && (
+            <div>
+              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>Why {phrase.relevance_score}/10:</span> {phrase.relevance_rationale}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 
