@@ -342,6 +342,83 @@ export function OnboardTab() {
     return out
   }
 
+  async function generateKeywords() {
+    if (!activeTenant) return
+    if (!commercialProfile?.synthesized_text) {
+      setBuildError('Build the commercial profile first.')
+      return
+    }
+    setBuilding('reconcile') // reuse the 'running' state; any non-null value works
+    setBuildError(null)
+    setBuildProgress('Generating Round 1 search keywords…')
+    try {
+      const prompt = `You are generating Round 1 federal search keywords for ${activeTenant.name} based on their commercial company profile.
+
+These keywords will be entered into SAM.gov, HigherGov, USASpending, and similar federal procurement search tools to pull the company's first batch of relevant opportunities.
+
+COMMERCIAL PROFILE:
+${commercialProfile.synthesized_text}
+
+Generate 8-12 federal search keywords. Each keyword should be:
+- 1-4 words (what you'd actually type in a search box)
+- Vocabulary a CONTRACTING OFFICER would use (not commercial marketing language) — think requirement statements, SOW language, federal category labels
+- Specific enough to surface relevant work, broad enough to actually return results
+- A mix of technical capability terms, service categories, and domain/mission words
+- NOT the company's brand names, NOT product names
+- NOT generic words like "software" or "AI" alone — they need to be specific enough to be useful
+
+For each keyword also suggest WHY it's useful (1 short sentence of reasoning) and which TIER it is:
+- "tier_1": high-confidence core capability — absolutely search for this
+- "tier_2": adjacent / second-order — worth searching
+- "tier_3": exploratory / stretch — might surface unexpected opportunities
+
+Return ONLY valid JSON in a \`\`\`json block, no other text:
+
+\`\`\`json
+{
+  "keywords": [
+    {"term": "...", "rationale": "...", "tier": "tier_1"},
+    ...
+  ]
+}
+\`\`\``
+
+      const { text } = await callClaudeBrowser(prompt, {
+        model: 'claude-sonnet-4-5',
+        maxTokens: 2000,
+      })
+
+      const parsed = extractJsonBlock(text)
+      if (!parsed?.keywords || !Array.isArray(parsed.keywords)) {
+        throw new Error('No keywords returned from Claude — try again')
+      }
+
+      // Merge into the commercial_profile.structured_data, preserving everything else
+      const existingStructured = commercialProfile.structured_data || {}
+      const updatedStructured = {
+        ...existingStructured,
+        round_1_keywords: parsed.keywords,
+        round_1_keywords_generated_at: new Date().toISOString(),
+      }
+
+      await supabase
+        .from('commercial_profile')
+        .update({
+          structured_data: updatedStructured,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('tenant_id', activeTenant.id)
+
+      setBuildProgress(null)
+      await loadProfileData(activeTenant.id)
+    } catch (err: any) {
+      setBuildError(err.message || 'Keyword generation failed')
+      setBuildProgress(null)
+    } finally {
+      setBuilding(null)
+    }
+  }
+
   async function setFederalPosture(posture: 'unknown' | 'has_federal' | 'no_federal') {
     if (!activeTenant) return
     await supabase.from('tenants').update({ federal_posture: posture }).eq('id', activeTenant.id)
@@ -500,6 +577,16 @@ export function OnboardTab() {
           }}
         />
       </div>
+
+      {/* Round 1 Search Keywords */}
+      {commercialProfile?.synthesized_text && (
+        <Round1KeywordsCard
+          keywords={(commercialProfile.structured_data as any)?.round_1_keywords || null}
+          generatedAt={(commercialProfile.structured_data as any)?.round_1_keywords_generated_at || null}
+          onGenerate={generateKeywords}
+          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search keywords…'}
+        />
+      )}
 
       {/* Strategic Profiles */}
       <div
@@ -1929,5 +2016,275 @@ function StructuredField({ label, value }: { label: string; value: any }) {
         {String(value)}
       </div>
     </div>
+  )
+}
+
+/* ========================================================================== */
+/* Round 1 Keywords card                                                      */
+/* ========================================================================== */
+
+interface Round1Keyword {
+  term: string
+  rationale?: string
+  tier?: 'tier_1' | 'tier_2' | 'tier_3'
+}
+
+function Round1KeywordsCard({
+  keywords,
+  generatedAt,
+  onGenerate,
+  generating,
+}: {
+  keywords: Round1Keyword[] | null
+  generatedAt: string | null
+  onGenerate: () => void
+  generating: boolean
+}) {
+  const [copiedTerm, setCopiedTerm] = useState<string | null>(null)
+
+  async function copyTerm(term: string) {
+    try {
+      await navigator.clipboard.writeText(term)
+      setCopiedTerm(term)
+      setTimeout(() => setCopiedTerm(null), 1500)
+    } catch {}
+  }
+
+  async function copyAll() {
+    if (!keywords || keywords.length === 0) return
+    const list = keywords.map((k) => k.term).join('\n')
+    try {
+      await navigator.clipboard.writeText(list)
+      setCopiedTerm('__all__')
+      setTimeout(() => setCopiedTerm(null), 1500)
+    } catch {}
+  }
+
+  const searchLinks = (term: string) => [
+    { label: 'SAM.gov', url: `https://sam.gov/opp/search?keywords=${encodeURIComponent(term)}` },
+    { label: 'HigherGov', url: `https://www.highergov.com/search/?keyword=${encodeURIComponent(term)}` },
+    { label: 'USASpending', url: `https://www.usaspending.gov/search/?keywords=${encodeURIComponent(term)}` },
+  ]
+
+  return (
+    <div
+      style={{
+        marginTop: '40px',
+        paddingTop: '32px',
+        borderTop: '1px solid var(--color-hairline)',
+      }}
+    >
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          gap: '24px',
+          marginBottom: '16px',
+        }}
+      >
+        <div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <h2
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontSize: '24px',
+                fontWeight: 600,
+                letterSpacing: '-0.015em',
+                margin: 0,
+              }}
+            >
+              Round 1 Search Keywords
+            </h2>
+            <Badge tone="info">Starting point</Badge>
+          </div>
+          <p
+            style={{
+              fontSize: '14px',
+              color: 'var(--color-text-secondary)',
+              margin: '6px 0 0',
+              maxWidth: '680px',
+            }}
+          >
+            Federal search terms derived from the commercial profile. Use these on SAM.gov,
+            HigherGov, or USASpending to pull your Round 1 opportunity data. Tier 1 first,
+            then Tier 2 if you need more coverage.
+          </p>
+        </div>
+        {keywords && keywords.length > 0 && (
+          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+            <Button variant="secondary" size="small" onClick={copyAll}>
+              {copiedTerm === '__all__' ? '✓ Copied' : 'Copy all'}
+            </Button>
+            <Button size="small" onClick={onGenerate} disabled={generating}>
+              {generating ? 'Regenerating…' : 'Regenerate'}
+            </Button>
+          </div>
+        )}
+      </div>
+
+      {!keywords || keywords.length === 0 ? (
+        <Card padding="standard">
+          <div
+            style={{
+              textAlign: 'center',
+              padding: '20px 0',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              gap: '12px',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '14px',
+                color: 'var(--color-text-secondary)',
+                maxWidth: '520px',
+              }}
+            >
+              No keywords generated yet. Once you click below, the system will propose 8-12
+              federal search terms you can drop straight into SAM.gov.
+            </div>
+            <Button onClick={onGenerate} disabled={generating}>
+              {generating ? 'Generating…' : 'Generate Round 1 keywords'}
+            </Button>
+          </div>
+        </Card>
+      ) : (
+        <>
+          {generatedAt && (
+            <div
+              style={{
+                fontSize: '11px',
+                color: 'var(--color-text-tertiary)',
+                marginBottom: '12px',
+              }}
+            >
+              Generated {new Date(generatedAt).toLocaleString()}
+            </div>
+          )}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+            {/* Group by tier */}
+            {(['tier_1', 'tier_2', 'tier_3'] as const).map((tier) => {
+              const group = keywords.filter((k) => (k.tier || 'tier_2') === tier)
+              if (group.length === 0) return null
+              const tierLabels = {
+                tier_1: { label: 'Tier 1 — Core', tone: 'success' as const },
+                tier_2: { label: 'Tier 2 — Adjacent', tone: 'info' as const },
+                tier_3: { label: 'Tier 3 — Exploratory', tone: 'neutral' as const },
+              }
+              const meta = tierLabels[tier]
+              return (
+                <div key={tier} style={{ marginBottom: '8px' }}>
+                  <div style={{ marginBottom: '8px' }}>
+                    <Badge tone={meta.tone}>{meta.label}</Badge>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {group.map((kw, i) => (
+                      <KeywordRow
+                        key={`${tier}-${i}`}
+                        keyword={kw}
+                        copied={copiedTerm === kw.term}
+                        onCopy={() => copyTerm(kw.term)}
+                        searchLinks={searchLinks(kw.term)}
+                      />
+                    ))}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function KeywordRow({
+  keyword,
+  copied,
+  onCopy,
+  searchLinks,
+}: {
+  keyword: Round1Keyword
+  copied: boolean
+  onCopy: () => void
+  searchLinks: { label: string; url: string }[]
+}) {
+  return (
+    <Card padding="standard">
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '16px',
+          flexWrap: 'wrap',
+        }}
+      >
+        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
+          <div
+            style={{
+              fontSize: '15px',
+              fontWeight: 600,
+              color: 'var(--color-text-primary)',
+              fontFamily: 'var(--font-mono)',
+              marginBottom: keyword.rationale ? '4px' : 0,
+            }}
+          >
+            {keyword.term}
+          </div>
+          {keyword.rationale && (
+            <div
+              style={{
+                fontSize: '12px',
+                color: 'var(--color-text-secondary)',
+                lineHeight: 1.5,
+              }}
+            >
+              {keyword.rationale}
+            </div>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+          {searchLinks.map((link) => (
+            <a
+              key={link.label}
+              href={link.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                fontSize: '12px',
+                padding: '4px 10px',
+                border: '1px solid var(--color-hairline)',
+                borderRadius: 'var(--radius-input)',
+                color: 'var(--color-text-secondary)',
+                textDecoration: 'none',
+                background: 'transparent',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              {link.label} →
+            </a>
+          ))}
+          <button
+            onClick={onCopy}
+            style={{
+              fontSize: '12px',
+              padding: '4px 10px',
+              border: '1px solid var(--color-accent)',
+              borderRadius: 'var(--radius-input)',
+              color: 'var(--color-accent)',
+              background: 'transparent',
+              cursor: 'pointer',
+              fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+              minWidth: '64px',
+            }}
+          >
+            {copied ? '✓ Copied' : 'Copy'}
+          </button>
+        </div>
+      </div>
+    </Card>
   )
 }
