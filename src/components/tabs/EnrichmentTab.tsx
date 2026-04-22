@@ -125,6 +125,7 @@ export function EnrichmentTab() {
       // Apply the per-upload threshold (user-controlled, not a system setting).
       // Default = 0 = keep all records. Keep records with value >= threshold.
       // If a record has no dollar value at all but threshold is 0, still keep it.
+      const withValues = mapped.filter((r: any) => typeof r.obligated === 'number')
       const filtered = mapped.filter((r: any) => {
         const v = typeof r.obligated === 'number' ? r.obligated : null
         if (uploadThreshold === 0) return true  // keep everything at threshold 0
@@ -132,10 +133,18 @@ export function EnrichmentTab() {
       })
 
       if (filtered.length === 0) {
-        setError(
-          `CSV parsed ${rows.length} rows but none passed the value threshold ($${uploadThreshold.toLocaleString()}). ` +
-          `Either the file has no dollar-value column we recognize, or all values are below your threshold. Lower the threshold or upload a different export.`
-        )
+        if (withValues.length === 0) {
+          setError(
+            `CSV parsed ${rows.length} rows but no recognizable dollar-value column was found. ` +
+            `Expected one of: total_obligated_amount, obligated_amount, obligated, current_total_value_of_award, award_amount. ` +
+            `Open the CSV and check the column headers.`
+          )
+        } else {
+          setError(
+            `CSV parsed ${rows.length} rows and ${withValues.length} had dollar values, but none were >= $${uploadThreshold.toLocaleString()}. ` +
+            `Lower the threshold (set to $0 to keep all) or upload a different export.`
+          )
+        }
         setUploading(false)
         setPendingUpload(null)
         return

@@ -121,15 +121,35 @@ export function mapCsvRowToRecord(
     office: pick('office', 'awarding_sub_agency_name', 'contracting_office_name'),
     naics_code: pick('naics_code', 'naics'),
     psc_code: pick('psc_code', 'psc', 'product_or_service_code'),
-    obligated: toNumber(pick('obligated', 'obligated_amount', 'action_obligation', 'total_dollars_obligated')) as any,
-    total_value: toNumber(pick('total_value', 'base_and_all_options_value', 'current_total_value_of_award', 'potential_total_value')) as any,
+    obligated: toNumber(
+      pick(
+        'obligated',
+        'obligated_amount',
+        'action_obligation',
+        'total_dollars_obligated',
+        'total_obligated_amount',       // USASpending.gov
+        'current_total_value_of_award', // USASpending fallback
+        'award_amount',                 // HigherGov variant
+        'amount'
+      )
+    ) as any,
+    total_value: toNumber(
+      pick(
+        'total_value',
+        'base_and_all_options_value',
+        'current_total_value_of_award',
+        'potential_total_value_of_award',  // USASpending.gov
+        'potential_total_value'
+      )
+    ) as any,
     description: pick(
       'description',
       'award_description',
       'transaction_description',
-      'description_of_requirement'
+      'description_of_requirement',
+      'prime_award_base_transaction_description'  // USASpending.gov
     ),
-    start_date: pick('start_date', 'period_of_performance_start_date', 'action_date'),
+    start_date: pick('start_date', 'period_of_performance_start_date', 'action_date', 'award_base_action_date'),
     end_date: pick('end_date', 'period_of_performance_current_end_date'),
     set_aside: pick('set_aside', 'type_of_set_aside', 'set_aside_type'),
     pop_state: pick('pop_state', 'primary_place_of_performance_state_code', 'place_of_performance_state'),
