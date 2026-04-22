@@ -5,6 +5,8 @@ import { extractJsonBlock } from './_shared-claude.mjs'
 import { dbUpdate, dbUpsert } from './_supabase-admin.mjs'
 
 export const handler = async (event) => {
+  console.log('=== build-commercial-profile-background START ===')
+  console.log('body length:', event.body?.length)
   let payload
   try {
     payload = JSON.parse(event.body || '{}')
