@@ -33,14 +33,8 @@
 [functions."claude-enrich"]
   timeout = 120
 
-# Netlify function paths — serve as-is, don't rewrite to the SPA
-[[redirects]]
-  from = "/.netlify/functions/*"
-  to = "/.netlify/functions/:splat"
-  status = 200
-  force = true
-
-# SPA routing — all unknown routes fall through to index.html
+# SPA routing — all unknown routes fall through to index.html.
+# Netlify handles /.netlify/functions/* natively before this rule is evaluated.
 [[redirects]]
   from = "/*"
   to = "/index.html"
