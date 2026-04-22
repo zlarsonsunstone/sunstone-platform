@@ -27,6 +27,7 @@ export function OnboardTab() {
   const [sources, setSources] = useState<ProfileSource[]>([])
   const [addSourceOpen, setAddSourceOpen] = useState<{ bucket: SourceBucket } | null>(null)
   const [building, setBuilding] = useState<'commercial' | 'federal' | 'reconcile' | null>(null)
+  const [digesting, setDigesting] = useState<'commercial' | 'federal' | null>(null)
   const [buildError, setBuildError] = useState<string | null>(null)
   const [stratEditor, setStratEditor] = useState<
     { mode: 'new' | 'edit'; profile?: StrategicProfile } | null
@@ -53,6 +54,100 @@ export function OnboardTab() {
     await loadSources()
   }
 
+  async function digestOne(sourceId: string) {
+    const src = sources.find((s) => s.id === sourceId)
+    if (!src || !activeTenant) return
+    // Mark running locally for instant feedback
+    setSources((prev) =>
+      prev.map((s) => (s.id === sourceId ? { ...s, digest_status: 'running', digest_error: null } : s))
+    )
+    try {
+      // Load the digest prompt variant
+      const { data: variant } = await supabase
+        .from('prompt_variants')
+        .select('prompt_template')
+        .eq('id', 'source_digest_v1')
+        .single()
+      if (!variant) throw new Error('source_digest_v1 prompt not found — run migration 0004')
+
+      // For PDF sources, fetch the file from storage and send as base64
+      let pdf_base64: string | undefined
+      const meta = src.metadata as any
+      if (meta?.needs_extraction && meta?.storage_path) {
+        const storageBucket = meta.storage_bucket || 'profile-documents'
+        const { data: blob, error: dlErr } = await supabase.storage
+          .from(storageBucket)
+          .download(meta.storage_path)
+        if (dlErr) throw new Error(`Download failed: ${dlErr.message}`)
+        pdf_base64 = await blobToBase64(blob)
+      }
+
+      const resp = await fetchJson<{ digest: string; structured: any }>(
+        '/.netlify/functions/digest-source',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tenant_name: activeTenant.name,
+            source_type: src.source_type,
+            source_label: src.label,
+            source_url: src.url,
+            source_content: src.extracted_text || src.raw_content || undefined,
+            pdf_base64,
+            prompt_template: variant.prompt_template,
+          }),
+        }
+      )
+      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Digest failed')
+
+      await supabase
+        .from('profile_sources')
+        .update({
+          digest_text: resp.data.digest,
+          digest_structured: resp.data.structured,
+          digest_status: 'ready',
+          digest_error: null,
+          digested_at: new Date().toISOString(),
+        })
+        .eq('id', sourceId)
+
+      await loadSources()
+    } catch (err: any) {
+      await supabase
+        .from('profile_sources')
+        .update({
+          digest_status: 'error',
+          digest_error: err.message || 'Digest failed',
+        })
+        .eq('id', sourceId)
+      await loadSources()
+    }
+  }
+
+  async function digestAllPending(bucket: SourceBucket) {
+    const pending = sources.filter(
+      (s) => s.bucket === bucket && (s.digest_status === 'pending' || s.digest_status === 'error')
+    )
+    if (pending.length === 0) return
+    setDigesting(bucket)
+    try {
+      // Run sequentially to be kind to the API. Could parallelize with p-limit later.
+      for (const src of pending) {
+        await digestOne(src.id)
+      }
+    } finally {
+      setDigesting(null)
+    }
+  }
+
+  async function skipDigest(sourceId: string) {
+    await supabase
+      .from('profile_sources')
+      .update({ digest_status: 'skipped' })
+      .eq('id', sourceId)
+    await loadSources()
+  }
+
   async function buildProfile(bucket: SourceBucket) {
     if (!activeTenant) return
     const kind = bucket === 'commercial' ? 'commercial' : 'federal'
@@ -70,35 +165,27 @@ export function OnboardTab() {
       const bucketSources = sources.filter((s) => s.bucket === bucket)
       if (bucketSources.length === 0) throw new Error('Add at least one source first')
 
-      // Separate text sources from PDF document sources
-      const textSources = bucketSources.filter((s) => {
-        const needsExtraction = (s.metadata as any)?.needs_extraction === true
-        return !needsExtraction
+      // Only include sources that have a digest ready OR are explicitly skipped (but have raw text).
+      // Block if there are pending/error/running digests that could be processed first.
+      const usableSources = bucketSources.filter((s) => {
+        if (s.digest_status === 'ready') return true
+        if (s.digest_status === 'skipped' && (s.extracted_text || s.raw_content)) return true
+        return false
       })
-      const pdfSources = bucketSources.filter((s) => {
-        const needsExtraction = (s.metadata as any)?.needs_extraction === true
-        return needsExtraction
-      })
-
-      // Fetch PDFs from storage and convert to base64
-      const documents: { label: string; pdf_base64: string }[] = []
-      for (const pdfSrc of pdfSources) {
-        const meta = pdfSrc.metadata as any
-        const path = meta?.storage_path
-        const storageBucket = meta?.storage_bucket || 'profile-documents'
-        if (!path) continue
-        try {
-          const { data: blob, error: dlErr } = await supabase.storage
-            .from(storageBucket)
-            .download(path)
-          if (dlErr) {
-            console.warn(`Failed to download ${path}:`, dlErr.message)
-            continue
-          }
-          const b64 = await blobToBase64(blob)
-          documents.push({ label: pdfSrc.label, pdf_base64: b64 })
-        } catch (e) {
-          console.warn(`Skipping PDF ${pdfSrc.label}:`, e)
+      const unusable = bucketSources.filter((s) => !usableSources.includes(s))
+      if (usableSources.length === 0) {
+        throw new Error(
+          'No sources are ready to build from. Click "Digest all" first to process your sources.'
+        )
+      }
+      if (unusable.length > 0) {
+        const proceed = confirm(
+          `${unusable.length} source(s) are not yet digested and will be skipped. ` +
+            `Build profile from the ${usableSources.length} ready source(s)?`
+        )
+        if (!proceed) {
+          setBuilding(null)
+          return
         }
       }
 
@@ -109,13 +196,13 @@ export function OnboardTab() {
 
       const body: any = {
         tenant_name: activeTenant.name,
-        sources: textSources.map((s) => ({
+        sources: usableSources.map((s) => ({
           label: s.label,
           source_type: s.source_type,
+          digest_text: s.digest_text,
           extracted_text: s.extracted_text,
           raw_content: s.raw_content,
         })),
-        documents,
         prompt_template: variant.prompt_template,
       }
       if (bucket === 'commercial') {
@@ -139,7 +226,7 @@ export function OnboardTab() {
               tenant_id: activeTenant.id,
               synthesized_text: data.narrative,
               structured_data: data.structured,
-              source_count: bucketSources.length,
+              source_count: usableSources.length,
               last_built_at: new Date().toISOString(),
               updated_at: new Date().toISOString(),
             },
@@ -157,7 +244,7 @@ export function OnboardTab() {
             psc_codes: s.psc_codes || null,
             uei: s.uei || null,
             cage: s.cage || null,
-            source_count: bucketSources.length,
+            source_count: usableSources.length,
             last_built_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
           },
@@ -299,7 +386,11 @@ export function OnboardTab() {
           onAdd={() => setAddSourceOpen({ bucket: 'commercial' })}
           onDelete={deleteSource}
           onBuild={() => buildProfile('commercial')}
+          onDigestOne={digestOne}
+          onDigestAll={() => digestAllPending('commercial')}
+          onSkipDigest={skipDigest}
           building={building === 'commercial'}
+          digesting={digesting === 'commercial'}
           profileBuilt={!!commercialProfile?.synthesized_text}
           lastBuiltAt={commercialProfile?.last_built_at || null}
           profileText={commercialProfile?.synthesized_text || null}
@@ -313,7 +404,11 @@ export function OnboardTab() {
           onAdd={() => setAddSourceOpen({ bucket: 'federal' })}
           onDelete={deleteSource}
           onBuild={() => buildProfile('federal')}
+          onDigestOne={digestOne}
+          onDigestAll={() => digestAllPending('federal')}
+          onSkipDigest={skipDigest}
           building={building === 'federal'}
+          digesting={digesting === 'federal'}
           profileBuilt={!!federalProfile?.synthesized_text}
           lastBuiltAt={federalProfile?.last_built_at || null}
           profileText={federalProfile?.synthesized_text || null}
@@ -472,7 +567,11 @@ function ProfileColumn({
   onAdd,
   onDelete,
   onBuild,
+  onDigestOne,
+  onDigestAll,
+  onSkipDigest,
   building,
+  digesting,
   profileBuilt,
   lastBuiltAt,
   profileText,
@@ -484,12 +583,24 @@ function ProfileColumn({
   onAdd: () => void
   onDelete: (id: string) => void
   onBuild: () => void
+  onDigestOne: (id: string) => void
+  onDigestAll: () => void
+  onSkipDigest: (id: string) => void
   building: boolean
+  digesting: boolean
   profileBuilt: boolean
   lastBuiltAt: string | null
   profileText: string | null
   buildLabel: string
 }) {
+  const ready = sources.filter((s) => s.digest_status === 'ready').length
+  const pending = sources.filter(
+    (s) => s.digest_status === 'pending' || s.digest_status === 'error'
+  ).length
+  const running = sources.filter((s) => s.digest_status === 'running').length
+  const hasPending = pending > 0 || running > 0
+  const buildReady = sources.length > 0 && ready > 0
+
   return (
     <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
       <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
@@ -500,7 +611,28 @@ function ProfileColumn({
           {sources.length} source{sources.length !== 1 ? 's' : ''}
         </span>
       </div>
-      <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 16px' }}>{subtitle}</p>
+      <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 12px' }}>{subtitle}</p>
+
+      {/* Digest progress bar */}
+      {sources.length > 0 && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px',
+            padding: '6px 10px',
+            background: 'var(--color-bg-subtle)',
+            borderRadius: 'var(--radius-input)',
+            marginBottom: '12px',
+            fontSize: '11px',
+            color: 'var(--color-text-secondary)',
+          }}
+        >
+          <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
+          {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
+          {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
+        </div>
+      )}
 
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
         {sources.length === 0 ? (
@@ -517,17 +649,38 @@ function ProfileColumn({
             No sources yet
           </div>
         ) : (
-          sources.map((s) => <SourceRow key={s.id} source={s} onDelete={() => onDelete(s.id)} />)
+          sources.map((s) => (
+            <SourceRow
+              key={s.id}
+              source={s}
+              onDelete={() => onDelete(s.id)}
+              onDigest={() => onDigestOne(s.id)}
+              onSkip={() => onSkipDigest(s.id)}
+            />
+          ))
         )}
       </div>
 
       <Button variant="secondary" size="small" onClick={onAdd} style={{ width: '100%', marginBottom: '8px' }}>
         + Add source
       </Button>
+
+      {hasPending && (
+        <Button
+          variant="secondary"
+          size="small"
+          onClick={onDigestAll}
+          disabled={digesting}
+          style={{ width: '100%', marginBottom: '8px' }}
+        >
+          {digesting ? `Digesting…` : `Digest all (${pending + running})`}
+        </Button>
+      )}
+
       <Button
         size="small"
         onClick={onBuild}
-        disabled={sources.length === 0 || building}
+        disabled={!buildReady || building}
         style={{ width: '100%' }}
       >
         {building ? 'Building…' : buildLabel}
@@ -567,63 +720,168 @@ function ProfileColumn({
   )
 }
 
-function SourceRow({ source, onDelete }: { source: ProfileSource; onDelete: () => void }) {
-  const hasContent = !!(source.extracted_text || source.raw_content)
+function SourceRow({
+  source,
+  onDelete,
+  onDigest,
+  onSkip,
+}: {
+  source: ProfileSource
+  onDelete: () => void
+  onDigest: () => void
+  onSkip: () => void
+}) {
+  const hasContent = !!(source.extracted_text || source.raw_content || (source.metadata as any)?.needs_extraction)
+  const status = source.digest_status
+
+  const statusTone: Record<string, 'neutral' | 'success' | 'warning' | 'danger' | 'info'> = {
+    pending: 'warning',
+    running: 'info',
+    ready: 'success',
+    error: 'danger',
+    skipped: 'neutral',
+  }
+  const statusLabel: Record<string, string> = {
+    pending: 'Not digested',
+    running: 'Digesting…',
+    ready: 'Ready',
+    error: 'Error',
+    skipped: 'Skipped',
+  }
+
   return (
     <div
       style={{
         display: 'flex',
-        alignItems: 'flex-start',
-        gap: '8px',
+        flexDirection: 'column',
+        gap: '6px',
         padding: '8px 10px',
         borderRadius: 'var(--radius-input)',
         border: '1px solid var(--color-hairline)',
         fontSize: '13px',
       }}
     >
-      <div style={{ flex: 1, minWidth: 0 }}>
-        <div
-          style={{
-            fontWeight: 500,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-          }}
-        >
-          {source.label}
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div
+            style={{
+              fontWeight: 500,
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {source.label}
+          </div>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              fontSize: '11px',
+              color: 'var(--color-text-tertiary)',
+              marginTop: '2px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span>{sourceTypeLabel(source.source_type)}</span>
+            <Badge tone={statusTone[status] || 'neutral'} style={{ fontSize: '10px' }}>
+              {statusLabel[status] || status}
+            </Badge>
+            {!hasContent && status === 'pending' && (
+              <Badge tone="warning" style={{ fontSize: '10px' }}>Empty</Badge>
+            )}
+          </div>
         </div>
-        <div
+        <button
+          onClick={onDelete}
+          aria-label="Delete source"
           style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '6px',
-            fontSize: '11px',
+            background: 'transparent',
+            border: 'none',
             color: 'var(--color-text-tertiary)',
-            marginTop: '2px',
+            cursor: 'pointer',
+            padding: '2px 4px',
+            fontSize: '16px',
+            fontFamily: 'inherit',
+            lineHeight: 1,
           }}
         >
-          <span>{sourceTypeLabel(source.source_type)}</span>
-          <Badge tone={hasContent ? 'success' : 'warning'} style={{ fontSize: '10px' }}>
-            {hasContent ? 'Content' : 'Empty'}
-          </Badge>
-        </div>
+          ×
+        </button>
       </div>
-      <button
-        onClick={onDelete}
-        aria-label="Delete source"
-        style={{
-          background: 'transparent',
-          border: 'none',
-          color: 'var(--color-text-tertiary)',
-          cursor: 'pointer',
-          padding: '2px 4px',
-          fontSize: '16px',
-          fontFamily: 'inherit',
-          lineHeight: 1,
-        }}
-      >
-        ×
-      </button>
+
+      {/* Action buttons based on digest state */}
+      {(status === 'pending' || status === 'error') && hasContent && (
+        <div style={{ display: 'flex', gap: '6px' }}>
+          <button
+            onClick={onDigest}
+            style={{
+              flex: 1,
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontFamily: 'inherit',
+              color: 'var(--color-accent)',
+              background: 'transparent',
+              border: '1px solid var(--color-hairline)',
+              borderRadius: 'var(--radius-input)',
+              cursor: 'pointer',
+            }}
+          >
+            {status === 'error' ? 'Retry digest' : 'Digest'}
+          </button>
+          <button
+            onClick={onSkip}
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              fontFamily: 'inherit',
+              color: 'var(--color-text-tertiary)',
+              background: 'transparent',
+              border: '1px solid var(--color-hairline)',
+              borderRadius: 'var(--radius-input)',
+              cursor: 'pointer',
+            }}
+          >
+            Skip
+          </button>
+        </div>
+      )}
+
+      {status === 'error' && source.digest_error && (
+        <div style={{ fontSize: '10px', color: 'var(--color-danger)' }}>{source.digest_error}</div>
+      )}
+
+      {status === 'ready' && source.digest_text && (
+        <details>
+          <summary
+            style={{
+              fontSize: '10px',
+              color: 'var(--color-text-tertiary)',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            View digest ({source.digest_text.length.toLocaleString()} chars)
+          </summary>
+          <div
+            style={{
+              fontSize: '11px',
+              color: 'var(--color-text-secondary)',
+              padding: '6px',
+              marginTop: '4px',
+              background: 'var(--color-bg-subtle)',
+              borderRadius: 'var(--radius-input)',
+              maxHeight: '120px',
+              overflowY: 'auto',
+              whiteSpace: 'pre-wrap',
+              lineHeight: 1.4,
+            }}
+          >
+            {source.digest_text}
+          </div>
+        </details>
+      )}
     </div>
   )
 }
@@ -902,7 +1160,11 @@ function FederalColumnWithPosture({
   onAdd,
   onDelete,
   onBuild,
+  onDigestOne,
+  onDigestAll,
+  onSkipDigest,
   building,
+  digesting,
   profileBuilt,
   lastBuiltAt,
   profileText,
@@ -913,12 +1175,24 @@ function FederalColumnWithPosture({
   onAdd: () => void
   onDelete: (id: string) => void
   onBuild: () => void
+  onDigestOne: (id: string) => void
+  onDigestAll: () => void
+  onSkipDigest: (id: string) => void
   building: boolean
+  digesting: boolean
   profileBuilt: boolean
   lastBuiltAt: string | null
   profileText: string | null
 }) {
   const [showPostureInfo] = useState(posture === 'unknown')
+
+  const ready = sources.filter((s) => s.digest_status === 'ready').length
+  const pending = sources.filter(
+    (s) => s.digest_status === 'pending' || s.digest_status === 'error'
+  ).length
+  const running = sources.filter((s) => s.digest_status === 'running').length
+  const hasPending = pending > 0 || running > 0
+  const buildReady = sources.length > 0 && ready > 0
 
   return (
     <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
@@ -1007,6 +1281,27 @@ function FederalColumnWithPosture({
         </div>
       ) : (
         <>
+          {/* Digest progress */}
+          {sources.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '6px 10px',
+                background: 'var(--color-bg-subtle)',
+                borderRadius: 'var(--radius-input)',
+                marginBottom: '12px',
+                fontSize: '11px',
+                color: 'var(--color-text-secondary)',
+              }}
+            >
+              <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
+              {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
+              {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
+            </div>
+          )}
+
           <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
             {sources.length === 0 ? (
               <div
@@ -1022,17 +1317,36 @@ function FederalColumnWithPosture({
                 No sources yet
               </div>
             ) : (
-              sources.map((s) => <SourceRow key={s.id} source={s} onDelete={() => onDelete(s.id)} />)
+              sources.map((s) => (
+                <SourceRow
+                  key={s.id}
+                  source={s}
+                  onDelete={() => onDelete(s.id)}
+                  onDigest={() => onDigestOne(s.id)}
+                  onSkip={() => onSkipDigest(s.id)}
+                />
+              ))
             )}
           </div>
 
           <Button variant="secondary" size="small" onClick={onAdd} style={{ width: '100%', marginBottom: '8px' }}>
             + Add source
           </Button>
+          {hasPending && (
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={onDigestAll}
+              disabled={digesting}
+              style={{ width: '100%', marginBottom: '8px' }}
+            >
+              {digesting ? 'Digesting…' : `Digest all (${pending + running})`}
+            </Button>
+          )}
           <Button
             size="small"
             onClick={onBuild}
-            disabled={sources.length === 0 || building}
+            disabled={!buildReady || building}
             style={{ width: '100%' }}
           >
             {building ? 'Building…' : 'Build federal profile'}

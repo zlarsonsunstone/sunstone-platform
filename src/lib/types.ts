@@ -146,6 +146,12 @@ export interface ProfileSource {
   fetched_at: string | null
   created_at: string
   created_by: string | null
+  // Digest pipeline (migration 0004)
+  digest_text: string | null
+  digest_structured: Record<string, any> | null
+  digest_status: 'pending' | 'running' | 'ready' | 'error' | 'skipped'
+  digest_error: string | null
+  digested_at: string | null
 }
 
 export interface CommercialProfile {
