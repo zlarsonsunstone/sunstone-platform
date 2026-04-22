@@ -1,7 +1,7 @@
 import { useEffect, useState, CSSProperties } from 'react'
 import { useStore } from '@/store/useStore'
 import { supabase } from '@/lib/supabase'
-import { fetchJson } from '@/lib/fetchJson'
+import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 import { TabPage } from '@/components/TabPage'
 import { Card } from '@/components/Card'
 import { Button } from '@/components/Button'
@@ -58,12 +58,10 @@ export function OnboardTab() {
   async function digestOne(sourceId: string) {
     const src = sources.find((s) => s.id === sourceId)
     if (!src || !activeTenant) return
-    // Mark running locally for instant feedback
     setSources((prev) =>
       prev.map((s) => (s.id === sourceId ? { ...s, digest_status: 'running', digest_error: null } : s))
     )
     try {
-      // Load the digest prompt variant
       const { data: variant } = await supabase
         .from('prompt_variants')
         .select('prompt_template')
@@ -71,41 +69,39 @@ export function OnboardTab() {
         .single()
       if (!variant) throw new Error('source_digest_v1 prompt not found — run migration 0004')
 
-      // For PDF sources, fetch the file from storage and send as base64
-      let pdf_base64: string | undefined
+      // Fill in the prompt template. PDF sources not yet supported via browser direct
+      // call (would need multimodal content blocks). For now, text digests only.
       const meta = src.metadata as any
-      if (meta?.needs_extraction && meta?.storage_path) {
-        const storageBucket = meta.storage_bucket || 'profile-documents'
-        const { data: blob, error: dlErr } = await supabase.storage
-          .from(storageBucket)
-          .download(meta.storage_path)
-        if (dlErr) throw new Error(`Download failed: ${dlErr.message}`)
-        pdf_base64 = await blobToBase64(blob)
+      if (meta?.needs_extraction) {
+        throw new Error(
+          'PDF digesting via browser not yet supported. Paste the PDF text manually for now.'
+        )
       }
 
-      const resp = await fetchJson<{ digest: string; structured: any }>(
-        '/.netlify/functions/digest-source',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenant_name: activeTenant.name,
-            source_type: src.source_type,
-            source_label: src.label,
-            source_url: src.url,
-            source_content: src.extracted_text || src.raw_content || undefined,
-            pdf_base64,
-            prompt_template: variant.prompt_template,
-          }),
-        }
-      )
-      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Digest failed')
+      const sourceContent = src.extracted_text || src.raw_content || ''
+      if (!sourceContent) throw new Error('Source has no content to digest')
+
+      const urlLine = src.url ? `SOURCE URL: ${src.url}` : ''
+      const prompt = variant.prompt_template
+        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
+        .replace(/\{\{source_type\}\}/g, src.source_type || 'unknown')
+        .replace(/\{\{source_label\}\}/g, src.label || 'unlabeled')
+        .replace(/\{\{#if source_url\}\}SOURCE URL: \{\{source_url\}\}\{\{\/if\}\}/g, urlLine)
+        .replace(/\{\{source_content\}\}/g, sourceContent)
+
+      const { text } = await callClaudeBrowser(prompt, {
+        model: 'claude-haiku-4-5',
+        maxTokens: 2048,
+      })
+
+      const structured = extractJsonBlock(text)
+      const digest = text.replace(/```json[\s\S]*?```/i, '').trim()
 
       await supabase
         .from('profile_sources')
         .update({
-          digest_text: resp.data.digest,
-          digest_structured: resp.data.structured,
+          digest_text: digest,
+          digest_structured: structured,
           digest_status: 'ready',
           digest_error: null,
           digested_at: new Date().toISOString(),
@@ -188,70 +184,44 @@ export function OnboardTab() {
         }
       }
 
-      // Split into batches of 3 sources each (keeps each sync call < 10s)
-      const BATCH_SIZE = 3
-      const batches: (typeof usableSources)[] = []
-      for (let i = 0; i < usableSources.length; i += BATCH_SIZE) {
-        batches.push(usableSources.slice(i, i + BATCH_SIZE))
-      }
+      setBuildProgress(`Synthesizing profile from ${usableSources.length} sources…`)
 
-      // Process each batch sequentially through synthesize-batch
-      const partials: string[] = []
-      for (let i = 0; i < batches.length; i++) {
-        setBuildError(null)
-        setBuildProgress(`Analyzing batch ${i + 1} of ${batches.length}…`)
-        const batch = batches[i]
-        const resp = await fetchJson<{ partial_analysis: string }>(
-          '/.netlify/functions/synthesize-batch',
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              tenant_name: activeTenant.name,
-              batch_index: i + 1,
-              batch_total: batches.length,
-              sources: batch.map((s) => ({
-                label: s.label,
-                source_type: s.source_type,
-                digest_text: s.digest_text,
-              })),
-            }),
-          }
-        )
-        if (!resp.ok || !resp.data) {
-          throw new Error(resp.error || `Batch ${i + 1} failed`)
-        }
-        partials.push(resp.data.partial_analysis)
-      }
+      // Build the sources blob from digests
+      const sourcesBlob = usableSources
+        .map((s, i) => {
+          const content =
+            s.digest_text ||
+            s.extracted_text ||
+            (s.raw_content ? s.raw_content.slice(0, 2000) : '(no content)')
+          return `### Source ${i + 1}: ${s.label} (${s.source_type})\n${content}`
+        })
+        .join('\n\n---\n\n')
 
-      // Merge all partials into the final profile
-      setBuildProgress('Merging into final profile…')
+      const placeholderKey = bucket === 'federal' ? 'federal_sources' : 'commercial_sources'
       const web = bucketSources.find((s) => s.source_type === 'website' && s.url)
-      const mergeResp = await fetchJson<{ narrative: string; structured: any }>(
-        '/.netlify/functions/merge-batches',
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            tenant_name: activeTenant.name,
-            tenant_website: bucket === 'commercial' ? web?.url : undefined,
-            partials,
-            prompt_template: variant.prompt_template,
-            bucket,
-          }),
-        }
-      )
-      if (!mergeResp.ok || !mergeResp.data) {
-        throw new Error(mergeResp.error || 'Merge failed')
+
+      let prompt = variant.prompt_template
+        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
+        .replace(new RegExp(`\\{\\{${placeholderKey}\\}\\}`, 'g'), sourcesBlob)
+      if (bucket === 'commercial') {
+        prompt = prompt.replace(/\{\{tenant_website\}\}/g, web?.url || '(not provided)')
       }
 
-      // Write final profile directly
+      // Call Claude directly from the browser — no Netlify function proxy, no timeout
+      const { text } = await callClaudeBrowser(prompt, {
+        model: 'claude-sonnet-4-5',
+        maxTokens: 8192,
+      })
+
+      const structured = extractJsonBlock(text)
+      const narrative = text.replace(/```json[\s\S]*?```/i, '').trim()
+
       if (bucket === 'commercial') {
         await supabase.from('commercial_profile').upsert(
           {
             tenant_id: activeTenant.id,
-            synthesized_text: mergeResp.data.narrative,
-            structured_data: mergeResp.data.structured,
+            synthesized_text: narrative,
+            structured_data: structured,
             source_count: usableSources.length,
             last_built_at: new Date().toISOString(),
             updated_at: new Date().toISOString(),
@@ -259,12 +229,12 @@ export function OnboardTab() {
           { onConflict: 'tenant_id' }
         )
       } else {
-        const s = mergeResp.data.structured || {}
+        const s = structured || {}
         await supabase.from('federal_profile').upsert(
           {
             tenant_id: activeTenant.id,
-            synthesized_text: mergeResp.data.narrative,
-            structured_data: mergeResp.data.structured,
+            synthesized_text: narrative,
+            structured_data: structured,
             naics_codes: s.naics_codes || null,
             certifications: s.certifications || null,
             psc_codes: s.psc_codes || null,
@@ -307,37 +277,31 @@ export function OnboardTab() {
           `Prompt variant ${variantId} not found — run migration ${isFramework ? '0003' : '0002'}`
         )
 
-      // Reconciliation is one call — no batching needed (inputs are the pre-built profiles)
-      const resp = await fetchJson<{
-        alignment?: string
-        divergence?: string
-        suggestions?: string
-        narrative?: string
-        structured?: any
-      }>('/.netlify/functions/reconcile-profiles', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tenant_name: activeTenant.name,
-          commercial_profile_text: commercialProfile?.synthesized_text || '',
-          federal_profile_text: federalProfile?.synthesized_text || '',
-          prompt_template: variant.prompt_template,
-        }),
+      const prompt = variant.prompt_template
+        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
+        .replace(/\{\{commercial_profile\}\}/g, commercialProfile?.synthesized_text || '(no commercial profile built yet)')
+        .replace(/\{\{federal_profile\}\}/g, federalProfile?.synthesized_text || '(no federal profile built yet)')
+
+      const { text } = await callClaudeBrowser(prompt, {
+        model: 'claude-sonnet-4-5',
+        maxTokens: 8000,
       })
-      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Reconciliation failed')
-      const data = resp.data
+
+      const structured = extractJsonBlock(text)
+      const cleaned = text.replace(/```json[\s\S]*?```/i, '').trim()
+
+      // Split into alignment / divergence / suggestions sections
+      const sections = splitReconciliationSections(cleaned)
 
       const nextVersion = (reconciliation?.version || 0) + 1
 
       await supabase.from('reconciliation').insert({
         tenant_id: activeTenant.id,
         mode: isFramework ? 'framework' : 'reconcile',
-        alignment: isFramework ? null : data.alignment || null,
-        divergence: isFramework ? null : data.divergence || null,
-        suggestions: isFramework
-          ? data.narrative || data.suggestions || ''
-          : data.suggestions || null,
-        structured_data: data.structured,
+        alignment: isFramework ? null : sections.alignment || null,
+        divergence: isFramework ? null : sections.divergence || null,
+        suggestions: isFramework ? cleaned : sections.suggestions || null,
+        structured_data: structured,
         version: nextVersion,
         last_built_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
@@ -351,6 +315,23 @@ export function OnboardTab() {
     } finally {
       setBuilding(null)
     }
+  }
+
+  function splitReconciliationSections(text: string) {
+    const out = { alignment: '', divergence: '', suggestions: '' }
+    const lines = text.split('\n')
+    let current: 'alignment' | 'divergence' | 'suggestions' | null = null
+    for (const line of lines) {
+      const lower = line.toLowerCase().trim()
+      if (/^#+\s*alignment/.test(lower)) { current = 'alignment'; continue }
+      if (/^#+\s*divergence/.test(lower)) { current = 'divergence'; continue }
+      if (/^#+\s*suggestions?/.test(lower)) { current = 'suggestions'; continue }
+      if (current) out[current] += line + '\n'
+    }
+    out.alignment = out.alignment.trim()
+    out.divergence = out.divergence.trim()
+    out.suggestions = out.suggestions.trim()
+    return out
   }
 
   async function setFederalPosture(posture: 'unknown' | 'has_federal' | 'no_federal') {
@@ -1604,15 +1585,3 @@ function ActionIcon({
   )
 }
 
-// Helper: convert a Blob to base64 string (without data URL prefix)
-function blobToBase64(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => {
-      const result = reader.result as string
-      resolve(result.split(',')[1])
-    }
-    reader.onerror = reject
-    reader.readAsDataURL(blob)
-  })
-}
