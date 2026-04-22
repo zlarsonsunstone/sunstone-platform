@@ -148,6 +148,24 @@ export function OnboardTab() {
     await loadSources()
   }
 
+  // Helper: poll a build_jobs row every 3s until done or error.
+  // Resolves with the result payload, rejects on error or timeout.
+  async function waitForJob(jobId: string, timeoutMs = 5 * 60 * 1000): Promise<any> {
+    const startTime = Date.now()
+    while (Date.now() - startTime < timeoutMs) {
+      const { data } = await supabase
+        .from('build_jobs')
+        .select('status, result, error')
+        .eq('id', jobId)
+        .single()
+      if (!data) throw new Error('Job row disappeared')
+      if (data.status === 'done') return data.result
+      if (data.status === 'error') throw new Error(data.error || 'Background job failed')
+      await new Promise((r) => setTimeout(r, 3000))
+    }
+    throw new Error('Build timed out after 5 minutes')
+  }
+
   async function buildProfile(bucket: SourceBucket) {
     if (!activeTenant) return
     const kind = bucket === 'commercial' ? 'commercial' : 'federal'
@@ -165,8 +183,6 @@ export function OnboardTab() {
       const bucketSources = sources.filter((s) => s.bucket === bucket)
       if (bucketSources.length === 0) throw new Error('Add at least one source first')
 
-      // Only include sources that have a digest ready OR are explicitly skipped (but have raw text).
-      // Block if there are pending/error/running digests that could be processed first.
       const usableSources = bucketSources.filter((s) => {
         if (s.digest_status === 'ready') return true
         if (s.digest_status === 'skipped' && (s.extracted_text || s.raw_content)) return true
@@ -189,12 +205,24 @@ export function OnboardTab() {
         }
       }
 
+      // Create build_jobs row
+      const jobType = bucket === 'commercial' ? 'build_commercial_profile' : 'build_federal_profile'
+      const { data: job, error: jobErr } = await supabase
+        .from('build_jobs')
+        .insert({ tenant_id: activeTenant.id, job_type: jobType, status: 'queued' })
+        .select('id')
+        .single()
+      if (jobErr || !job) throw new Error(jobErr?.message || 'Failed to create job')
+
+      // Fire background function (returns 202 immediately)
       const endpoint =
         bucket === 'commercial'
-          ? '/.netlify/functions/build-commercial-profile'
-          : '/.netlify/functions/build-federal-profile'
+          ? '/.netlify/functions/build-commercial-profile-background'
+          : '/.netlify/functions/build-federal-profile-background'
 
       const body: any = {
+        job_id: job.id,
+        tenant_id: activeTenant.id,
         tenant_name: activeTenant.name,
         sources: usableSources.map((s) => ({
           label: s.label,
@@ -210,48 +238,21 @@ export function OnboardTab() {
         body.tenant_website = web?.url || undefined
       }
 
-      const resp = await fetchJson<{ narrative: string; structured: any }>(endpoint, {
+      const triggerResp = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Build failed')
-      const data = resp.data
-
-      if (bucket === 'commercial') {
-        await supabase
-          .from('commercial_profile')
-          .upsert(
-            {
-              tenant_id: activeTenant.id,
-              synthesized_text: data.narrative,
-              structured_data: data.structured,
-              source_count: usableSources.length,
-              last_built_at: new Date().toISOString(),
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: 'tenant_id' }
-          )
-      } else {
-        const s = data.structured || {}
-        await supabase.from('federal_profile').upsert(
-          {
-            tenant_id: activeTenant.id,
-            synthesized_text: data.narrative,
-            structured_data: data.structured,
-            naics_codes: s.naics_codes || null,
-            certifications: s.certifications || null,
-            psc_codes: s.psc_codes || null,
-            uei: s.uei || null,
-            cage: s.cage || null,
-            source_count: usableSources.length,
-            last_built_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'tenant_id' }
-        )
+      // Background functions return 202. Anything else is a trigger failure.
+      if (triggerResp.status !== 202 && triggerResp.status !== 200) {
+        throw new Error(`Failed to start background job (HTTP ${triggerResp.status})`)
       }
 
+      // Poll for completion
+      await waitForJob(job.id)
+
+      // Background function already wrote to commercial_profile/federal_profile table.
+      // Just refresh our local state.
       await loadProfileData(activeTenant.id)
     } catch (err: any) {
       setBuildError(err.message || 'Build failed')
@@ -265,7 +266,6 @@ export function OnboardTab() {
     setBuilding('reconcile')
     setBuildError(null)
     try {
-      // Decide mode based on federal_posture
       const isFramework = activeTenant.federal_posture === 'no_federal'
       const variantId = isFramework ? 'federal_entry_framework_v1' : 'reconciliation_v1'
 
@@ -279,48 +279,38 @@ export function OnboardTab() {
           `Prompt variant ${variantId} not found — run migration ${isFramework ? '0003' : '0002'}`
         )
 
-      const body = isFramework
-        ? {
-            tenant_name: activeTenant.name,
-            commercial_profile_text: commercialProfile?.synthesized_text || '',
-            prompt_template: variant.prompt_template,
-          }
-        : {
-            tenant_name: activeTenant.name,
-            commercial_profile_text: commercialProfile?.synthesized_text || '',
-            federal_profile_text: federalProfile?.synthesized_text || '',
-            prompt_template: variant.prompt_template,
-          }
+      const { data: job, error: jobErr } = await supabase
+        .from('build_jobs')
+        .insert({
+          tenant_id: activeTenant.id,
+          job_type: 'reconcile_profiles',
+          status: 'queued',
+        })
+        .select('id')
+        .single()
+      if (jobErr || !job) throw new Error(jobErr?.message || 'Failed to create job')
 
-      const resp = await fetchJson<{
-        alignment?: string
-        divergence?: string
-        suggestions?: string
-        narrative?: string
-        structured?: any
-      }>('/.netlify/functions/reconcile-profiles', {
+      const body = {
+        job_id: job.id,
+        tenant_id: activeTenant.id,
+        tenant_name: activeTenant.name,
+        mode: isFramework ? 'framework' : 'reconcile',
+        commercial_profile_text: commercialProfile?.synthesized_text || '',
+        federal_profile_text: federalProfile?.synthesized_text || '',
+        prompt_template: variant.prompt_template,
+        previous_version: reconciliation?.version || 0,
+      }
+
+      const triggerResp = await fetch('/.netlify/functions/reconcile-profiles-background', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      if (!resp.ok || !resp.data) throw new Error(resp.error || 'Reconciliation failed')
-      const data = resp.data
+      if (triggerResp.status !== 202 && triggerResp.status !== 200) {
+        throw new Error(`Failed to start background job (HTTP ${triggerResp.status})`)
+      }
 
-      const nextVersion = (reconciliation?.version || 0) + 1
-
-      // Framework mode packs everything into "suggestions"; alignment/divergence are null
-      await supabase.from('reconciliation').insert({
-        tenant_id: activeTenant.id,
-        mode: isFramework ? 'framework' : 'reconcile',
-        alignment: isFramework ? null : data.alignment || null,
-        divergence: isFramework ? null : data.divergence || null,
-        suggestions: isFramework ? data.narrative || data.suggestions || '' : data.suggestions || null,
-        structured_data: data.structured,
-        version: nextVersion,
-        last_built_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-
+      await waitForJob(job.id)
       await loadProfileData(activeTenant.id)
     } catch (err: any) {
       setBuildError(err.message || 'Reconciliation failed')
