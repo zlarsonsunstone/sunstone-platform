@@ -1,8 +1,8 @@
 // reconcile-profiles-background.mjs
-// Handles both 'reconcile' mode (commercial vs federal) and 'framework' mode (commercial-only).
+// Handles reconcile and framework modes.
 
 import { extractJsonBlock } from './_shared-claude.mjs'
-import { getSupabaseAdmin } from './_supabase-admin.mjs'
+import { dbUpdate, dbInsert } from './_supabase-admin.mjs'
 
 export const handler = async (event) => {
   let payload
@@ -16,7 +16,7 @@ export const handler = async (event) => {
     job_id,
     tenant_id,
     tenant_name,
-    mode, // 'reconcile' | 'framework'
+    mode,
     commercial_profile_text,
     federal_profile_text,
     prompt_template,
@@ -27,14 +27,12 @@ export const handler = async (event) => {
     return { statusCode: 400 }
   }
 
-  const supabase = getSupabaseAdmin()
-
-  await supabase
-    .from('build_jobs')
-    .update({ status: 'running', started_at: new Date().toISOString() })
-    .eq('id', job_id)
-
   try {
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'running',
+      started_at: new Date().toISOString(),
+    })
+
     const prompt = prompt_template
       .replace(/\{\{tenant_name\}\}/g, tenant_name)
       .replace(/\{\{commercial_profile\}\}/g, commercial_profile_text || '(no commercial profile built yet)')
@@ -78,7 +76,7 @@ export const handler = async (event) => {
     const isFramework = mode === 'framework'
     const nextVersion = (previous_version || 0) + 1
 
-    await supabase.from('reconciliation').insert({
+    await dbInsert('reconciliation', {
       tenant_id,
       mode: isFramework ? 'framework' : 'reconcile',
       alignment: isFramework ? null : sections.alignment || null,
@@ -90,23 +88,23 @@ export const handler = async (event) => {
       updated_at: new Date().toISOString(),
     })
 
-    await supabase
-      .from('build_jobs')
-      .update({
-        status: 'done',
-        result: { ...sections, narrative: cleaned, structured, mode, version: nextVersion },
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', job_id)
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'done',
+      result: { ...sections, narrative: cleaned, structured, mode, version: nextVersion },
+      finished_at: new Date().toISOString(),
+    })
 
     return { statusCode: 200 }
   } catch (err) {
     const msg = err?.message || String(err)
     console.error(`Job ${job_id} failed:`, msg)
-    await supabase
-      .from('build_jobs')
-      .update({ status: 'error', error: msg, finished_at: new Date().toISOString() })
-      .eq('id', job_id)
+    try {
+      await dbUpdate('build_jobs', 'id', job_id, {
+        status: 'error',
+        error: msg,
+        finished_at: new Date().toISOString(),
+      })
+    } catch {}
     return { statusCode: 500 }
   }
 }

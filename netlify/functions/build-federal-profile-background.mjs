@@ -1,8 +1,7 @@
 // build-federal-profile-background.mjs
-// Same pattern as commercial — background function, writes result to build_jobs + federal_profile.
 
 import { extractJsonBlock } from './_shared-claude.mjs'
-import { getSupabaseAdmin } from './_supabase-admin.mjs'
+import { dbUpdate, dbUpsert } from './_supabase-admin.mjs'
 
 export const handler = async (event) => {
   let payload
@@ -17,14 +16,12 @@ export const handler = async (event) => {
     return { statusCode: 400 }
   }
 
-  const supabase = getSupabaseAdmin()
-
-  await supabase
-    .from('build_jobs')
-    .update({ status: 'running', started_at: new Date().toISOString() })
-    .eq('id', job_id)
-
   try {
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'running',
+      started_at: new Date().toISOString(),
+    })
+
     const textBlob = sources
       .map((s, i) => {
         const content =
@@ -71,7 +68,8 @@ export const handler = async (event) => {
     const narrative = text.replace(/```json[\s\S]*?```/i, '').trim()
     const s = structured || {}
 
-    await supabase.from('federal_profile').upsert(
+    await dbUpsert(
+      'federal_profile',
       {
         tenant_id,
         synthesized_text: narrative,
@@ -85,26 +83,26 @@ export const handler = async (event) => {
         last_built_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'tenant_id' }
+      'tenant_id'
     )
 
-    await supabase
-      .from('build_jobs')
-      .update({
-        status: 'done',
-        result: { narrative, structured, source_count: sources.length },
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', job_id)
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'done',
+      result: { narrative, structured, source_count: sources.length },
+      finished_at: new Date().toISOString(),
+    })
 
     return { statusCode: 200 }
   } catch (err) {
     const msg = err?.message || String(err)
     console.error(`Job ${job_id} failed:`, msg)
-    await supabase
-      .from('build_jobs')
-      .update({ status: 'error', error: msg, finished_at: new Date().toISOString() })
-      .eq('id', job_id)
+    try {
+      await dbUpdate('build_jobs', 'id', job_id, {
+        status: 'error',
+        error: msg,
+        finished_at: new Date().toISOString(),
+      })
+    } catch {}
     return { statusCode: 500 }
   }
 }

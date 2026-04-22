@@ -1,26 +1,10 @@
 // build-commercial-profile-background.mjs
-//
-// Netlify routes functions with `-background` suffix to the background runtime
-// which allows up to 15 minutes of execution time. Returns 202 immediately.
-//
-// Request: {
-//   job_id: uuid,           -- pre-created build_jobs row to update
-//   tenant_id: text,
-//   tenant_name: text,
-//   tenant_website?: text,
-//   sources: [{label, source_type, digest_text?, extracted_text?, raw_content?}],
-//   prompt_template: text
-// }
-//
-// Writes to build_jobs.result on success, build_jobs.error on failure.
-// The frontend polls the build_jobs row.
+// Netlify Background Function — up to 15 minutes execution, returns 202 immediately.
 
 import { extractJsonBlock } from './_shared-claude.mjs'
-import { getSupabaseAdmin } from './_supabase-admin.mjs'
+import { dbUpdate, dbUpsert } from './_supabase-admin.mjs'
 
 export const handler = async (event) => {
-  // Background functions return 202 immediately; actual work happens after.
-  // We parse the body here, then do the heavy lifting.
   let payload
   try {
     payload = JSON.parse(event.body || '{}')
@@ -32,20 +16,16 @@ export const handler = async (event) => {
   const { job_id, tenant_id, tenant_name, tenant_website, sources = [], prompt_template } = payload
 
   if (!job_id || !tenant_id || !tenant_name || !prompt_template) {
-    console.error('Missing required fields', { job_id, tenant_id, tenant_name })
+    console.error('Missing required fields')
     return { statusCode: 400 }
   }
 
-  const supabase = getSupabaseAdmin()
-
-  // Mark running
-  await supabase
-    .from('build_jobs')
-    .update({ status: 'running', started_at: new Date().toISOString() })
-    .eq('id', job_id)
-
   try {
-    // Build the prompt
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'running',
+      started_at: new Date().toISOString(),
+    })
+
     const textBlob = sources
       .map((s, i) => {
         const content =
@@ -61,7 +41,6 @@ export const handler = async (event) => {
       .replace(/\{\{tenant_website\}\}/g, tenant_website || '(not provided)')
       .replace(/\{\{commercial_sources\}\}/g, textBlob || '(no sources provided)')
 
-    // Call Claude (no timeout constraint — we're in background context)
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) throw new Error('ANTHROPIC_API_KEY not configured')
 
@@ -93,8 +72,8 @@ export const handler = async (event) => {
     const structured = extractJsonBlock(text)
     const narrative = text.replace(/```json[\s\S]*?```/i, '').trim()
 
-    // Write the commercial_profile row directly (no need for frontend roundtrip)
-    await supabase.from('commercial_profile').upsert(
+    await dbUpsert(
+      'commercial_profile',
       {
         tenant_id,
         synthesized_text: narrative,
@@ -103,32 +82,29 @@ export const handler = async (event) => {
         last_built_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       },
-      { onConflict: 'tenant_id' }
+      'tenant_id'
     )
 
-    // Mark job done
-    await supabase
-      .from('build_jobs')
-      .update({
-        status: 'done',
-        result: { narrative, structured, source_count: sources.length },
-        finished_at: new Date().toISOString(),
-      })
-      .eq('id', job_id)
+    await dbUpdate('build_jobs', 'id', job_id, {
+      status: 'done',
+      result: { narrative, structured, source_count: sources.length },
+      finished_at: new Date().toISOString(),
+    })
 
-    console.log(`Job ${job_id} completed for tenant ${tenant_id}`)
+    console.log(`Job ${job_id} done`)
     return { statusCode: 200 }
   } catch (err) {
     const msg = err?.message || String(err)
     console.error(`Job ${job_id} failed:`, msg)
-    await supabase
-      .from('build_jobs')
-      .update({
+    try {
+      await dbUpdate('build_jobs', 'id', job_id, {
         status: 'error',
         error: msg,
         finished_at: new Date().toISOString(),
       })
-      .eq('id', job_id)
+    } catch (e) {
+      console.error('Failed to record error state:', e?.message)
+    }
     return { statusCode: 500 }
   }
 }
