@@ -12,23 +12,16 @@
 
 import { json } from './_shared-claude.mjs'
 
-const BATCH_PROMPT = `You are analyzing a BATCH of digested sources about {{tenant_name}} as part of a larger profile synthesis. This is batch {{batch_index}} of {{batch_total}}.
+const BATCH_PROMPT = `You are analyzing a BATCH of digested sources about {{tenant_name}}. This is batch {{batch_index}} of {{batch_total}}.
 
-Your job: extract and organize the signal from THIS BATCH ONLY. Don't try to write a final company profile — that happens in a later merge step. Just synthesize the batch content into a tight structured partial.
+Your job: extract signal from THIS BATCH ONLY into a dense partial. A later merge step will combine all partials.
 
 BATCH CONTENT:
 {{sources_blob}}
 
-Produce a concise analysis covering what THIS batch reveals about:
-- Products, services, capabilities
-- Customers, partners, markets
-- Leadership, team
-- Traction events (funding, launches, milestones)
-- Technical differentiators, IP
-- Federal/government signals (if any)
-- Notable quotes or claims
+Produce ~150 words of dense prose covering what this batch reveals. Structure loosely as: products/capabilities · customers/partners · traction signals · technical differentiators · federal signals (if any). Use narrative prose — no bullets, no headers other than the title below.
 
-Write it as ~400 words of dense prose under the heading "## Batch {{batch_index}} partial". Do NOT use markdown lists or tables — narrative prose only. Do NOT duplicate information. Do NOT speculate about things not in the batch. Do NOT pad with filler.`
+Format: start with "## Batch {{batch_index}} partial" as the only heading. Then the prose. No filler, no speculation, no padding.`
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' })
@@ -67,7 +60,7 @@ export const handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 2048, // small batches, small outputs
+        max_tokens: 800, // tight — ~150 word partials keep each call < 8s
         messages: [{ role: 'user', content: prompt }],
       }),
     })

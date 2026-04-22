@@ -188,8 +188,8 @@ export function OnboardTab() {
         }
       }
 
-      // Split into batches of 6 sources each
-      const BATCH_SIZE = 6
+      // Split into batches of 3 sources each (keeps each sync call < 10s)
+      const BATCH_SIZE = 3
       const batches: (typeof usableSources)[] = []
       for (let i = 0; i < usableSources.length; i += BATCH_SIZE) {
         batches.push(usableSources.slice(i, i + BATCH_SIZE))

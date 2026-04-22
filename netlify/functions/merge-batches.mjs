@@ -58,7 +58,7 @@ export const handler = async (event) => {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
-        max_tokens: 4096, // smaller than before — partials are pre-compressed
+        max_tokens: 2048, // capped — partials already condensed the data
         messages: [{ role: 'user', content: prompt }],
       }),
     })
