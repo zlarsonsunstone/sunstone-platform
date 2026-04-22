@@ -6,6 +6,7 @@ import { TabPage } from '@/components/TabPage'
 import { Card } from '@/components/Card'
 import { Button } from '@/components/Button'
 import { Badge } from '@/components/Badge'
+import { Modal } from '@/components/Modal'
 import type {
   ProfileSource,
   SourceType,
@@ -33,6 +34,13 @@ export function OnboardTab() {
   const [stratEditor, setStratEditor] = useState<
     { mode: 'new' | 'edit'; profile?: StrategicProfile } | null
   >(null)
+  const [viewingProfile, setViewingProfile] = useState<{
+    title: string
+    text: string
+    structured: any
+    builtAt: string | null
+    sourceCount: number | null
+  } | null>(null)
 
   useEffect(() => {
     if (!activeTenant) return
@@ -414,6 +422,15 @@ export function OnboardTab() {
           onDigestOne={digestOne}
           onDigestAll={() => digestAllPending('commercial')}
           onSkipDigest={skipDigest}
+          onViewProfile={() =>
+            setViewingProfile({
+              title: 'Commercial profile — ' + activeTenant.name,
+              text: commercialProfile?.synthesized_text || '',
+              structured: commercialProfile?.structured_data,
+              builtAt: commercialProfile?.last_built_at || null,
+              sourceCount: commercialProfile?.source_count || null,
+            })
+          }
           building={building === 'commercial'}
           digesting={digesting === 'commercial'}
           profileBuilt={!!commercialProfile?.synthesized_text}
@@ -432,6 +449,15 @@ export function OnboardTab() {
           onDigestOne={digestOne}
           onDigestAll={() => digestAllPending('federal')}
           onSkipDigest={skipDigest}
+          onViewProfile={() =>
+            setViewingProfile({
+              title: 'Federal profile — ' + activeTenant.name,
+              text: federalProfile?.synthesized_text || '',
+              structured: federalProfile?.structured_data,
+              builtAt: federalProfile?.last_built_at || null,
+              sourceCount: federalProfile?.source_count || null,
+            })
+          }
           building={building === 'federal'}
           digesting={digesting === 'federal'}
           profileBuilt={!!federalProfile?.synthesized_text}
@@ -577,6 +603,17 @@ export function OnboardTab() {
           }}
         />
       )}
+
+      {viewingProfile && (
+        <ProfileViewModal
+          title={viewingProfile.title}
+          text={viewingProfile.text}
+          structured={viewingProfile.structured}
+          builtAt={viewingProfile.builtAt}
+          sourceCount={viewingProfile.sourceCount}
+          onClose={() => setViewingProfile(null)}
+        />
+      )}
     </TabPage>
   )
 }
@@ -595,6 +632,7 @@ function ProfileColumn({
   onDigestOne,
   onDigestAll,
   onSkipDigest,
+  onViewProfile,
   building,
   digesting,
   profileBuilt,
@@ -611,6 +649,7 @@ function ProfileColumn({
   onDigestOne: (id: string) => void
   onDigestAll: () => void
   onSkipDigest: (id: string) => void
+  onViewProfile: () => void
   building: boolean
   digesting: boolean
   profileBuilt: boolean
@@ -739,6 +778,14 @@ function ProfileColumn({
             {profileText?.slice(0, 500)}
             {(profileText?.length || 0) > 500 ? '…' : ''}
           </div>
+          <Button
+            variant="secondary"
+            size="small"
+            onClick={onViewProfile}
+            style={{ width: '100%', marginTop: '12px' }}
+          >
+            View full profile
+          </Button>
         </div>
       )}
     </Card>
@@ -1188,6 +1235,7 @@ function FederalColumnWithPosture({
   onDigestOne,
   onDigestAll,
   onSkipDigest,
+  onViewProfile,
   building,
   digesting,
   profileBuilt,
@@ -1203,6 +1251,7 @@ function FederalColumnWithPosture({
   onDigestOne: (id: string) => void
   onDigestAll: () => void
   onSkipDigest: (id: string) => void
+  onViewProfile: () => void
   building: boolean
   digesting: boolean
   profileBuilt: boolean
@@ -1405,6 +1454,14 @@ function FederalColumnWithPosture({
                 {profileText?.slice(0, 500)}
                 {(profileText?.length || 0) > 500 ? '…' : ''}
               </div>
+              <Button
+                variant="secondary"
+                size="small"
+                onClick={onViewProfile}
+                style={{ width: '100%', marginTop: '12px' }}
+              >
+                View full profile
+              </Button>
             </div>
           )}
         </>
@@ -1585,3 +1642,292 @@ function ActionIcon({
   )
 }
 
+
+/* ========================================================================== */
+/* Profile view modal                                                         */
+/* ========================================================================== */
+
+function ProfileViewModal({
+  title,
+  text,
+  structured,
+  builtAt,
+  sourceCount,
+  onClose,
+}: {
+  title: string
+  text: string
+  structured: any
+  builtAt: string | null
+  sourceCount: number | null
+  onClose: () => void
+}) {
+  const [tab, setTab] = useState<'narrative' | 'structured' | 'raw'>('narrative')
+
+  async function copyToClipboard(content: string) {
+    try {
+      await navigator.clipboard.writeText(content)
+    } catch {
+      // no-op
+    }
+  }
+
+  const rawJson = structured ? JSON.stringify(structured, null, 2) : '(no structured data)'
+
+  return (
+    <Modal open={true} onClose={onClose} title={title} size="xl">
+      {/* Meta row */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          fontSize: '12px',
+          color: 'var(--color-text-tertiary)',
+          marginBottom: '16px',
+          paddingBottom: '12px',
+          borderBottom: '1px solid var(--color-hairline)',
+        }}
+      >
+        {sourceCount !== null && (
+          <span>
+            Built from <strong>{sourceCount}</strong> source{sourceCount !== 1 ? 's' : ''}
+          </span>
+        )}
+        {builtAt && <span>·</span>}
+        {builtAt && <span>{new Date(builtAt).toLocaleString()}</span>}
+      </div>
+
+      {/* Tab switcher */}
+      <div
+        style={{
+          display: 'flex',
+          gap: '4px',
+          marginBottom: '16px',
+          borderBottom: '1px solid var(--color-hairline)',
+        }}
+      >
+        <TabButton active={tab === 'narrative'} onClick={() => setTab('narrative')}>
+          Narrative
+        </TabButton>
+        {structured && (
+          <TabButton active={tab === 'structured'} onClick={() => setTab('structured')}>
+            Structured
+          </TabButton>
+        )}
+        <TabButton active={tab === 'raw'} onClick={() => setTab('raw')}>
+          Raw JSON
+        </TabButton>
+      </div>
+
+      {/* Tab content */}
+      <div
+        style={{
+          maxHeight: '60vh',
+          overflowY: 'auto',
+          padding: '4px 0',
+        }}
+      >
+        {tab === 'narrative' && (
+          <div
+            style={{
+              fontSize: '14px',
+              lineHeight: 1.6,
+              color: 'var(--color-text-primary)',
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'var(--font-text)',
+            }}
+          >
+            {text || '(empty)'}
+          </div>
+        )}
+
+        {tab === 'structured' && structured && (
+          <StructuredPretty data={structured} />
+        )}
+
+        {tab === 'raw' && (
+          <pre
+            style={{
+              fontSize: '12px',
+              lineHeight: 1.5,
+              fontFamily: 'var(--font-mono)',
+              background: 'var(--color-bg-subtle)',
+              padding: '12px',
+              borderRadius: 'var(--radius-input)',
+              overflowX: 'auto',
+              color: 'var(--color-text-primary)',
+              margin: 0,
+            }}
+          >
+            {rawJson}
+          </pre>
+        )}
+      </div>
+
+      {/* Footer */}
+      <div
+        style={{
+          marginTop: '16px',
+          paddingTop: '12px',
+          borderTop: '1px solid var(--color-hairline)',
+          display: 'flex',
+          justifyContent: 'flex-end',
+          gap: '8px',
+        }}
+      >
+        <Button
+          variant="secondary"
+          size="small"
+          onClick={() => copyToClipboard(tab === 'raw' ? rawJson : text)}
+        >
+          Copy {tab === 'raw' ? 'JSON' : 'text'}
+        </Button>
+        <Button size="small" onClick={onClose}>
+          Close
+        </Button>
+      </div>
+    </Modal>
+  )
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        padding: '8px 14px',
+        fontSize: '13px',
+        fontFamily: 'inherit',
+        color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
+        background: 'transparent',
+        border: 'none',
+        borderBottom: `2px solid ${active ? 'var(--color-accent)' : 'transparent'}`,
+        cursor: 'pointer',
+        fontWeight: active ? 500 : 400,
+        marginBottom: '-1px',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function StructuredPretty({ data }: { data: any }) {
+  if (!data || typeof data !== 'object') {
+    return <div style={{ color: 'var(--color-text-tertiary)' }}>(no structured data)</div>
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+      {Object.entries(data).map(([key, value]) => (
+        <StructuredField key={key} label={key} value={value} />
+      ))}
+    </div>
+  )
+}
+
+function StructuredField({ label, value }: { label: string; value: any }) {
+  const prettyLabel = label
+    .replace(/_/g, ' ')
+    .replace(/\b\w/g, (c) => c.toUpperCase())
+
+  const labelStyle: CSSProperties = {
+    fontSize: '11px',
+    fontWeight: 500,
+    textTransform: 'uppercase',
+    letterSpacing: '0.04em',
+    color: 'var(--color-text-tertiary)',
+    marginBottom: '4px',
+  }
+
+  // Null / undefined / empty
+  if (value === null || value === undefined || value === '') {
+    return (
+      <div>
+        <div style={labelStyle}>{prettyLabel}</div>
+        <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>—</div>
+      </div>
+    )
+  }
+
+  // Array of strings
+  if (Array.isArray(value) && value.every((v) => typeof v === 'string' || typeof v === 'number')) {
+    return (
+      <div>
+        <div style={labelStyle}>{prettyLabel}</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+          {value.map((v, i) => (
+            <Badge key={i}>{String(v)}</Badge>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Array of objects
+  if (Array.isArray(value)) {
+    return (
+      <div>
+        <div style={labelStyle}>{prettyLabel} ({value.length})</div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          {value.map((item, i) => (
+            <div
+              key={i}
+              style={{
+                fontSize: '12px',
+                padding: '6px 10px',
+                background: 'var(--color-bg-subtle)',
+                borderRadius: 'var(--radius-input)',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              {typeof item === 'object' ? JSON.stringify(item) : String(item)}
+            </div>
+          ))}
+        </div>
+      </div>
+    )
+  }
+
+  // Nested object
+  if (typeof value === 'object') {
+    return (
+      <div>
+        <div style={labelStyle}>{prettyLabel}</div>
+        <pre
+          style={{
+            fontSize: '11px',
+            lineHeight: 1.5,
+            fontFamily: 'var(--font-mono)',
+            background: 'var(--color-bg-subtle)',
+            padding: '8px',
+            borderRadius: 'var(--radius-input)',
+            overflowX: 'auto',
+            margin: 0,
+          }}
+        >
+          {JSON.stringify(value, null, 2)}
+        </pre>
+      </div>
+    )
+  }
+
+  // Scalar string/number/bool
+  return (
+    <div>
+      <div style={labelStyle}>{prettyLabel}</div>
+      <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' }}>
+        {String(value)}
+      </div>
+    </div>
+  )
+}
