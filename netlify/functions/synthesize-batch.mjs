@@ -48,8 +48,11 @@ export const handler = async (event) => {
     .replace(/\{\{sources_blob\}\}/g, sources_blob)
 
   try {
+    const t0 = Date.now()
     const apiKey = process.env.ANTHROPIC_API_KEY
     if (!apiKey) return json(500, { error: 'ANTHROPIC_API_KEY not configured' })
+
+    console.log(`[batch ${batch_index}/${batch_total}] starting Claude call, ${sources.length} sources, prompt len=${prompt.length}`)
 
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -59,11 +62,14 @@ export const handler = async (event) => {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-5',
-        max_tokens: 800, // tight — ~150 word partials keep each call < 8s
+        model: 'claude-haiku-4-5-20251001', // Haiku is fast; partial analysis doesn't need Sonnet-level quality
+        max_tokens: 800,
         messages: [{ role: 'user', content: prompt }],
       }),
     })
+
+    const t1 = Date.now()
+    console.log(`[batch ${batch_index}/${batch_total}] Claude responded after ${t1 - t0}ms, status ${resp.status}`)
 
     if (!resp.ok) {
       const errText = await resp.text().catch(() => '')
