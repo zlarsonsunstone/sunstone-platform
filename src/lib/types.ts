@@ -210,3 +210,45 @@ export interface StrategicProfile {
   created_by: string | null
   deleted_at: string | null
 }
+
+// ============================================================
+// Search Scopes (Round 1 NAICS+PSC cross-pollinated searches)
+// ============================================================
+
+export type ScopeTier = 'primary' | 'secondary' | 'exploratory'
+
+export interface SearchScope {
+  id: string
+  tenant_id: string
+  scope_tag: string
+  name: string
+  tier: ScopeTier
+  rationale: string | null
+  naics_codes: string[]
+  psc_prefixes: string[]
+  keyword_layers: string[] | null
+
+  // AI correlation
+  correlation_score: number | null       // 1-10
+  correlation_rationale: string | null
+
+  // AI estimates (before search)
+  estimated_annual_awards: number | null
+  estimated_annual_dollars: number | null
+  estimated_size_label: string | null
+
+  // Actual data (after dataset import)
+  actual_award_count: number | null
+  actual_dollar_volume: number | null
+  last_imported_at: string | null
+
+  strategic_angle: string | null
+  generated_by: string | null
+  generated_at: string
+  pinned: boolean
+  archived: boolean
+  notes: string | null
+  created_at: string
+  updated_at: string
+  deleted_at: string | null
+}

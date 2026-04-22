@@ -13,6 +13,7 @@ import type {
   SourceBucket,
   Reconciliation,
   StrategicProfile,
+  SearchScope,
 } from '@/lib/types'
 import { AddSourceModal } from '@/components/onboard/AddSourceModal'
 import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEditor'
@@ -23,6 +24,7 @@ export function OnboardTab() {
   const federalProfile = useStore((s) => s.federalProfile)
   const reconciliation = useStore((s) => s.reconciliation)
   const strategicProfiles = useStore((s) => s.strategicProfiles)
+  const searchScopes = useStore((s) => s.searchScopes)
   const loadProfileData = useStore((s) => s.loadProfileData)
 
   const [sources, setSources] = useState<ProfileSource[]>([])
@@ -342,81 +344,159 @@ export function OnboardTab() {
     return out
   }
 
-  async function generateKeywords() {
+  async function generateSearchScopes() {
     if (!activeTenant) return
     if (!commercialProfile?.synthesized_text) {
       setBuildError('Build the commercial profile first.')
       return
     }
-    setBuilding('reconcile') // reuse the 'running' state; any non-null value works
+    setBuilding('reconcile')
     setBuildError(null)
-    setBuildProgress('Generating Round 1 search keywords…')
+    setBuildProgress('Generating Round 1 search scopes…')
     try {
-      const prompt = `You are generating Round 1 federal search keywords for ${activeTenant.name} based on their commercial company profile.
+      const prompt = `You are generating Round 1 federal search scopes for ${activeTenant.name} based on their commercial company profile.
 
-These keywords will be entered into SAM.gov, HigherGov, USASpending, and similar federal procurement search tools to pull the company's first batch of relevant opportunities.
+A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement — the same NAICS code can have very different markets depending on which PSC prefix the work falls under. Example: NAICS 541511 (Custom Computer Programming) + PSC R- (Support Services) is professional services consulting; NAICS 541511 + PSC D3 is sustained IT services; NAICS 541511 + PSC 70 is bundled with IT equipment.
 
 COMMERCIAL PROFILE:
 ${commercialProfile.synthesized_text}
 
-Generate 8-12 federal search keywords. Each keyword should be:
-- 1-4 words (what you'd actually type in a search box)
-- Vocabulary a CONTRACTING OFFICER would use (not commercial marketing language) — think requirement statements, SOW language, federal category labels
-- Specific enough to surface relevant work, broad enough to actually return results
-- A mix of technical capability terms, service categories, and domain/mission words
-- NOT the company's brand names, NOT product names
-- NOT generic words like "software" or "AI" alone — they need to be specific enough to be useful
+Generate 6-10 search scopes that together cover the company's realistic federal pursuit surface.
 
-For each keyword also suggest WHY it's useful (1 short sentence of reasoning) and which TIER it is:
-- "tier_1": high-confidence core capability — absolutely search for this
-- "tier_2": adjacent / second-order — worth searching
-- "tier_3": exploratory / stretch — might surface unexpected opportunities
+RULES — NON-NEGOTIABLE:
+- Use ONLY real, published NAICS codes (6 digits) and real PSC prefixes (letters + optional digit). Do not invent codes.
+- Each scope MUST combine NAICS + PSC — never NAICS alone, never PSC alone.
+- Prefer BROAD scopes that will actually return hits (hundreds to thousands of opportunities per year in federal contracting) over narrow scopes that perfectly describe the company's tech stack but return zero results. The goal is to get a dataset to analyze.
+- Each scope should have a clear strategic rationale.
+- Include at least one EXPLORATORY scope — adjacent/unexpected where the company's core capability could credibly apply.
+
+COMMON PSC PREFIXES (for reference):
+- A: Research & Development
+- B: Special Studies / Analyses (not R&D)
+- D: Information Technology & Telecommunications (D3 = IT services, D3XX are specific IT scopes)
+- R: Support Services (professional, administrative, management)
+- 70: General Purpose IT Equipment
+- 7A: IT Services (hardware-adjacent)
+- H: Quality Control / Testing
+- J: Maintenance / Repair
+- 6W: AI / Machine Learning
+
+FOR EACH SCOPE PROVIDE:
+- name: short memorable label (3-5 words)
+- scope_tag: lowercase snake_case slug (e.g. "core_prof_services")
+- tier: "primary" | "secondary" | "exploratory"
+- naics_codes: array of 1-4 NAICS codes (6 digits each)
+- psc_prefixes: array of 1-4 PSC prefixes (e.g. ["R-", "D3"])
+- rationale: 1-2 sentences on why this scope fits
+- correlation_score: integer 1-10 — how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match (only include such scopes if they're exploratory and there's a clear strategic angle).
+- correlation_rationale: 1 sentence explaining the score
+- estimated_annual_awards: rough integer estimate — how many federal awards per year are let under this NAICS+PSC combo across all agencies? Your best guess, grounded in what you know about federal contracting scale.
+- estimated_annual_dollars: rough integer dollar volume per year (e.g. 2000000000 = $2B). Be realistic.
+- estimated_size_label: one of "large" | "medium" | "small" | "niche"
+- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) — reality-checked SOW language for narrowing
+- strategic_angle: 1 sentence — "displace incumbent X", "subcontract under primes", "capture emerging Z demand"
+
+IMPORTANT: Don't inflate correlation scores. A score below 5 is a signal to the user that the scope is a stretch — include such scopes only when the strategic_angle genuinely justifies exploring anyway.
 
 Return ONLY valid JSON in a \`\`\`json block, no other text:
 
 \`\`\`json
 {
-  "keywords": [
-    {"term": "...", "rationale": "...", "tier": "tier_1"},
-    ...
+  "scopes": [
+    {
+      "name": "...",
+      "scope_tag": "...",
+      "tier": "primary",
+      "naics_codes": ["541511"],
+      "psc_prefixes": ["R-", "D3"],
+      "rationale": "...",
+      "correlation_score": 9,
+      "correlation_rationale": "...",
+      "estimated_annual_awards": 2500,
+      "estimated_annual_dollars": 8000000000,
+      "estimated_size_label": "large",
+      "keyword_layers": ["cloud services", "IT professional services"],
+      "strategic_angle": "..."
+    }
   ]
 }
 \`\`\``
 
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
-        maxTokens: 2000,
+        maxTokens: 3000,
       })
 
       const parsed = extractJsonBlock(text)
-      if (!parsed?.keywords || !Array.isArray(parsed.keywords)) {
-        throw new Error('No keywords returned from Claude — try again')
+      if (!parsed?.scopes || !Array.isArray(parsed.scopes)) {
+        throw new Error('No scopes returned from Claude — try again')
       }
 
-      // Merge into the commercial_profile.structured_data, preserving everything else
-      const existingStructured = commercialProfile.structured_data || {}
-      const updatedStructured = {
-        ...existingStructured,
-        round_1_keywords: parsed.keywords,
-        round_1_keywords_generated_at: new Date().toISOString(),
-      }
-
+      // Clear prior NON-PINNED scopes for this tenant before inserting new ones
       await supabase
-        .from('commercial_profile')
-        .update({
-          structured_data: updatedStructured,
-          updated_at: new Date().toISOString(),
-        })
+        .from('search_scopes')
+        .delete()
         .eq('tenant_id', activeTenant.id)
+        .eq('pinned', false)
+
+      const inserts = parsed.scopes.map((s: any) => ({
+        tenant_id: activeTenant.id,
+        scope_tag: s.scope_tag || slugify(s.name || 'scope'),
+        name: s.name || 'Untitled scope',
+        tier: (['primary', 'secondary', 'exploratory'].includes(s.tier) ? s.tier : 'secondary') as
+          | 'primary'
+          | 'secondary'
+          | 'exploratory',
+        rationale: s.rationale || null,
+        naics_codes: Array.isArray(s.naics_codes) ? s.naics_codes.slice(0, 10) : [],
+        psc_prefixes: Array.isArray(s.psc_prefixes) ? s.psc_prefixes.slice(0, 10) : [],
+        keyword_layers: Array.isArray(s.keyword_layers) ? s.keyword_layers.slice(0, 10) : null,
+        correlation_score:
+          typeof s.correlation_score === 'number'
+            ? Math.max(1, Math.min(10, Math.round(s.correlation_score)))
+            : null,
+        correlation_rationale: s.correlation_rationale || null,
+        estimated_annual_awards:
+          typeof s.estimated_annual_awards === 'number' ? s.estimated_annual_awards : null,
+        estimated_annual_dollars:
+          typeof s.estimated_annual_dollars === 'number' ? s.estimated_annual_dollars : null,
+        estimated_size_label: s.estimated_size_label || null,
+        strategic_angle: s.strategic_angle || null,
+        generated_by: 'claude_sonnet_4_5',
+      }))
+
+      if (inserts.length > 0) {
+        const { error: insertError } = await supabase.from('search_scopes').insert(inserts)
+        if (insertError) throw new Error(`Failed to save scopes: ${insertError.message}`)
+      }
 
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
     } catch (err: any) {
-      setBuildError(err.message || 'Keyword generation failed')
+      setBuildError(err.message || 'Scope generation failed')
       setBuildProgress(null)
     } finally {
       setBuilding(null)
     }
+  }
+
+  function slugify(s: string): string {
+    return s
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 50)
+  }
+
+  async function deleteScope(scopeId: string) {
+    if (!confirm('Delete this search scope?')) return
+    await supabase.from('search_scopes').delete().eq('id', scopeId)
+    if (activeTenant) await loadProfileData(activeTenant.id)
+  }
+
+  async function togglePinScope(scopeId: string, nextPinned: boolean) {
+    await supabase.from('search_scopes').update({ pinned: nextPinned }).eq('id', scopeId)
+    if (activeTenant) await loadProfileData(activeTenant.id)
   }
 
   async function setFederalPosture(posture: 'unknown' | 'has_federal' | 'no_federal') {
@@ -578,13 +658,14 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         />
       </div>
 
-      {/* Round 1 Search Keywords */}
+      {/* Round 1 Search Scopes */}
       {commercialProfile?.synthesized_text && (
-        <Round1KeywordsCard
-          keywords={(commercialProfile.structured_data as any)?.round_1_keywords || null}
-          generatedAt={(commercialProfile.structured_data as any)?.round_1_keywords_generated_at || null}
-          onGenerate={generateKeywords}
-          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search keywords…'}
+        <SearchScopesCard
+          scopes={searchScopes}
+          onGenerate={generateSearchScopes}
+          onDelete={deleteScope}
+          onTogglePin={togglePinScope}
+          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search scopes…'}
         />
       )}
 
@@ -2020,51 +2101,54 @@ function StructuredField({ label, value }: { label: string; value: any }) {
 }
 
 /* ========================================================================== */
-/* Round 1 Keywords card                                                      */
+/* Search Scopes card (Round 1 NAICS + PSC)                                   */
 /* ========================================================================== */
 
-interface Round1Keyword {
-  term: string
-  rationale?: string
-  tier?: 'tier_1' | 'tier_2' | 'tier_3'
-}
+type ScopeSortKey = 'correlation' | 'dollars' | 'awards' | 'tier' | 'name'
 
-function Round1KeywordsCard({
-  keywords,
-  generatedAt,
+function SearchScopesCard({
+  scopes,
   onGenerate,
+  onDelete,
+  onTogglePin,
   generating,
 }: {
-  keywords: Round1Keyword[] | null
-  generatedAt: string | null
+  scopes: SearchScope[]
   onGenerate: () => void
+  onDelete: (id: string) => void
+  onTogglePin: (id: string, nextPinned: boolean) => void
   generating: boolean
 }) {
-  const [copiedTerm, setCopiedTerm] = useState<string | null>(null)
+  const [sortKey, setSortKey] = useState<ScopeSortKey>('correlation')
+  const [hideLowCorrelation, setHideLowCorrelation] = useState(false)
 
-  async function copyTerm(term: string) {
-    try {
-      await navigator.clipboard.writeText(term)
-      setCopiedTerm(term)
-      setTimeout(() => setCopiedTerm(null), 1500)
-    } catch {}
-  }
+  const activeScopes = scopes.filter((s) => !s.archived)
+  const visibleScopes = hideLowCorrelation
+    ? activeScopes.filter((s) => (s.correlation_score ?? 0) >= 5)
+    : activeScopes
 
-  async function copyAll() {
-    if (!keywords || keywords.length === 0) return
-    const list = keywords.map((k) => k.term).join('\n')
-    try {
-      await navigator.clipboard.writeText(list)
-      setCopiedTerm('__all__')
-      setTimeout(() => setCopiedTerm(null), 1500)
-    } catch {}
-  }
+  const tierRank: Record<string, number> = { primary: 0, secondary: 1, exploratory: 2 }
 
-  const searchLinks = (term: string) => [
-    { label: 'SAM.gov', url: `https://sam.gov/opp/search?keywords=${encodeURIComponent(term)}` },
-    { label: 'HigherGov', url: `https://www.highergov.com/search/?keyword=${encodeURIComponent(term)}` },
-    { label: 'USASpending', url: `https://www.usaspending.gov/search/?keywords=${encodeURIComponent(term)}` },
-  ]
+  const sorted = [...visibleScopes].sort((a, b) => {
+    // Pinned always on top
+    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+    switch (sortKey) {
+      case 'correlation':
+        return (b.correlation_score ?? 0) - (a.correlation_score ?? 0)
+      case 'dollars':
+        return (b.estimated_annual_dollars ?? 0) - (a.estimated_annual_dollars ?? 0)
+      case 'awards':
+        return (b.estimated_annual_awards ?? 0) - (a.estimated_annual_awards ?? 0)
+      case 'tier':
+        return (tierRank[a.tier] ?? 99) - (tierRank[b.tier] ?? 99)
+      case 'name':
+        return a.name.localeCompare(b.name)
+      default:
+        return 0
+    }
+  })
+
+  const anyScopes = activeScopes.length > 0
 
   return (
     <div
@@ -2094,7 +2178,7 @@ function Round1KeywordsCard({
                 margin: 0,
               }}
             >
-              Round 1 Search Keywords
+              Round 1 Search Scopes
             </h2>
             <Badge tone="info">Starting point</Badge>
           </div>
@@ -2103,27 +2187,22 @@ function Round1KeywordsCard({
               fontSize: '14px',
               color: 'var(--color-text-secondary)',
               margin: '6px 0 0',
-              maxWidth: '680px',
+              maxWidth: '720px',
             }}
           >
-            Federal search terms derived from the commercial profile. Use these on SAM.gov,
-            HigherGov, or USASpending to pull your Round 1 opportunity data. Tier 1 first,
-            then Tier 2 if you need more coverage.
+            Real federal taxonomy — NAICS codes cross-pollinated with PSC prefixes. Each scope
+            carries a correlation score (1–10) and a market-size estimate. Search the highest
+            correlation × dollar-volume first; stop when marginal return falls off.
           </p>
         </div>
-        {keywords && keywords.length > 0 && (
-          <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-            <Button variant="secondary" size="small" onClick={copyAll}>
-              {copiedTerm === '__all__' ? '✓ Copied' : 'Copy all'}
-            </Button>
-            <Button size="small" onClick={onGenerate} disabled={generating}>
-              {generating ? 'Regenerating…' : 'Regenerate'}
-            </Button>
-          </div>
+        {anyScopes && (
+          <Button size="small" onClick={onGenerate} disabled={generating}>
+            {generating ? 'Regenerating…' : 'Regenerate'}
+          </Button>
         )}
       </div>
 
-      {!keywords || keywords.length === 0 ? (
+      {!anyScopes ? (
         <Card padding="standard">
           <div
             style={{
@@ -2135,64 +2214,82 @@ function Round1KeywordsCard({
               gap: '12px',
             }}
           >
-            <div
-              style={{
-                fontSize: '14px',
-                color: 'var(--color-text-secondary)',
-                maxWidth: '520px',
-              }}
-            >
-              No keywords generated yet. Once you click below, the system will propose 8-12
-              federal search terms you can drop straight into SAM.gov.
+            <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)', maxWidth: '560px' }}>
+              No scopes generated yet. Click below and the system will propose 6–10 NAICS+PSC
+              combinations scored by correlation to the company and sized by estimated market.
             </div>
             <Button onClick={onGenerate} disabled={generating}>
-              {generating ? 'Generating…' : 'Generate Round 1 keywords'}
+              {generating ? 'Generating…' : 'Generate Round 1 scopes'}
             </Button>
           </div>
         </Card>
       ) : (
         <>
-          {generatedAt && (
-            <div
+          {/* Controls */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '16px',
+              marginBottom: '12px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Sort by
+              </span>
+              <SortPill active={sortKey === 'correlation'} onClick={() => setSortKey('correlation')}>
+                Correlation
+              </SortPill>
+              <SortPill active={sortKey === 'dollars'} onClick={() => setSortKey('dollars')}>
+                Est. $ volume
+              </SortPill>
+              <SortPill active={sortKey === 'awards'} onClick={() => setSortKey('awards')}>
+                Est. awards
+              </SortPill>
+              <SortPill active={sortKey === 'tier'} onClick={() => setSortKey('tier')}>
+                Tier
+              </SortPill>
+              <SortPill active={sortKey === 'name'} onClick={() => setSortKey('name')}>
+                Name
+              </SortPill>
+            </div>
+            <label
               style={{
-                fontSize: '11px',
-                color: 'var(--color-text-tertiary)',
-                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                fontSize: '12px',
+                color: 'var(--color-text-secondary)',
+                cursor: 'pointer',
               }}
             >
-              Generated {new Date(generatedAt).toLocaleString()}
-            </div>
-          )}
+              <input
+                type="checkbox"
+                checked={hideLowCorrelation}
+                onChange={(e) => setHideLowCorrelation(e.target.checked)}
+              />
+              Hide correlation &lt; 5
+            </label>
+          </div>
+
+          {/* Scope list */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {/* Group by tier */}
-            {(['tier_1', 'tier_2', 'tier_3'] as const).map((tier) => {
-              const group = keywords.filter((k) => (k.tier || 'tier_2') === tier)
-              if (group.length === 0) return null
-              const tierLabels = {
-                tier_1: { label: 'Tier 1 — Core', tone: 'success' as const },
-                tier_2: { label: 'Tier 2 — Adjacent', tone: 'info' as const },
-                tier_3: { label: 'Tier 3 — Exploratory', tone: 'neutral' as const },
-              }
-              const meta = tierLabels[tier]
-              return (
-                <div key={tier} style={{ marginBottom: '8px' }}>
-                  <div style={{ marginBottom: '8px' }}>
-                    <Badge tone={meta.tone}>{meta.label}</Badge>
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {group.map((kw, i) => (
-                      <KeywordRow
-                        key={`${tier}-${i}`}
-                        keyword={kw}
-                        copied={copiedTerm === kw.term}
-                        onCopy={() => copyTerm(kw.term)}
-                        searchLinks={searchLinks(kw.term)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              )
-            })}
+            {sorted.length === 0 ? (
+              <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '20px', textAlign: 'center' }}>
+                No scopes match the current filter.
+              </div>
+            ) : (
+              sorted.map((scope) => (
+                <ScopeRow
+                  key={scope.id}
+                  scope={scope}
+                  onDelete={() => onDelete(scope.id)}
+                  onTogglePin={() => onTogglePin(scope.id, !scope.pinned)}
+                />
+              ))
+            )}
           </div>
         </>
       )}
@@ -2200,91 +2297,340 @@ function Round1KeywordsCard({
   )
 }
 
-function KeywordRow({
-  keyword,
-  copied,
-  onCopy,
-  searchLinks,
+function SortPill({
+  active,
+  onClick,
+  children,
 }: {
-  keyword: Round1Keyword
-  copied: boolean
-  onCopy: () => void
-  searchLinks: { label: string; url: string }[]
+  active: boolean
+  onClick: () => void
+  children: React.ReactNode
 }) {
   return (
+    <button
+      onClick={onClick}
+      style={{
+        fontSize: '12px',
+        padding: '4px 10px',
+        border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-hairline)'}`,
+        borderRadius: 'var(--radius-input)',
+        background: active ? 'var(--color-accent)' : 'transparent',
+        color: active ? 'white' : 'var(--color-text-secondary)',
+        cursor: 'pointer',
+        fontFamily: 'inherit',
+        fontWeight: active ? 500 : 400,
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function ScopeRow({
+  scope,
+  onDelete,
+  onTogglePin,
+}: {
+  scope: SearchScope
+  onDelete: () => void
+  onTogglePin: () => void
+}) {
+  const naicsParam = scope.naics_codes.join(',')
+  const pscParam = scope.psc_prefixes.join(',')
+  const higherGovUrl = `https://www.highergov.com/search/?naics=${encodeURIComponent(naicsParam)}&psc=${encodeURIComponent(pscParam)}`
+
+  const lowCorrelation =
+    scope.correlation_score !== null && scope.correlation_score !== undefined && scope.correlation_score < 5
+
+  const hasActual = scope.actual_award_count !== null && scope.actual_award_count !== undefined
+
+  return (
     <Card padding="standard">
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '16px',
-          flexWrap: 'wrap',
-        }}
-      >
-        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: '15px',
-              fontWeight: 600,
-              color: 'var(--color-text-primary)',
-              fontFamily: 'var(--font-mono)',
-              marginBottom: keyword.rationale ? '4px' : 0,
-            }}
-          >
-            {keyword.term}
-          </div>
-          {keyword.rationale && (
-            <div
+      {lowCorrelation && (
+        <div
+          style={{
+            marginBottom: '10px',
+            padding: '6px 10px',
+            background: 'rgba(212, 146, 10, 0.08)',
+            color: 'var(--color-warning)',
+            borderRadius: 'var(--radius-input)',
+            fontSize: '12px',
+            border: '1px solid rgba(212, 146, 10, 0.2)',
+          }}
+        >
+          ⚠ Low correlation ({scope.correlation_score}/10) — consider before searching.
+        </div>
+      )}
+
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '10px' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px', flexWrap: 'wrap' }}>
+            <h4 style={{ fontSize: '15px', fontWeight: 600, margin: 0, color: 'var(--color-text-primary)' }}>
+              {scope.name}
+            </h4>
+            {scope.pinned && <Badge tone="warning">Pinned</Badge>}
+            <TierBadge tier={scope.tier} />
+            <code
               style={{
-                fontSize: '12px',
-                color: 'var(--color-text-secondary)',
-                lineHeight: 1.5,
+                fontSize: '10px',
+                fontFamily: 'var(--font-mono)',
+                color: 'var(--color-text-tertiary)',
+                background: 'var(--color-bg-subtle)',
+                padding: '2px 6px',
+                borderRadius: '4px',
               }}
             >
-              {keyword.rationale}
-            </div>
+              #{scope.scope_tag}
+            </code>
+          </div>
+          {scope.rationale && (
+            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>
+              {scope.rationale}
+            </p>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-          {searchLinks.map((link) => (
-            <a
-              key={link.label}
-              href={link.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                fontSize: '12px',
-                padding: '4px 10px',
-                border: '1px solid var(--color-hairline)',
-                borderRadius: 'var(--radius-input)',
-                color: 'var(--color-text-secondary)',
-                textDecoration: 'none',
-                background: 'transparent',
-                whiteSpace: 'nowrap',
-              }}
-            >
-              {link.label} →
-            </a>
-          ))}
-          <button
-            onClick={onCopy}
-            style={{
-              fontSize: '12px',
-              padding: '4px 10px',
-              border: '1px solid var(--color-accent)',
-              borderRadius: 'var(--radius-input)',
-              color: 'var(--color-accent)',
-              background: 'transparent',
-              cursor: 'pointer',
-              fontFamily: 'inherit',
-              whiteSpace: 'nowrap',
-              minWidth: '64px',
-            }}
-          >
-            {copied ? '✓ Copied' : 'Copy'}
-          </button>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
+          <CorrelationBadge score={scope.correlation_score} />
+          <IconBtn onClick={onTogglePin} title={scope.pinned ? 'Unpin' : 'Pin'}>
+            {scope.pinned ? '★' : '☆'}
+          </IconBtn>
+          <IconBtn onClick={onDelete} title="Delete" danger>
+            ×
+          </IconBtn>
         </div>
+      </div>
+
+      {scope.correlation_rationale && (
+        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '10px', fontStyle: 'italic' }}>
+          {scope.correlation_rationale}
+        </div>
+      )}
+
+      {/* Metrics row */}
+      <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', flexWrap: 'wrap', padding: '8px 10px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
+        <Metric
+          label={hasActual ? 'Actual awards' : 'Est. awards/yr'}
+          value={
+            hasActual
+              ? formatInt(scope.actual_award_count)
+              : formatInt(scope.estimated_annual_awards)
+          }
+          tone={hasActual ? 'success' : 'default'}
+        />
+        <Metric
+          label={hasActual ? 'Actual $ volume' : 'Est. $ volume/yr'}
+          value={
+            hasActual
+              ? formatDollars(scope.actual_dollar_volume)
+              : formatDollars(scope.estimated_annual_dollars)
+          }
+          tone={hasActual ? 'success' : 'default'}
+        />
+        {scope.estimated_size_label && (
+          <Metric label="Size" value={scope.estimated_size_label} />
+        )}
+        {hasActual && scope.last_imported_at && (
+          <Metric label="Imported" value={new Date(scope.last_imported_at).toLocaleDateString()} />
+        )}
+      </div>
+
+      {/* NAICS + PSC chips */}
+      <div style={{ display: 'flex', gap: '16px', marginBottom: '10px', flexWrap: 'wrap' }}>
+        <div>
+          <div style={miniLabelStyle}>NAICS</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {scope.naics_codes.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
+            ) : (
+              scope.naics_codes.map((code) => <Badge key={code}>{code}</Badge>)
+            )}
+          </div>
+        </div>
+        <div>
+          <div style={miniLabelStyle}>PSC</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {scope.psc_prefixes.length === 0 ? (
+              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
+            ) : (
+              scope.psc_prefixes.map((p) => <Badge key={p}>{p}</Badge>)
+            )}
+          </div>
+        </div>
+      </div>
+
+      {scope.keyword_layers && scope.keyword_layers.length > 0 && (
+        <div style={{ marginBottom: '10px' }}>
+          <div style={miniLabelStyle}>Optional keyword layers</div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+            {scope.keyword_layers.map((k, i) => (
+              <Badge key={i} tone="neutral">{k}</Badge>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {scope.strategic_angle && (
+        <div style={{ marginBottom: '10px', padding: '8px 10px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
+          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Strategic angle
+          </div>
+          <div style={{ fontSize: '13px', color: 'var(--color-text-primary)' }}>
+            {scope.strategic_angle}
+          </div>
+        </div>
+      )}
+
+      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+        <a href={higherGovUrl} target="_blank" rel="noopener noreferrer" style={extLinkStyle}>
+          Search on HigherGov →
+        </a>
       </div>
     </Card>
   )
+}
+
+function TierBadge({ tier }: { tier: string }) {
+  const map: Record<string, { tone: 'success' | 'info' | 'neutral'; label: string }> = {
+    primary: { tone: 'success', label: 'Primary' },
+    secondary: { tone: 'info', label: 'Secondary' },
+    exploratory: { tone: 'neutral', label: 'Exploratory' },
+  }
+  const m = map[tier] || { tone: 'neutral' as const, label: tier }
+  return <Badge tone={m.tone}>{m.label}</Badge>
+}
+
+function CorrelationBadge({ score }: { score: number | null }) {
+  if (score === null || score === undefined) {
+    return (
+      <div
+        style={{
+          fontSize: '11px',
+          color: 'var(--color-text-tertiary)',
+          fontFamily: 'var(--font-mono)',
+          minWidth: '48px',
+          textAlign: 'center',
+          padding: '4px 8px',
+          background: 'var(--color-bg-subtle)',
+          borderRadius: 'var(--radius-input)',
+        }}
+      >
+        —
+      </div>
+    )
+  }
+  const color = score >= 8 ? '#34C759' : score >= 6 ? '#007AFF' : score >= 4 ? '#D4920A' : '#FF3B30'
+  const bg = score >= 8 ? 'rgba(52,199,89,0.12)' : score >= 6 ? 'rgba(0,122,255,0.12)' : score >= 4 ? 'rgba(212,146,10,0.12)' : 'rgba(255,59,48,0.12)'
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        padding: '4px 10px',
+        background: bg,
+        border: `1px solid ${color}40`,
+        borderRadius: 'var(--radius-input)',
+        minWidth: '56px',
+      }}
+      title={`Correlation score: ${score}/10`}
+    >
+      <div style={{ fontSize: '15px', fontFamily: 'var(--font-mono)', fontWeight: 600, color, lineHeight: 1 }}>
+        {score}
+      </div>
+      <div style={{ fontSize: '9px', color, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '2px' }}>
+        /10
+      </div>
+    </div>
+  )
+}
+
+function Metric({
+  label,
+  value,
+  tone = 'default',
+}: {
+  label: string
+  value: string
+  tone?: 'default' | 'success'
+}) {
+  return (
+    <div>
+      <div style={miniLabelStyle}>{label}</div>
+      <div
+        style={{
+          fontSize: '13px',
+          fontFamily: 'var(--font-mono)',
+          fontWeight: 500,
+          color: tone === 'success' ? 'var(--color-success)' : 'var(--color-text-primary)',
+        }}
+      >
+        {value}
+      </div>
+    </div>
+  )
+}
+
+function IconBtn({
+  onClick,
+  title,
+  danger,
+  children,
+}: {
+  onClick: () => void
+  title: string
+  danger?: boolean
+  children: React.ReactNode
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: 'transparent',
+        border: 'none',
+        color: danger ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
+        cursor: 'pointer',
+        padding: '4px 8px',
+        fontSize: '14px',
+        fontFamily: 'inherit',
+        lineHeight: 1,
+        borderRadius: 'var(--radius-input)',
+      }}
+    >
+      {children}
+    </button>
+  )
+}
+
+function formatInt(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  return n.toLocaleString()
+}
+
+function formatDollars(n: number | null | undefined): string {
+  if (n === null || n === undefined) return '—'
+  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
+  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
+  return `$${n}`
+}
+
+const miniLabelStyle: CSSProperties = {
+  fontSize: '10px',
+  fontWeight: 500,
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  color: 'var(--color-text-tertiary)',
+  marginBottom: '4px',
+}
+
+const extLinkStyle: CSSProperties = {
+  fontSize: '12px',
+  padding: '5px 12px',
+  border: '1px solid var(--color-hairline)',
+  borderRadius: 'var(--radius-input)',
+  color: 'var(--color-text-secondary)',
+  textDecoration: 'none',
+  background: 'transparent',
+  whiteSpace: 'nowrap',
 }

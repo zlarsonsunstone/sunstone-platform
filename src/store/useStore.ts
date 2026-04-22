@@ -9,6 +9,7 @@ import type {
   FederalProfile,
   Reconciliation,
   StrategicProfile,
+  SearchScope,
 } from '@/lib/types'
 import { supabase } from '@/lib/supabase'
 
@@ -41,6 +42,7 @@ interface StoreState {
   reconciliation: Reconciliation | null
   strategicProfiles: StrategicProfile[]
   activeStrategicProfileId: string | null
+  searchScopes: SearchScope[]
 
   // Actions
   setCurrentUser: (user: User | null) => void
@@ -71,6 +73,7 @@ export const useStore = create<StoreState>()(
       reconciliation: null,
       strategicProfiles: [],
       activeStrategicProfileId: null,
+      searchScopes: [],
 
       setCurrentUser: (user) => {
         set({ currentUser: user })
@@ -140,6 +143,7 @@ export const useStore = create<StoreState>()(
           reconciliation: null,
           strategicProfiles: [],
           activeStrategicProfileId: null,
+          searchScopes: [],
         })
         // Reset accent color to default
         document.documentElement.style.removeProperty('--color-accent')
@@ -237,7 +241,7 @@ export const useStore = create<StoreState>()(
       },
 
       loadProfileData: async (tenantId: string) => {
-        const [cp, fp, rec, sp] = await Promise.all([
+        const [cp, fp, rec, sp, scopes] = await Promise.all([
           supabase.from('commercial_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
           supabase.from('federal_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
           supabase
@@ -254,6 +258,14 @@ export const useStore = create<StoreState>()(
             .is('deleted_at', null)
             .order('is_default', { ascending: false })
             .order('created_at'),
+          supabase
+            .from('search_scopes')
+            .select('*')
+            .eq('tenant_id', tenantId)
+            .is('deleted_at', null)
+            .order('pinned', { ascending: false })
+            .order('tier', { ascending: true })
+            .order('generated_at', { ascending: false }),
         ])
         const strategicProfiles = (sp.data as StrategicProfile[]) || []
         const existingActive = get().activeStrategicProfileId
@@ -268,6 +280,7 @@ export const useStore = create<StoreState>()(
           reconciliation: (rec.data as Reconciliation) || null,
           strategicProfiles,
           activeStrategicProfileId: defaultStrat?.id || null,
+          searchScopes: (scopes.data as SearchScope[]) || [],
         })
       },
 
