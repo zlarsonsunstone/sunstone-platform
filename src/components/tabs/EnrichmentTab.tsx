@@ -56,6 +56,8 @@ export function EnrichmentTab() {
   const [viewingRecord, setViewingRecord] = useState<RecordRow | null>(null)
   const [pendingUpload, setPendingUpload] = useState<File | null>(null)
   const [selectedScopeId, setSelectedScopeId] = useState<string>('')
+  const [uploadThreshold, setUploadThreshold] = useState<number>(0)
+  const [parsedRowCount, setParsedRowCount] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadSessions = async () => {
@@ -92,11 +94,22 @@ export function EnrichmentTab() {
 
   const hasProfile = !!commercialProfile?.synthesized_text
 
-  const handleFileChosen = (file: File) => {
-    // Stage 1: user picked a file. Show the scope picker modal before parsing.
+  const handleFileChosen = async (file: File) => {
+    // Stage 1: user picked a file. Parse the row count so the scope picker can
+    // show how many records will be ingested. Threshold is set by the user in
+    // the modal, defaults to 0 (keep everything).
     setError(null)
     setPendingUpload(file)
     setSelectedScopeId('')
+    setUploadThreshold(0)
+    setParsedRowCount(null)
+    try {
+      const text = await file.text()
+      const rows = parseCsv(text)
+      setParsedRowCount(rows.length)
+    } catch {
+      setParsedRowCount(null)
+    }
   }
 
   const submitUpload = async () => {
@@ -109,16 +122,19 @@ export function EnrichmentTab() {
       const rows = parseCsv(text)
       const mapped = rows.map(mapCsvRowToRecord)
 
-      // Pre-enrichment filter: obligated > tenant.value_threshold
+      // Apply the per-upload threshold (user-controlled, not a system setting).
+      // Default = 0 = keep all records. Keep records with value >= threshold.
+      // If a record has no dollar value at all but threshold is 0, still keep it.
       const filtered = mapped.filter((r: any) => {
         const v = typeof r.obligated === 'number' ? r.obligated : null
-        return v !== null && v >= tenant.value_threshold
+        if (uploadThreshold === 0) return true  // keep everything at threshold 0
+        return v !== null && v >= uploadThreshold
       })
 
       if (filtered.length === 0) {
         setError(
-          `CSV parsed ${rows.length} rows but none passed the value threshold ($${tenant.value_threshold.toLocaleString()}). ` +
-          `Either the file has no dollar-value column we recognize, or all values are below the threshold. Adjust the threshold in Admin or upload a different export.`
+          `CSV parsed ${rows.length} rows but none passed the value threshold ($${uploadThreshold.toLocaleString()}). ` +
+          `Either the file has no dollar-value column we recognize, or all values are below your threshold. Lower the threshold or upload a different export.`
         )
         setUploading(false)
         setPendingUpload(null)
@@ -204,6 +220,8 @@ export function EnrichmentTab() {
   const cancelUpload = () => {
     setPendingUpload(null)
     setSelectedScopeId('')
+    setUploadThreshold(0)
+    setParsedRowCount(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
@@ -497,7 +515,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       eyebrow={`Turn ${Math.min(nextIteration, tenant.turn_count || 4)} of ${tenant.turn_count || 4}`}
       title="Enrichment"
       description={
-        `Drop a SAM.gov or HigherGov CSV export. Records above $${tenant.value_threshold.toLocaleString()} are scored against ${tenant.name}'s profile.`
+        `Drop a SAM.gov or HigherGov CSV export. Records get analyzed against ${tenant.name}'s commercial profile to extract Round 1 keyword candidates.`
       }
       actions={
         activeSession && activeSession.status !== 'complete' && !enriching ? (
@@ -555,7 +573,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           Drop Turn {nextIteration} export here
         </div>
         <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
-          CSV file from SAM.gov, HigherGov, or USASpending · minimum value ${tenant.value_threshold.toLocaleString()}
+          CSV file from SAM.gov, HigherGov, or USASpending
         </div>
         <input
           ref={fileInputRef}
@@ -783,6 +801,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       {pendingUpload && (
         <ScopePickerModal
           fileName={pendingUpload.name}
+          rowCount={parsedRowCount}
+          threshold={uploadThreshold}
+          onChangeThreshold={setUploadThreshold}
           scopes={searchScopes.filter((s) => !s.archived)}
           selectedScopeId={selectedScopeId}
           onSelectScope={setSelectedScopeId}
@@ -1146,6 +1167,9 @@ function RecordStatusPill({ status }: { status: string | null }) {
 
 function ScopePickerModal({
   fileName,
+  rowCount,
+  threshold,
+  onChangeThreshold,
   scopes,
   selectedScopeId,
   onSelectScope,
@@ -1154,6 +1178,9 @@ function ScopePickerModal({
   uploading,
 }: {
   fileName: string
+  rowCount: number | null
+  threshold: number
+  onChangeThreshold: (n: number) => void
   scopes: any[]
   selectedScopeId: string
   onSelectScope: (id: string) => void
@@ -1196,18 +1223,60 @@ function ScopePickerModal({
         }}
       >
         <h2 style={{ fontSize: '22px', fontWeight: 600, marginTop: 0, marginBottom: '4px' }}>
-          Tag this upload
+          Confirm upload
         </h2>
         <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '20px' }}>
-          Which search scope did <strong>{fileName}</strong> come from? This tags every record for provenance so you can trace analysis back to the original scope.
+          <strong>{fileName}</strong>
+          {rowCount !== null && (
+            <>
+              {' '}· <span style={{ fontFamily: 'var(--font-mono)' }}>{rowCount.toLocaleString()}</span> rows parsed
+            </>
+          )}
         </p>
 
+        {/* Threshold */}
+        <div style={{ marginBottom: '20px' }}>
+          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            Minimum obligated value
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>$</span>
+            <input
+              type="number"
+              min={0}
+              step={1000}
+              value={threshold}
+              onChange={(e) => onChangeThreshold(Math.max(0, parseInt(e.target.value || '0', 10)))}
+              style={{
+                flex: 1,
+                fontSize: '14px',
+                padding: '8px 10px',
+                border: '1px solid var(--color-hairline)',
+                borderRadius: 'var(--radius-input)',
+                background: 'var(--color-bg-primary)',
+                color: 'var(--color-text-primary)',
+                fontFamily: 'var(--font-mono)',
+              }}
+            />
+            <Button variant="secondary" size="small" onClick={() => onChangeThreshold(0)}>
+              $0 (keep all)
+            </Button>
+          </div>
+          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '4px' }}>
+            Records below this value will be skipped. Set to 0 to keep every row regardless of dollar amount.
+          </div>
+        </div>
+
+        {/* Scope picker */}
+        <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          Which scope did this come from?
+        </div>
         <div
           style={{
             display: 'flex',
             flexDirection: 'column',
             gap: '6px',
-            maxHeight: '400px',
+            maxHeight: '320px',
             overflowY: 'auto',
             marginBottom: '20px',
             padding: '4px',
