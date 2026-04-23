@@ -37,7 +37,7 @@ export async function resetTenantDownstream(tenantId: string): Promise<{
 
     const { data: commercialProfiles } = await supabase
       .from('commercial_profile')
-      .select('built_at, sources_count, synthesized_text')
+      .select('last_built_at, source_count, synthesized_text')
       .eq('tenant_id', tenantId)
 
     const step1Summary = {
@@ -54,8 +54,8 @@ export async function resetTenantDownstream(tenantId: string): Promise<{
       })),
       commercial_profile: commercialProfiles?.[0]
         ? {
-            built_at: commercialProfiles[0].built_at,
-            sources_count: commercialProfiles[0].sources_count,
+            last_built_at: commercialProfiles[0].last_built_at,
+            source_count: commercialProfiles[0].source_count,
             synthesized_text_length: (commercialProfiles[0].synthesized_text || '').length,
           }
         : null,
