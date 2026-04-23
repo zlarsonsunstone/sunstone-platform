@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabase'
 import { useStore } from '@/store/useStore'
 import { parseCsv, mapCsvRowToRecord } from '@/lib/csv'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
+import { logMethodology } from '@/lib/methodologyLog'
 import { TabPage } from '../TabPage'
 import { Card } from '../Card'
 import { Button } from '../Button'
@@ -376,6 +377,35 @@ export function EnrichmentTab() {
         console.log(msg)
       }
 
+      // === METHODOLOGY LOG: upload + dedupe event ===
+      await logMethodology({
+        tenantId: tenant.id,
+        sessionId: session.session_id,
+        roundNumber: currentRound,
+        turnNumber: nextTurnInRound,
+        eventType: 'session_upload',
+        actor: 'user',
+        summary: `Round ${currentRound} · Turn ${nextTurnInRound}: ${finalDisplayName}`,
+        details: {
+          file_name: file.name,
+          parsed_rows: filtered.length,
+          new_records: newRecords.length,
+          existing_retagged: existingToRetag.length,
+          true_duplicates: trueDupes.length,
+          effective_count: effectiveCount,
+          scope: scope
+            ? {
+                id: scope.id,
+                tag: scope.scope_tag,
+                name: scope.name,
+                correlation_score: scope.correlation_score,
+              }
+            : null,
+          methodology,
+          display_name: finalDisplayName,
+        },
+      })
+
       await loadSessions()
       await loadRecordsForSession(session)
       setUploading(false)
@@ -510,6 +540,36 @@ export function EnrichmentTab() {
         done: 0,
         total: batches.length,
         label: `Starting analysis of ${allRecords.length.toLocaleString()} records across ${batches.length} batches…`,
+      })
+
+      // === METHODOLOGY LOG: analysis start ===
+      const analysisStartedAt = new Date()
+      await logMethodology({
+        tenantId: tenant.id,
+        sessionId: session.session_id,
+        roundNumber: session.round_number || currentRound,
+        turnNumber: session.turn_number || nextTurnInRound,
+        eventType: 'analysis_start',
+        actor: 'claude-haiku-4-5-20251001',
+        summary: `Starting batched keyword analysis: ${allRecords.length.toLocaleString()} records, ${batches.length} batches of ${BATCH_SIZE}, ${CONCURRENCY} concurrent`,
+        details: {
+          total_records: allRecords.length,
+          total_dollars: totalDollars,
+          batch_size: BATCH_SIZE,
+          concurrency: CONCURRENCY,
+          batches: batches.length,
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4000,
+          noise_floor_dollars: 500_000,
+          retry_policy: '3x exponential backoff (1s, 2s, 4s) per batch',
+          merge_policy: {
+            count: 'sum across batches',
+            dollar_volume: 'sum across batches',
+            relevance_score: 'max across batches',
+            noise_floor: 'phrase kept if in >=2 batches OR >=$500K total',
+          },
+          started_at: analysisStartedAt.toISOString(),
+        },
       })
 
       // === STEP 3: Run batches in waves with retry ===
@@ -730,6 +790,35 @@ Return ONLY JSON in a \`\`\`json block:
         })
         .eq('session_id', session.session_id)
 
+      // === METHODOLOGY LOG: analysis complete ===
+      const runtimeMs = Date.now() - analysisStartedAt.getTime()
+      await logMethodology({
+        tenantId: tenant.id,
+        sessionId: session.session_id,
+        roundNumber: session.round_number || currentRound,
+        turnNumber: session.turn_number || nextTurnInRound,
+        eventType: 'analysis_complete',
+        actor: 'claude-haiku-4-5-20251001',
+        summary: `Analysis complete in ${(runtimeMs / 1000).toFixed(1)}s. ${normalized.length} phrases surfaced from ${allRecords.length.toLocaleString()} records.`,
+        details: {
+          runtime_ms: runtimeMs,
+          runtime_seconds: runtimeMs / 1000,
+          total_records: allRecords.length,
+          total_dollars: totalDollars,
+          batches_run: batches.length,
+          phrases_before_floor: merged.size,
+          phrases_after_floor: normalized.length,
+          phrases_filtered_by_floor: merged.size - normalized.length,
+          noise_floor_dollars: NOISE_FLOOR_DOLLARS,
+          top_5_phrases: normalized.slice(0, 5).map((p) => ({
+            phrase: p.phrase,
+            dollar_volume: p.dollar_volume,
+            count: p.count,
+            relevance_score: p.relevance_score,
+          })),
+        },
+      })
+
       await loadSessions()
       const { data: updatedSession } = await supabase
         .from('enrichment_sessions')
@@ -742,6 +831,19 @@ Return ONLY JSON in a \`\`\`json block:
       setAnalyzing(false)
       setProgress(null)
     } catch (err: any) {
+      // === METHODOLOGY LOG: analysis failed ===
+      if (tenant) {
+        await logMethodology({
+          tenantId: tenant.id,
+          sessionId: session.session_id,
+          roundNumber: session.round_number || currentRound,
+          turnNumber: session.turn_number || nextTurnInRound,
+          eventType: 'analysis_failed',
+          actor: 'system',
+          summary: `Analysis failed: ${err?.message || 'unknown error'}`,
+          details: { error: err?.message, stack: err?.stack?.slice(0, 2000) },
+        })
+      }
       setError(err?.message || 'Keyword analysis failed')
       setAnalyzing(false)
       setProgress(null)
@@ -777,6 +879,29 @@ Return ONLY JSON in a \`\`\`json block:
       setError(`Failed to save keywords: ${insertError.message}`)
       return
     }
+
+    // === METHODOLOGY LOG: keywords saved to bank ===
+    await logMethodology({
+      tenantId: tenant.id,
+      sessionId: session.session_id,
+      roundNumber: session.round_number || 1,
+      turnNumber: session.turn_number || 1,
+      eventType: 'keywords_saved_to_bank',
+      actor: 'user',
+      summary: `User saved ${phrases.length} phrases to Round 1 keyword bank from session "${session.display_name || session.file_name}"`,
+      details: {
+        scope_tag: scopeTag,
+        scope_id: scopeId,
+        phrase_count: phrases.length,
+        phrases: phrases.map((p: any) => ({
+          phrase: p.phrase,
+          relevance_score: p.relevance_score,
+          dollar_volume: p.dollar_volume,
+          count: p.count,
+          rationale: p.relevance_rationale,
+        })),
+      },
+    })
   }
 
   // @ts-expect-error kept for future round 2+ fit scoring reinstatement
@@ -909,6 +1034,14 @@ Return ONLY JSON in a \`\`\`json block:
     const nextRound = currentRound + 1
     if (!confirm(`Move to Round ${nextRound}? You can always return to Round ${currentRound} later.`)) return
     await supabase.from('tenants').update({ current_round: nextRound }).eq('id', tenant.id)
+    await logMethodology({
+      tenantId: tenant.id,
+      roundNumber: nextRound,
+      eventType: 'round_advanced',
+      actor: 'user',
+      summary: `User advanced from Round ${currentRound} to Round ${nextRound}`,
+      details: { from_round: currentRound, to_round: nextRound, turns_in_previous_round: maxTurnInRound },
+    })
     await useStore.getState().setActiveTenant(tenant.id)
   }
 
@@ -917,6 +1050,14 @@ Return ONLY JSON in a \`\`\`json block:
     const prevRound = currentRound - 1
     if (!confirm(`Return to Round ${prevRound}? You'll be able to add more turns to that round.`)) return
     await supabase.from('tenants').update({ current_round: prevRound }).eq('id', tenant.id)
+    await logMethodology({
+      tenantId: tenant.id,
+      roundNumber: prevRound,
+      eventType: 'round_returned',
+      actor: 'user',
+      summary: `User returned from Round ${currentRound} to Round ${prevRound}`,
+      details: { from_round: currentRound, to_round: prevRound },
+    })
     await useStore.getState().setActiveTenant(tenant.id)
   }
 
