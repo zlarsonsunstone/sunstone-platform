@@ -55,7 +55,11 @@ export function EnrichmentTab() {
   const [uploading, setUploading] = useState(false)
   const [_enriching, setEnriching] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
-  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
+  const [progress, setProgress] = useState<{
+    done: number
+    total: number
+    label?: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [viewingRecord, setViewingRecord] = useState<RecordRow | null>(null)
   const [pendingUpload, setPendingUpload] = useState<File | null>(null)
@@ -463,75 +467,111 @@ export function EnrichmentTab() {
     }
     setAnalyzing(true)
     setError(null)
+    setProgress(null)
     try {
-      const { data: allRecords } = await supabase
-        .from('enrichment_records')
-        .select('obligated, description')
-        .eq('session_id', session.session_id)
-        .is('deleted_at', null)
+      // === STEP 1: Fetch ALL records (paginated — Supabase caps at 1000/query) ===
+      const allRecords: any[] = []
+      const pageSize = 1000
+      let offset = 0
+      while (true) {
+        const { data: page, error: pageErr } = await supabase
+          .from('enrichment_records')
+          .select('obligated, description')
+          .eq('session_id', session.session_id)
+          .is('deleted_at', null)
+          .range(offset, offset + pageSize - 1)
+        if (pageErr) throw new Error(`Record fetch failed: ${pageErr.message}`)
+        if (!page || page.length === 0) break
+        allRecords.push(...page)
+        if (page.length < pageSize) break
+        offset += pageSize
+      }
 
-      if (!allRecords || allRecords.length === 0) {
+      if (allRecords.length === 0) {
         setError('No records found in session.')
         setAnalyzing(false)
         return
       }
 
-      // Compute total dollars in JS for the prompt header
-      const totalDollars = allRecords.reduce((sum: number, r: any) => {
-        return sum + (typeof r.obligated === 'number' ? r.obligated : 0)
-      }, 0)
+      // True population dollars (across all records)
+      const totalDollars = allRecords.reduce(
+        (sum: number, r: any) => sum + (typeof r.obligated === 'number' ? r.obligated : 0),
+        0
+      )
 
-      // Prepare the corpus — truncate long descriptions to keep prompt bounded
-      const lines: string[] = allRecords.map((r: any) => {
-        const desc = (r.description || '').slice(0, 500)
-        const val = typeof r.obligated === 'number' ? r.obligated : 0
-        return `[$${val.toLocaleString()}] ${desc}`
+      // === STEP 2: Build batches of ~200 records ===
+      const BATCH_SIZE = 200
+      const CONCURRENCY = 8 // parallel Haiku calls per wave
+      const batches: any[][] = []
+      for (let i = 0; i < allRecords.length; i += BATCH_SIZE) {
+        batches.push(allRecords.slice(i, i + BATCH_SIZE))
+      }
+      setProgress({
+        done: 0,
+        total: batches.length,
+        label: `Starting analysis of ${allRecords.length.toLocaleString()} records across ${batches.length} batches…`,
       })
 
-      // If dataset is large, cap at 600 records in the prompt. We're asking Claude
-      // to extract phrase frequency patterns, not parse every row — a representative
-      // sample works fine and keeps us well under context limits.
-      const sampleSize = Math.min(lines.length, 600)
-      const corpusSample = lines.slice(0, sampleSize).join('\n')
+      // === STEP 3: Run batches in waves with retry ===
+      // Each batch returns { phrases: [...] } scoped to its slice. We tag each phrase
+      // with which batch index it came from so merging can count "batches seen in".
 
-      const prompt = `You are analyzing a federal contract dataset to extract candidate Round 1 search keywords for ${tenant.name}.
+      const runBatch = async (
+        batchIndex: number,
+        records: any[],
+        attempt = 0
+      ): Promise<any> => {
+        const batchDollars = records.reduce(
+          (sum: number, r: any) => sum + (typeof r.obligated === 'number' ? r.obligated : 0),
+          0
+        )
+        const lines = records
+          .map((r: any) => {
+            const desc = (r.description || '').slice(0, 500)
+            const val = typeof r.obligated === 'number' ? r.obligated : 0
+            return `[$${val.toLocaleString()}] ${desc}`
+          })
+          .join('\n')
+
+        const prompt = `You are analyzing a batch of federal contract records to extract candidate search keywords for ${tenant.name}.
+
+This is batch ${batchIndex + 1} of ${batches.length}. Later, phrase counts from all batches will be merged — so focus on ACCURACY within this batch, not completeness across the full dataset.
 
 ## ABOUT ${tenant.name.toUpperCase()}
 ${commercialProfile.synthesized_text}
 
-## DATASET
-${allRecords.length.toLocaleString()} contract records. Total obligated: $${totalDollars.toLocaleString()}.
-${lines.length > sampleSize ? `(Showing ${sampleSize.toLocaleString()} representative records — phrase frequency patterns are consistent across the full dataset.)` : ''}
+## THIS BATCH
+${records.length} contract records. Batch obligated: $${batchDollars.toLocaleString()}.
 
-Each line below is one contract: [dollar value] description
+Each line: [dollar value] description
 
-${corpusSample}
+${lines}
 
 ## TASK
-Extract candidate search keywords from the contract descriptions — phrases a contracting officer would use in SOW language. For each phrase, provide:
+Extract candidate search keywords — phrases a contracting officer writes in SOW language — from THIS batch's descriptions. For each phrase:
 
-1. **Value-weighted frequency data:**
-   - \`dollar_volume\`: total contract dollars across records containing this phrase
-   - \`count\`: number of contracts containing this phrase
+1. **Frequency data (from THIS batch only):**
+   - \`dollar_volume\`: total obligated across records in this batch containing the phrase
+   - \`count\`: number of records in this batch containing the phrase
    - \`avg_contract\`: dollar_volume / count
-   - \`context\`: 1 short sentence on what kind of work this phrase signals
+   - \`context\`: 1 short sentence on what work this phrase signals
 
-2. **Relevance score to ${tenant.name} (1-10):**
-   - 10 = perfect capability match, direct bullseye
-   - 8-9 = strong match, core capability applies
+2. **Relevance to ${tenant.name} (1-10):**
+   - 10 = perfect capability bullseye
+   - 8-9 = strong core capability match
    - 6-7 = clear adjacent application
-   - 4-5 = tangentially relevant, would need positioning work
-   - 1-3 = weak match, unlikely fit
-   - Include a \`relevance_rationale\`: 1 sentence on why this score
+   - 4-5 = tangential, would need positioning
+   - 1-3 = weak/unlikely fit
+   - \`relevance_rationale\`: 1 sentence on why this score
 
 Rules:
-- Phrases must be 1-3 words
-- Use contracting-officer language from the actual descriptions, not marketing terms
-- NO vendor names, agency names, NAICS/PSC labels, or generic filler ("services", "support")
-- Return 30-50 phrases so the user has a strong list to pick from
-- Score relevance honestly — low scores are fine and informative, don't inflate
+- Phrases 1-3 words
+- Contracting-officer SOW language, NOT marketing terms
+- NO vendor names, agency names, NAICS/PSC labels, generic filler ("services", "support", "contract")
+- Return 15-30 phrases from this batch — don't pad, don't be stingy
+- Score relevance honestly, do NOT inflate
 
-Return ONLY valid JSON in a \`\`\`json block, no other text:
+Return ONLY JSON in a \`\`\`json block:
 
 \`\`\`json
 {
@@ -539,8 +579,8 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
     {
       "phrase": "...",
       "dollar_volume": 12500000,
-      "count": 15,
-      "avg_contract": 833333,
+      "count": 5,
+      "avg_contract": 2500000,
       "context": "...",
       "relevance_score": 8,
       "relevance_rationale": "..."
@@ -549,33 +589,136 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 }
 \`\`\``
 
-      const { text } = await callClaudeBrowser(prompt, {
-        model: 'claude-sonnet-4-5',
-        maxTokens: 6000,
-      })
-
-      const parsed = extractJsonBlock(text)
-      if (!parsed || !Array.isArray(parsed.phrases)) {
-        throw new Error('Keyword analysis returned no parseable output')
+        try {
+          const { text } = await callClaudeBrowser(prompt, {
+            model: 'claude-haiku-4-5',
+            maxTokens: 4000,
+          })
+          const parsed = extractJsonBlock(text)
+          if (!parsed || !Array.isArray(parsed.phrases)) {
+            throw new Error('Batch returned no parseable JSON')
+          }
+          return parsed.phrases
+        } catch (err: any) {
+          // Exponential backoff: 1s, 2s, 4s — retry up to 3 times
+          if (attempt < 3) {
+            const delayMs = 1000 * Math.pow(2, attempt)
+            await new Promise((resolve) => setTimeout(resolve, delayMs))
+            return runBatch(batchIndex, records, attempt + 1)
+          }
+          // Out of retries — propagate
+          throw new Error(
+            `Batch ${batchIndex + 1} of ${batches.length} failed after 3 retries: ${err?.message || 'unknown error'}`
+          )
+        }
       }
 
-      // Normalize and clamp each phrase
-      const normalized = parsed.phrases.map((p: any) => ({
-        phrase: String(p.phrase || '').trim(),
-        dollar_volume: typeof p.dollar_volume === 'number' ? p.dollar_volume : 0,
-        count: typeof p.count === 'number' ? p.count : 0,
-        avg_contract: typeof p.avg_contract === 'number' ? p.avg_contract : 0,
-        context: p.context || '',
-        relevance_score:
-          typeof p.relevance_score === 'number'
-            ? Math.max(1, Math.min(10, Math.round(p.relevance_score)))
-            : null,
-        relevance_rationale: p.relevance_rationale || '',
-      })).filter((p: any) => p.phrase.length > 0)
+      // Process batches in waves of CONCURRENCY
+      const batchResults: any[][] = new Array(batches.length)
+      let completed = 0
+      for (let waveStart = 0; waveStart < batches.length; waveStart += CONCURRENCY) {
+        const waveEnd = Math.min(waveStart + CONCURRENCY, batches.length)
+        const wavePromises: Promise<void>[] = []
+        for (let idx = waveStart; idx < waveEnd; idx++) {
+          wavePromises.push(
+            runBatch(idx, batches[idx]).then((phrases) => {
+              batchResults[idx] = phrases
+              completed++
+              setProgress({
+                done: completed,
+                total: batches.length,
+                label: `Batch ${completed} of ${batches.length} complete · ${Math.min(completed * BATCH_SIZE, allRecords.length).toLocaleString()} records analyzed`,
+              })
+            })
+          )
+        }
+        // If any promise in the wave rejects, the whole thing halts (Option B intent)
+        await Promise.all(wavePromises)
+      }
+
+      // === STEP 4: Merge phrases across batches ===
+      // Key: normalized phrase (lowercased, trimmed)
+      // Accumulate: count, dollar_volume, batches_seen, max relevance, first non-empty context/rationale
+
+      interface MergedPhrase {
+        phrase: string
+        count: number
+        dollar_volume: number
+        batches_seen: number
+        relevance_score: number
+        relevance_rationale: string
+        context: string
+      }
+      const merged = new Map<string, MergedPhrase>()
+
+      for (const phrases of batchResults) {
+        if (!phrases) continue
+        for (const p of phrases) {
+          const raw = String(p.phrase || '').trim()
+          if (!raw) continue
+          const key = raw.toLowerCase()
+          const existing = merged.get(key)
+          const count = typeof p.count === 'number' ? p.count : 0
+          const dollar_volume = typeof p.dollar_volume === 'number' ? p.dollar_volume : 0
+          const relevance =
+            typeof p.relevance_score === 'number'
+              ? Math.max(1, Math.min(10, Math.round(p.relevance_score)))
+              : 0
+
+          if (existing) {
+            existing.count += count
+            existing.dollar_volume += dollar_volume
+            existing.batches_seen += 1
+            // Keep the highest relevance across batches
+            if (relevance > existing.relevance_score) {
+              existing.relevance_score = relevance
+              existing.relevance_rationale = p.relevance_rationale || existing.relevance_rationale
+            }
+            if (!existing.context && p.context) existing.context = p.context
+          } else {
+            merged.set(key, {
+              phrase: raw,
+              count,
+              dollar_volume,
+              batches_seen: 1,
+              relevance_score: relevance,
+              relevance_rationale: p.relevance_rationale || '',
+              context: p.context || '',
+            })
+          }
+        }
+      }
+
+      // === STEP 5: Apply noise floor ===
+      // Phrase must appear in ≥2 batches OR have ≥$500K total. Removes one-off
+      // junk from single batches while keeping legitimately high-value singletons.
+      const NOISE_FLOOR_DOLLARS = 500_000
+      const filtered = Array.from(merged.values()).filter(
+        (p) => p.batches_seen >= 2 || p.dollar_volume >= NOISE_FLOOR_DOLLARS
+      )
+
+      // Finalize with avg_contract
+      const normalized = filtered
+        .map((p) => ({
+          phrase: p.phrase,
+          dollar_volume: p.dollar_volume,
+          count: p.count,
+          avg_contract: p.count > 0 ? Math.round(p.dollar_volume / p.count) : 0,
+          context: p.context,
+          relevance_score: p.relevance_score || null,
+          relevance_rationale: p.relevance_rationale,
+          batches_seen: p.batches_seen,
+        }))
+        .sort((a, b) => b.dollar_volume - a.dollar_volume)
 
       const analysis = {
         total_records: allRecords.length,
         total_dollars: totalDollars,
+        batches_run: batches.length,
+        batch_size: BATCH_SIZE,
+        phrases_before_floor: merged.size,
+        phrases_after_floor: normalized.length,
+        noise_floor_dollars: NOISE_FLOOR_DOLLARS,
         phrases: normalized,
       }
 
@@ -588,7 +731,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         .eq('session_id', session.session_id)
 
       await loadSessions()
-      // Reload active session to pick up the new analysis
       const { data: updatedSession } = await supabase
         .from('enrichment_sessions')
         .select('*')
@@ -598,9 +740,11 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         setActiveSession(updatedSession as SessionRow)
       }
       setAnalyzing(false)
+      setProgress(null)
     } catch (err: any) {
       setError(err?.message || 'Keyword analysis failed')
       setAnalyzing(false)
+      setProgress(null)
     }
   }
 
@@ -901,6 +1045,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         <KeywordAnalysisPanel
           session={activeSession}
           analyzing={analyzing}
+          progress={progress}
           onRerun={() => runKeywordAnalysis(activeSession)}
           onSaveKeywords={(phrases) => saveKeywordsToBank(phrases, activeSession)}
         />
@@ -1980,11 +2125,13 @@ type KeywordSortKey = 'relevance' | 'dollars' | 'count' | 'avg' | 'phrase'
 function KeywordAnalysisPanel({
   session,
   analyzing,
+  progress,
   onRerun,
   onSaveKeywords,
 }: {
   session: SessionRow
   analyzing: boolean
+  progress: { done: number; total: number; label?: string } | null
   onRerun: () => void
   onSaveKeywords: (phrases: KeywordPhrase[]) => Promise<void>
 }) {
@@ -1999,6 +2146,10 @@ function KeywordAnalysisPanel({
   const [saveMessage, setSaveMessage] = useState<string | null>(null)
 
   if (analyzing) {
+    const pct = progress && progress.total > 0
+      ? Math.round((progress.done / progress.total) * 100)
+      : 0
+
     return (
       <div
         style={{
@@ -2007,15 +2158,53 @@ function KeywordAnalysisPanel({
           padding: '32px 24px',
           marginBottom: '24px',
           boxShadow: 'var(--shadow-card)',
-          textAlign: 'center',
         }}
       >
-        <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
-          Analyzing dataset…
+        <div style={{ textAlign: 'center', marginBottom: '20px' }}>
+          <div style={{ fontSize: '14px', fontWeight: 500, marginBottom: '6px' }}>
+            Analyzing dataset…
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
+            {progress?.label || 'Starting analysis…'}
+          </div>
         </div>
-        <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)' }}>
-          Reading contract descriptions, weighting by dollar value, scoring relevance. ~30-60 seconds.
-        </div>
+        {progress && progress.total > 0 && (
+          <div style={{ maxWidth: '520px', margin: '0 auto' }}>
+            <div
+              style={{
+                height: '8px',
+                background: 'var(--color-bg-subtle)',
+                borderRadius: '4px',
+                overflow: 'hidden',
+                marginBottom: '6px',
+              }}
+            >
+              <div
+                style={{
+                  height: '100%',
+                  width: `${pct}%`,
+                  background: 'var(--color-accent)',
+                  borderRadius: '4px',
+                  transition: 'width 0.3s ease',
+                }}
+              />
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                fontSize: '11px',
+                color: 'var(--color-text-tertiary)',
+                fontFamily: 'var(--font-mono)',
+              }}
+            >
+              <span>{pct}%</span>
+              <span>
+                {progress.done} of {progress.total} batches
+              </span>
+            </div>
+          </div>
+        )}
       </div>
     )
   }
@@ -2104,7 +2293,13 @@ function KeywordAnalysisPanel({
             </div>
           )}
           <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-            Extracted from {analysis.total_records?.toLocaleString() || '?'} records · ${(analysis.total_dollars || 0).toLocaleString()} total · {allPhrases.length} candidate phrases
+            Extracted from {analysis.total_records?.toLocaleString() || '?'} records · ${(analysis.total_dollars || 0).toLocaleString()} total · {allPhrases.length} phrases after floor
+            {analysis.batches_run && (
+              <> · {analysis.batches_run} batches of {analysis.batch_size}</>
+            )}
+            {typeof analysis.phrases_before_floor === 'number' && typeof analysis.phrases_after_floor === 'number' && (
+              <> · {analysis.phrases_before_floor}→{analysis.phrases_after_floor} after noise floor (${(analysis.noise_floor_dollars || 500000).toLocaleString()} min, ≥2 batches OR ≥floor)</>
+            )}
             {session.market_analysis_at && ` · ${new Date(session.market_analysis_at).toLocaleString()}`}
           </div>
         </div>
