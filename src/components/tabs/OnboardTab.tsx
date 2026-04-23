@@ -403,6 +403,15 @@ export function OnboardTab() {
       // Split into alignment / divergence / suggestions sections
       const sections = splitReconciliationSections(cleaned)
 
+      // Load the prompt template version so we can tell if a reconciliation/
+      // framework was generated with an outdated prompt (e.g., pre-PSC-reference).
+      const { data: variantMeta } = await supabase
+        .from('prompt_variants')
+        .select('version')
+        .eq('id', variantId)
+        .single()
+      const promptVersion = variantMeta?.version || 1
+
       const nextVersion = (reconciliation?.version || 0) + 1
 
       await supabase.from('reconciliation').insert({
@@ -413,6 +422,7 @@ export function OnboardTab() {
         suggestions: isFramework ? cleaned : sections.suggestions || null,
         structured_data: structured,
         version: nextVersion,
+        prompt_template_version: promptVersion,
         last_built_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
       })
@@ -425,10 +435,11 @@ export function OnboardTab() {
         tenantId: activeTenant.id,
         eventType: 'reconciliation_built',
         actor: 'claude-sonnet-4-5',
-        summary: `${isFramework ? 'Federal entry framework' : 'Reconciliation'} v${nextVersion} generated (${cleaned.length} chars)`,
+        summary: `${isFramework ? 'Federal entry framework' : 'Reconciliation'} v${nextVersion} generated (${cleaned.length} chars) using prompt template v${promptVersion}`,
         details: {
           mode: isFramework ? 'framework' : 'reconcile',
           variant_id: variantId,
+          prompt_template_version: promptVersion,
           model: 'claude-sonnet-4-5',
           version: nextVersion,
           narrative_length: cleaned.length,
@@ -1506,6 +1517,14 @@ function ReconciliationColumn({
   // If posture flipped between runs, we might have a reconcile row but be in framework mode.
   const recMatchesMode = reconciliation && reconciliation.mode === mode
 
+  // Is the framework/reconciliation up-to-date with the current prompt template?
+  // v1 = pre-PSC-reference (stale D3xx/7030 codes)
+  // v2+ = grounded in GSA April 2025 + NAICS 2022 reference tables
+  // Must bump this when migrations update prompt_variants.version further.
+  const CURRENT_PROMPT_VERSION = 2
+  const promptIsCurrent =
+    (reconciliation?.prompt_template_version ?? 1) >= CURRENT_PROMPT_VERSION
+
   return (
     <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
@@ -1604,14 +1623,33 @@ function ReconciliationColumn({
           {building ? 'Running…' : buildLabel}
         </Button>
         {isFramework && recMatchesMode && reconciliation?.structured_data && (
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={onCreateStrategicFromFramework}
-            style={{ width: '100%' }}
-          >
-            Create strategic profile from these suggestions
-          </Button>
+          <>
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={onCreateStrategicFromFramework}
+              disabled={!promptIsCurrent}
+              style={{ width: '100%' }}
+            >
+              Create strategic profile from these suggestions
+            </Button>
+            {!promptIsCurrent && (
+              <div
+                style={{
+                  fontSize: '11px',
+                  color: 'var(--color-warning)',
+                  padding: '8px 10px',
+                  background: 'rgba(212, 146, 10, 0.08)',
+                  border: '1px solid rgba(212, 146, 10, 0.2)',
+                  borderRadius: 'var(--radius-input)',
+                  lineHeight: 1.4,
+                }}
+              >
+                This framework (v{reconciliation.prompt_template_version || 1}) was built with an outdated PSC taxonomy (retired D3xx/7030 codes).
+                Re-run the framework to refresh with current GSA April 2025 codes before creating a strategic profile.
+              </div>
+            )}
+          </>
         )}
       </div>
     </Card>

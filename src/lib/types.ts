@@ -191,6 +191,7 @@ export interface Reconciliation {
   suggestions: string | null
   structured_data: Record<string, any> | null
   version: number
+  prompt_template_version: number | null
   last_built_at: string | null
   created_at: string
   updated_at: string
