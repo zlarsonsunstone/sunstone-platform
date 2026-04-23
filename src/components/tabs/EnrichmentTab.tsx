@@ -16,6 +16,8 @@ interface SessionRow {
   status: string
   record_count: number
   file_name: string | null
+  display_name: string | null
+  methodology: any | null
   created_at: string
   source_scope_id?: string | null
   source_scope_ids?: string[] | null
@@ -60,6 +62,18 @@ export function EnrichmentTab() {
   const [selectedScopeId, setSelectedScopeId] = useState<string>('')
   const [uploadThreshold, setUploadThreshold] = useState<number>(0)
   const [parsedRowCount, setParsedRowCount] = useState<number | null>(null)
+
+  // Session methodology form state (required at upload time)
+  const [methodNaicsCodes, setMethodNaicsCodes] = useState<string[]>([])
+  const [methodNaicsRationale, setMethodNaicsRationale] = useState('')
+  const [methodPscPrefixes, setMethodPscPrefixes] = useState<string[]>([])
+  const [methodPscRationale, setMethodPscRationale] = useState('')
+  const [methodDateStart, setMethodDateStart] = useState('')
+  const [methodDateEnd, setMethodDateEnd] = useState('')
+  const [methodDateRationale, setMethodDateRationale] = useState('')
+  const [methodThresholdRationale, setMethodThresholdRationale] = useState('')
+  const [methodDisplayName, setMethodDisplayName] = useState('')
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const loadSessions = async () => {
@@ -109,13 +123,22 @@ export function EnrichmentTab() {
 
   const handleFileChosen = async (file: File) => {
     // Stage 1: user picked a file. Parse the row count so the scope picker can
-    // show how many records will be ingested. Threshold is set by the user in
-    // the modal, defaults to 0 (keep everything).
+    // show how many records will be ingested. Methodology fields are set by the
+    // user in the modal; rationales required before upload.
     setError(null)
     setPendingUpload(file)
     setSelectedScopeId('')
     setUploadThreshold(0)
     setParsedRowCount(null)
+    setMethodNaicsCodes([])
+    setMethodNaicsRationale('')
+    setMethodPscPrefixes([])
+    setMethodPscRationale('')
+    setMethodDateStart('')
+    setMethodDateEnd('')
+    setMethodDateRationale('')
+    setMethodThresholdRationale('')
+    setMethodDisplayName('')
     try {
       const text = await file.text()
       const rows = parseCsv(text)
@@ -236,6 +259,20 @@ export function EnrichmentTab() {
         return
       }
 
+      const methodology = {
+        naics_codes: methodNaicsCodes,
+        naics_rationale: methodNaicsRationale,
+        psc_prefixes: methodPscPrefixes,
+        psc_rationale: methodPscRationale,
+        date_range_start: methodDateStart || null,
+        date_range_end: methodDateEnd || null,
+        date_range_rationale: methodDateRationale,
+        min_dollar_value: uploadThreshold,
+        min_dollar_rationale: methodThresholdRationale,
+      }
+
+      const finalDisplayName = methodDisplayName.trim() || computedDisplayName
+
       const { data: sessionData, error: sessionError } = await supabase
         .from('enrichment_sessions')
         .insert({
@@ -244,6 +281,8 @@ export function EnrichmentTab() {
           round_number: currentRound,
           turn_number: nextTurnInRound,
           file_name: file.name,
+          display_name: finalDisplayName,
+          methodology,
           record_count: effectiveCount,
           status: 'pending',
           source_scope_ids: scope ? [scope.id] : [],
@@ -353,8 +392,68 @@ export function EnrichmentTab() {
     setSelectedScopeId('')
     setUploadThreshold(0)
     setParsedRowCount(null)
+    setMethodNaicsCodes([])
+    setMethodNaicsRationale('')
+    setMethodPscPrefixes([])
+    setMethodPscRationale('')
+    setMethodDateStart('')
+    setMethodDateEnd('')
+    setMethodDateRationale('')
+    setMethodThresholdRationale('')
+    setMethodDisplayName('')
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
+
+  // Called when user picks a scope in the modal — prefills NAICS, PSC, and
+  // rationales from the scope (user can edit).
+  const handleScopeSelected = (scopeId: string) => {
+    setSelectedScopeId(scopeId)
+    const scope = searchScopes.find((s) => s.id === scopeId)
+    if (scope) {
+      // Only prefill empty fields — don't overwrite user edits
+      if (methodNaicsCodes.length === 0) setMethodNaicsCodes(scope.naics_codes || [])
+      if (methodPscPrefixes.length === 0) setMethodPscPrefixes(scope.psc_prefixes || [])
+      if (!methodNaicsRationale && scope.rationale) setMethodNaicsRationale(scope.rationale)
+      if (!methodPscRationale && scope.rationale) setMethodPscRationale(scope.rationale)
+    } else {
+      // Cleared scope — allow user to enter NAICS/PSC manually
+      if (methodNaicsCodes.length === 0) setMethodNaicsCodes([])
+      if (methodPscPrefixes.length === 0) setMethodPscPrefixes([])
+    }
+  }
+
+  // Auto-generate a display name from the current methodology fields
+  const computedDisplayName = (() => {
+    const parts: string[] = []
+    if (methodNaicsCodes.length > 0) {
+      parts.push(`NAICS ${methodNaicsCodes.join(', ')}`)
+    }
+    if (methodPscPrefixes.length > 0) {
+      parts.push(`PSC ${methodPscPrefixes.join(', ')}`)
+    }
+    if (methodDateStart || methodDateEnd) {
+      if (methodDateStart && methodDateEnd) {
+        parts.push(`${methodDateStart} to ${methodDateEnd}`)
+      } else if (methodDateStart) {
+        parts.push(`${methodDateStart}+`)
+      } else if (methodDateEnd) {
+        parts.push(`through ${methodDateEnd}`)
+      }
+    }
+    if (uploadThreshold > 0) {
+      parts.push(`$${uploadThreshold.toLocaleString()}+`)
+    }
+    return parts.join(' · ') || 'Untagged session'
+  })()
+
+  // Form validation: all four "why" rationales required
+  const methodologyValid =
+    methodNaicsCodes.length > 0 &&
+    methodNaicsRationale.trim().length >= 10 &&
+    methodPscPrefixes.length > 0 &&
+    methodPscRationale.trim().length >= 10 &&
+    methodDateRationale.trim().length >= 10 &&
+    methodThresholdRationale.trim().length >= 10
 
   const runKeywordAnalysis = async (session: SessionRow) => {
     if (!tenant) return
@@ -878,18 +977,22 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                   <div style={{ fontSize: '14px', fontWeight: 500 }}>
                     Round {s.round_number || 1} · Turn {s.turn_number || s.iteration}
                   </div>
+                  {s.display_name && (
+                    <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', marginTop: '3px', fontWeight: 500 }}>
+                      {s.display_name}
+                    </div>
+                  )}
                   <div
                     style={{
-                      fontSize: '12px',
+                      fontSize: '11px',
                       color: 'var(--color-text-secondary)',
-                      marginTop: '2px',
+                      marginTop: '3px',
                     }}
                   >
                     {s.record_count} records · {s.status}
                     {s.source_scope_tags && s.source_scope_tags.length > 0 && (
                       <> · #{s.source_scope_tags[0]}</>
                     )}
-                    {s.file_name && <> · {s.file_name}</>}
                   </div>
                 </button>
               ))
@@ -908,7 +1011,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 }}
               >
                 {activeSession
-                  ? `Records — Round ${activeSession.round_number || 1} · Turn ${activeSession.turn_number || activeSession.iteration}`
+                  ? activeSession.display_name
+                    ? `${activeSession.display_name} — Round ${activeSession.round_number || 1} · Turn ${activeSession.turn_number || activeSession.iteration}`
+                    : `Records — Round ${activeSession.round_number || 1} · Turn ${activeSession.turn_number || activeSession.iteration}`
                   : 'No session selected'}
               </h3>
               {activeSession && records.length > 0 && (
@@ -983,7 +1088,28 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           onChangeThreshold={setUploadThreshold}
           scopes={searchScopes.filter((s) => !s.archived)}
           selectedScopeId={selectedScopeId}
-          onSelectScope={setSelectedScopeId}
+          onSelectScope={handleScopeSelected}
+          // Methodology fields
+          naicsCodes={methodNaicsCodes}
+          onChangeNaics={setMethodNaicsCodes}
+          naicsRationale={methodNaicsRationale}
+          onChangeNaicsRationale={setMethodNaicsRationale}
+          pscPrefixes={methodPscPrefixes}
+          onChangePsc={setMethodPscPrefixes}
+          pscRationale={methodPscRationale}
+          onChangePscRationale={setMethodPscRationale}
+          dateStart={methodDateStart}
+          onChangeDateStart={setMethodDateStart}
+          dateEnd={methodDateEnd}
+          onChangeDateEnd={setMethodDateEnd}
+          dateRationale={methodDateRationale}
+          onChangeDateRationale={setMethodDateRationale}
+          thresholdRationale={methodThresholdRationale}
+          onChangeThresholdRationale={setMethodThresholdRationale}
+          displayName={methodDisplayName}
+          onChangeDisplayName={setMethodDisplayName}
+          computedDisplayName={computedDisplayName}
+          methodologyValid={methodologyValid}
           onCancel={cancelUpload}
           onConfirm={submitUpload}
           uploading={uploading}
@@ -1350,6 +1476,26 @@ function ScopePickerModal({
   scopes,
   selectedScopeId,
   onSelectScope,
+  naicsCodes,
+  onChangeNaics,
+  naicsRationale,
+  onChangeNaicsRationale,
+  pscPrefixes,
+  onChangePsc,
+  pscRationale,
+  onChangePscRationale,
+  dateStart,
+  onChangeDateStart,
+  dateEnd,
+  onChangeDateEnd,
+  dateRationale,
+  onChangeDateRationale,
+  thresholdRationale,
+  onChangeThresholdRationale,
+  displayName,
+  onChangeDisplayName,
+  computedDisplayName,
+  methodologyValid,
   onCancel,
   onConfirm,
   uploading,
@@ -1361,6 +1507,26 @@ function ScopePickerModal({
   scopes: any[]
   selectedScopeId: string
   onSelectScope: (id: string) => void
+  naicsCodes: string[]
+  onChangeNaics: (codes: string[]) => void
+  naicsRationale: string
+  onChangeNaicsRationale: (v: string) => void
+  pscPrefixes: string[]
+  onChangePsc: (codes: string[]) => void
+  pscRationale: string
+  onChangePscRationale: (v: string) => void
+  dateStart: string
+  onChangeDateStart: (v: string) => void
+  dateEnd: string
+  onChangeDateEnd: (v: string) => void
+  dateRationale: string
+  onChangeDateRationale: (v: string) => void
+  thresholdRationale: string
+  onChangeThresholdRationale: (v: string) => void
+  displayName: string
+  onChangeDisplayName: (v: string) => void
+  computedDisplayName: string
+  methodologyValid: boolean
   onCancel: () => void
   onConfirm: () => void
   uploading: boolean
@@ -1393,30 +1559,107 @@ function ScopePickerModal({
         style={{
           background: 'var(--color-bg-primary)',
           borderRadius: 'var(--radius-modal)',
-          maxWidth: '640px',
+          maxWidth: '720px',
           width: '100%',
+          maxHeight: '92vh',
+          overflowY: 'auto',
           padding: '32px',
           boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
         }}
       >
         <h2 style={{ fontSize: '22px', fontWeight: 600, marginTop: 0, marginBottom: '4px' }}>
-          Confirm upload
+          Confirm upload & capture methodology
         </h2>
         <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '20px' }}>
           <strong>{fileName}</strong>
           {rowCount !== null && (
-            <>
-              {' '}· <span style={{ fontFamily: 'var(--font-mono)' }}>{rowCount.toLocaleString()}</span> rows parsed
-            </>
+            <> · <span style={{ fontFamily: 'var(--font-mono)' }}>{rowCount.toLocaleString()}</span> rows parsed</>
           )}
+          <br />
+          <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
+            Every field below is captured in the methodology report so the client sees exactly why we pulled what we pulled.
+          </span>
         </p>
 
-        {/* Threshold */}
-        <div style={{ marginBottom: '20px' }}>
-          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '6px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Minimum obligated value
+        {/* Scope picker */}
+        <FieldSection
+          label="Which scope did this come from?"
+          hint="Prefills NAICS and PSC below; you can still edit them."
+        >
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '260px', overflowY: 'auto', padding: '4px' }}>
+            <ScopeOption
+              id=""
+              active={selectedScopeId === ''}
+              onClick={() => onSelectScope('')}
+              title="Not from a scope"
+              subtitle="Ad-hoc upload — manual NAICS/PSC entry required"
+            />
+            {scopes.map((s) => (
+              <ScopeOption
+                key={s.id}
+                id={s.id}
+                active={selectedScopeId === s.id}
+                onClick={() => onSelectScope(s.id)}
+                title={s.name}
+                subtitle={`#${s.scope_tag} · NAICS ${s.naics_codes.join(', ') || '—'} · PSC ${s.psc_prefixes.join(', ') || '—'}`}
+                correlation={s.correlation_score}
+              />
+            ))}
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+        </FieldSection>
+
+        {/* NAICS */}
+        <FieldSection label="NAICS codes" required hint="Comma-separated 6-digit codes, e.g. 541513, 518210">
+          <ChipInput values={naicsCodes} onChange={onChangeNaics} placeholder="541513" />
+          <TextareaInput
+            value={naicsRationale}
+            onChange={onChangeNaicsRationale}
+            placeholder="Why these NAICS codes? (min 10 chars) — e.g. 'Targeting computer-systems-design and hosting codes where Manifold's compute infrastructure maps to federal buying patterns.'"
+            minRows={2}
+          />
+        </FieldSection>
+
+        {/* PSC */}
+        <FieldSection label="PSC prefixes" required hint="Comma-separated PSC prefixes, e.g. D3, R-, A-">
+          <ChipInput values={pscPrefixes} onChange={onChangePsc} placeholder="D3" uppercase />
+          <TextareaInput
+            value={pscRationale}
+            onChange={onChangePscRationale}
+            placeholder="Why these PSC prefixes? (min 10 chars) — e.g. 'D3 is the federal IT services prefix. Excluded R- (support, too broad) and 70 (IT equipment, Manifold isn't a hardware vendor).'"
+            minRows={2}
+          />
+        </FieldSection>
+
+        {/* Date range */}
+        <FieldSection label="Date range (external pre-filter)" required hint="What date range did you filter on in USASpending/HigherGov?">
+          <div style={{ display: 'flex', gap: '8px', marginBottom: '8px' }}>
+            <input
+              type="date"
+              value={dateStart}
+              onChange={(e) => onChangeDateStart(e.target.value)}
+              style={inputStyle}
+              placeholder="Start"
+            />
+            <span style={{ alignSelf: 'center', color: 'var(--color-text-tertiary)', fontSize: '13px' }}>to</span>
+            <input
+              type="date"
+              value={dateEnd}
+              onChange={(e) => onChangeDateEnd(e.target.value)}
+              style={inputStyle}
+              placeholder="End (blank = present)"
+            />
+          </div>
+          <TextareaInput
+            value={dateRationale}
+            onChange={onChangeDateRationale}
+            placeholder="Why this date range? (min 10 chars) — e.g. 'Trump admin took office Jan 2025 and reshaped federal procurement. Pre-2025 awards are largely noise for the forward market.'"
+            minRows={2}
+          />
+        </FieldSection>
+
+        {/* Threshold */}
+        <FieldSection label="Minimum obligated value" required>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
             <span style={{ fontSize: '14px', color: 'var(--color-text-secondary)', fontFamily: 'var(--font-mono)' }}>$</span>
             <input
               type="number"
@@ -1424,70 +1667,223 @@ function ScopePickerModal({
               step={1000}
               value={threshold}
               onChange={(e) => onChangeThreshold(Math.max(0, parseInt(e.target.value || '0', 10)))}
-              style={{
-                flex: 1,
-                fontSize: '14px',
-                padding: '8px 10px',
-                border: '1px solid var(--color-hairline)',
-                borderRadius: 'var(--radius-input)',
-                background: 'var(--color-bg-primary)',
-                color: 'var(--color-text-primary)',
-                fontFamily: 'var(--font-mono)',
-              }}
+              style={{ ...inputStyle, flex: 1 }}
             />
             <Button variant="secondary" size="small" onClick={() => onChangeThreshold(0)}>
               $0 (keep all)
             </Button>
           </div>
-          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '4px' }}>
-            Records below this value will be skipped. Set to 0 to keep every row regardless of dollar amount.
-          </div>
-        </div>
+          <TextareaInput
+            value={thresholdRationale}
+            onChange={onChangeThresholdRationale}
+            placeholder="Why this threshold? (min 10 chars) — e.g. 'Zero threshold intentional — need full dataset for phrase frequency. Filtering applies at keyword-picking stage.'"
+            minRows={2}
+          />
+        </FieldSection>
 
-        {/* Scope picker */}
-        <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '8px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-          Which scope did this come from?
-        </div>
+        {/* Session display name */}
+        <FieldSection label="Session name" hint="Auto-generated from your metadata above. Edit to override.">
+          <input
+            type="text"
+            value={displayName || computedDisplayName}
+            onChange={(e) => onChangeDisplayName(e.target.value)}
+            placeholder={computedDisplayName}
+            style={inputStyle}
+          />
+        </FieldSection>
+
+        {/* Footer */}
         <div
           style={{
             display: 'flex',
-            flexDirection: 'column',
-            gap: '6px',
-            maxHeight: '320px',
-            overflowY: 'auto',
-            marginBottom: '20px',
-            padding: '4px',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '8px',
+            marginTop: '24px',
+            paddingTop: '16px',
+            borderTop: '1px solid var(--color-hairline)',
           }}
         >
-          <ScopeOption
-            id=""
-            active={selectedScopeId === ''}
-            onClick={() => onSelectScope('')}
-            title="Not from a scope"
-            subtitle="Ad-hoc upload, no provenance tag"
-          />
-          {scopes.map((s) => (
-            <ScopeOption
-              key={s.id}
-              id={s.id}
-              active={selectedScopeId === s.id}
-              onClick={() => onSelectScope(s.id)}
-              title={s.name}
-              subtitle={`#${s.scope_tag} · NAICS ${s.naics_codes.join(', ') || '—'} · PSC ${s.psc_prefixes.join(', ') || '—'}`}
-              correlation={s.correlation_score}
-            />
-          ))}
-        </div>
-
-        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-          <Button variant="secondary" onClick={onCancel} disabled={uploading}>
-            Cancel
-          </Button>
-          <Button onClick={onConfirm} disabled={uploading}>
-            {uploading ? 'Uploading…' : 'Upload & tag'}
-          </Button>
+          <div style={{ fontSize: '12px', color: methodologyValid ? 'var(--color-success)' : 'var(--color-text-tertiary)' }}>
+            {methodologyValid ? '✓ All rationales provided' : 'All four rationales (≥10 chars each) required'}
+          </div>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <Button variant="secondary" onClick={onCancel} disabled={uploading}>
+              Cancel
+            </Button>
+            <Button onClick={onConfirm} disabled={uploading || !methodologyValid}>
+              {uploading ? 'Uploading…' : 'Upload & tag'}
+            </Button>
+          </div>
         </div>
       </div>
+    </div>
+  )
+}
+
+const inputStyle: React.CSSProperties = {
+  fontSize: '13px',
+  padding: '8px 10px',
+  border: '1px solid var(--color-hairline)',
+  borderRadius: 'var(--radius-input)',
+  background: 'var(--color-bg-primary)',
+  color: 'var(--color-text-primary)',
+  fontFamily: 'inherit',
+  width: '100%',
+  boxSizing: 'border-box',
+}
+
+function FieldSection({
+  label,
+  required,
+  hint,
+  children,
+}: {
+  label: string
+  required?: boolean
+  hint?: string
+  children: React.ReactNode
+}) {
+  return (
+    <div style={{ marginBottom: '18px' }}>
+      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '6px' }}>
+        <label style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+          {label}{required && <span style={{ color: 'var(--color-danger)', marginLeft: '3px' }}>*</span>}
+        </label>
+        {hint && <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>{hint}</span>}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function ChipInput({
+  values,
+  onChange,
+  placeholder,
+  uppercase,
+}: {
+  values: string[]
+  onChange: (v: string[]) => void
+  placeholder?: string
+  uppercase?: boolean
+}) {
+  const [input, setInput] = useState('')
+
+  const commit = () => {
+    const cleaned = (uppercase ? input.toUpperCase() : input).trim()
+    if (cleaned && !values.includes(cleaned)) {
+      onChange([...values, cleaned])
+    }
+    setInput('')
+  }
+
+  return (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: '6px',
+        padding: '6px',
+        border: '1px solid var(--color-hairline)',
+        borderRadius: 'var(--radius-input)',
+        background: 'var(--color-bg-primary)',
+        minHeight: '36px',
+        alignItems: 'center',
+        marginBottom: '8px',
+      }}
+    >
+      {values.map((v, i) => (
+        <span
+          key={i}
+          style={{
+            fontSize: '12px',
+            padding: '3px 8px',
+            background: 'var(--color-bg-subtle)',
+            border: '1px solid var(--color-hairline)',
+            borderRadius: '4px',
+            fontFamily: 'var(--font-mono)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '6px',
+          }}
+        >
+          {v}
+          <button
+            onClick={() => onChange(values.filter((_, j) => j !== i))}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              color: 'var(--color-text-tertiary)',
+              cursor: 'pointer',
+              padding: 0,
+              fontSize: '14px',
+              lineHeight: 1,
+            }}
+          >
+            ×
+          </button>
+        </span>
+      ))}
+      <input
+        type="text"
+        value={input}
+        onChange={(e) => setInput(uppercase ? e.target.value.toUpperCase() : e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ',' || e.key === 'Tab') {
+            e.preventDefault()
+            commit()
+          }
+        }}
+        onBlur={commit}
+        placeholder={values.length === 0 ? placeholder : ''}
+        style={{
+          border: 'none',
+          background: 'transparent',
+          outline: 'none',
+          fontSize: '13px',
+          fontFamily: 'var(--font-mono)',
+          minWidth: '80px',
+          flex: 1,
+          padding: '2px 4px',
+        }}
+      />
+    </div>
+  )
+}
+
+function TextareaInput({
+  value,
+  onChange,
+  placeholder,
+  minRows = 2,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  minRows?: number
+}) {
+  const tooShort = value.trim().length > 0 && value.trim().length < 10
+  return (
+    <div>
+      <textarea
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder={placeholder}
+        rows={minRows}
+        style={{
+          ...inputStyle,
+          resize: 'vertical',
+          fontFamily: 'inherit',
+          lineHeight: 1.5,
+          borderColor: tooShort ? 'var(--color-warning)' : 'var(--color-hairline)',
+        }}
+      />
+      {tooShort && (
+        <div style={{ fontSize: '11px', color: 'var(--color-warning)', marginTop: '2px' }}>
+          {10 - value.trim().length} more characters needed
+        </div>
+      )}
     </div>
   )
 }
@@ -1694,7 +2090,7 @@ function KeywordAnalysisPanel({
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', gap: '16px', marginBottom: '16px' }}>
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px', flexWrap: 'wrap' }}>
             <h2 style={{ fontSize: '22px', fontWeight: 600, margin: 0 }}>Round 1 keyword candidates</h2>
             {session.source_scope_tags && session.source_scope_tags.length > 0 && (
               <code style={{ fontSize: '11px', padding: '2px 8px', background: 'var(--color-bg-subtle)', borderRadius: '4px', fontFamily: 'var(--font-mono)', color: 'var(--color-text-secondary)' }}>
@@ -1702,6 +2098,11 @@ function KeywordAnalysisPanel({
               </code>
             )}
           </div>
+          {session.display_name && (
+            <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500, marginBottom: '4px' }}>
+              {session.display_name}
+            </div>
+          )}
           <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
             Extracted from {analysis.total_records?.toLocaleString() || '?'} records · ${(analysis.total_dollars || 0).toLocaleString()} total · {allPhrases.length} candidate phrases
             {session.market_analysis_at && ` · ${new Date(session.market_analysis_at).toLocaleString()}`}
