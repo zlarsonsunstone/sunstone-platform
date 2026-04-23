@@ -39,6 +39,8 @@ export function NavBar({ activeTab, onTabChange, onOpenAdmin }: NavBarProps) {
         justifyContent: 'space-between',
         borderBottom: '0.5px solid var(--color-hairline)',
         background: 'var(--color-bg-elevated)',
+        backdropFilter: 'saturate(180%) blur(12px)',
+        WebkitBackdropFilter: 'saturate(180%) blur(12px)',
       }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: '40px' }}>

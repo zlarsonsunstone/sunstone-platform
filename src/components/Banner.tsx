@@ -35,9 +35,6 @@ export function Banner() {
     <div
       role="status"
       style={{
-        position: 'sticky',
-        top: 0,
-        zIndex: 100,
         height: '48px',
         background: bgColor,
         color: '#FFFFFF',

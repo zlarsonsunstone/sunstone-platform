@@ -158,12 +158,20 @@ export default function App() {
   // Signed in with role — show the main app
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-bg-primary)' }}>
-      <Banner />
-      <NavBar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
-        onOpenAdmin={() => setAdminOpen(true)}
-      />
+      <div
+        style={{
+          position: 'sticky',
+          top: 0,
+          zIndex: 500,
+        }}
+      >
+        <Banner />
+        <NavBar
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          onOpenAdmin={() => setAdminOpen(true)}
+        />
+      </div>
 
       {/* Tenant picker blocks UI if needed (State B or C) */}
       <TenantPickerModal />
