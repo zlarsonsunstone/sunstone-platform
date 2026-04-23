@@ -2,6 +2,7 @@ import { useEffect, useState, CSSProperties } from 'react'
 import { useStore } from '@/store/useStore'
 import { supabase } from '@/lib/supabase'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
+import { resetTenantDownstream } from '@/lib/tenantReset'
 import { TabPage } from '@/components/TabPage'
 import { Card } from '@/components/Card'
 import { Button } from '@/components/Button'
@@ -525,6 +526,42 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       eyebrow="Onboard"
       title="Intelligence profile"
       description={`Building ${activeTenant.name}'s commercial and federal profiles, then reconciling them.`}
+      actions={
+        <Button
+          variant="secondary"
+          size="small"
+          onClick={async () => {
+            if (!activeTenant) return
+            const confirmed = confirm(
+              `Reset ${activeTenant.name}'s downstream analysis data?\n\n` +
+                `KEEPS: profile documents, commercial/federal profiles, strategic profiles, branding.\n` +
+                `DELETES: search scopes, enrichment sessions + records, keyword bank, methodology log.\n\n` +
+                `This starts a fresh audit trail from Round 1 with full logging.`
+            )
+            if (!confirmed) return
+            const result = await resetTenantDownstream(activeTenant.id)
+            if (result.ok) {
+              alert(
+                `Reset complete.\n\n` +
+                  `Deleted:\n` +
+                  `  • ${result.summary.search_scopes || 0} search scopes\n` +
+                  `  • ${result.summary.enrichment_sessions || 0} sessions\n` +
+                  `  • ${result.summary.enrichment_records || 0} contract records\n` +
+                  `  • ${result.summary.round_1_keywords || 0} saved keywords\n` +
+                  `  • ${result.summary.methodology_log_cleared || 0} prior log entries\n\n` +
+                  `Profile evidence preserved. Methodology log restarted with Step 1 summary.`
+              )
+              // Reload everything
+              await loadProfileData(activeTenant.id)
+              window.location.reload()
+            } else {
+              alert(`Reset failed: ${result.error}`)
+            }
+          }}
+        >
+          Reset downstream data
+        </Button>
+      }
     >
       {buildError && (
         <div
