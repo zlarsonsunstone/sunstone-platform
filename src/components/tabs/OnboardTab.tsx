@@ -311,7 +311,7 @@ export function OnboardTab() {
     if (!activeTenant) return
     setBuilding('reconcile')
     setBuildError(null)
-    setBuildProgress('Running reconciliation…')
+    setBuildProgress('Loading PSC + NAICS reference data…')
     try {
       const isFramework = activeTenant.federal_posture === 'no_federal'
       const variantId = isFramework ? 'federal_entry_framework_v1' : 'reconciliation_v1'
@@ -326,10 +326,78 @@ export function OnboardTab() {
           `Prompt variant ${variantId} not found — run migration ${isFramework ? '0003' : '0002'}`
         )
 
+      // === Load PSC + NAICS reference data (authoritative, not hallucinated) ===
+      // Same pattern as generateSearchScopes — ground Claude in real taxonomy.
+      let pscReference = ''
+      let naicsReference = ''
+      let pscCount = 0
+      let naicsCount = 0
+
+      if (variant.prompt_template.includes('{{psc_reference}}') || variant.prompt_template.includes('{{naics_reference}}')) {
+        const { data: pscCodes } = await supabase
+          .from('psc_codes')
+          .select('code, name, full_name, level_1_name')
+          .eq('is_active', true)
+          .order('code')
+
+        const { data: naicsCodes } = await supabase
+          .from('naics_codes')
+          .select('code, title')
+          .order('code')
+
+        if (!pscCodes || pscCodes.length === 0) {
+          throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
+        }
+        if (!naicsCodes || naicsCodes.length === 0) {
+          throw new Error('NAICS reference table is empty. Run migration 0015 + seed SQL in Supabase.')
+        }
+
+        pscCount = pscCodes.length
+        naicsCount = naicsCodes.length
+
+        // Build PSC reference organized by Level 1 category
+        const pscByL1 = new Map<string, any[]>()
+        for (const p of pscCodes) {
+          const l1 = p.level_1_name || 'Uncategorized'
+          if (!pscByL1.has(l1)) pscByL1.set(l1, [])
+          pscByL1.get(l1)!.push(p)
+        }
+        pscReference = Array.from(pscByL1.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([l1, codes]) => {
+            const lines = codes.slice(0, 100).map((c: any) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
+            return `### ${l1}\n${lines.join('\n')}`
+          })
+          .join('\n\n')
+
+        // NAICS grouped by 2-digit sector
+        const naicsBySector = new Map<string, any[]>()
+        for (const n of naicsCodes) {
+          const sector = n.code.substring(0, 2)
+          if (!naicsBySector.has(sector)) naicsBySector.set(sector, [])
+          naicsBySector.get(sector)!.push(n)
+        }
+        naicsReference = Array.from(naicsBySector.entries())
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([sector, codes]) => {
+            const lines = codes.map((c: any) => `  ${c.code} — ${c.title}`)
+            return `### Sector ${sector}\n${lines.join('\n')}`
+          })
+          .join('\n\n')
+      }
+
+      setBuildProgress(
+        isFramework
+          ? `Generating Federal Entry Framework grounded in ${pscCount} PSC + ${naicsCount} NAICS codes…`
+          : 'Running reconciliation…'
+      )
+
       const prompt = variant.prompt_template
         .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
         .replace(/\{\{commercial_profile\}\}/g, commercialProfile?.synthesized_text || '(no commercial profile built yet)')
         .replace(/\{\{federal_profile\}\}/g, federalProfile?.synthesized_text || '(no federal profile built yet)')
+        .replace(/\{\{psc_reference\}\}/g, pscReference)
+        .replace(/\{\{naics_reference\}\}/g, naicsReference)
 
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
@@ -375,6 +443,10 @@ export function OnboardTab() {
           has_divergence: !!sections.divergence,
           has_suggestions: !!sections.suggestions || isFramework,
           has_structured_output: !!structured,
+          psc_reference_count: pscCount,
+          naics_reference_count: naicsCount,
+          psc_source: pscCount > 0 ? 'GSA PSC Manual April 2025 (v2.psc_codes)' : null,
+          naics_source: naicsCount > 0 ? 'Census Bureau 2022 NAICS revision (v2.naics_codes)' : null,
         },
       })
     } catch (err: any) {
