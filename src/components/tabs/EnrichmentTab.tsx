@@ -11,6 +11,8 @@ interface SessionRow {
   session_id: string
   tenant_id: string
   iteration: number
+  round_number: number
+  turn_number: number | null
   status: string
   record_count: number
   file_name: string | null
@@ -49,7 +51,7 @@ export function EnrichmentTab() {
   const [records, setRecords] = useState<RecordRow[]>([])
   const [loading, setLoading] = useState(true)
   const [uploading, setUploading] = useState(false)
-  const [enriching, setEnriching] = useState(false)
+  const [_enriching, setEnriching] = useState(false)
   const [analyzing, setAnalyzing] = useState(false)
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -89,6 +91,17 @@ export function EnrichmentTab() {
     loadSessions()
   }, [tenant?.id])
 
+  const currentRound = tenant?.current_round || 1
+
+  // Sessions within the current round
+  const currentRoundSessions = sessions.filter((s) => (s.round_number || 1) === currentRound)
+  const maxTurnInRound = currentRoundSessions.reduce(
+    (m, s) => Math.max(m, s.turn_number || 0),
+    0
+  )
+  const nextTurnInRound = maxTurnInRound + 1
+
+  // Legacy iteration counter (still used by the insert below as a fallback)
   const maxIteration = sessions.reduce((m, s) => Math.max(m, s.iteration), 0)
   const nextIteration = maxIteration + 1
 
@@ -228,6 +241,8 @@ export function EnrichmentTab() {
         .insert({
           tenant_id: tenant.id,
           iteration: nextIteration,
+          round_number: currentRound,
+          turn_number: nextTurnInRound,
           file_name: file.name,
           record_count: effectiveCount,
           status: 'pending',
@@ -521,6 +536,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
     }
   }
 
+  // @ts-expect-error kept for future round 2+ fit scoring reinstatement
   const runEnrichment = async () => {
     if (!tenant || !activeSession) return
     if (!hasProfile) {
@@ -626,19 +642,57 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 
   if (!tenant) return null
 
+  const roundMetaMap: Record<number, { label: string; subtitle: string }> = {
+    1: {
+      label: 'Round 1 — Discovery',
+      subtitle: `Stack NAICS/PSC scope uploads. Each upload becomes a turn within Round 1. Keywords accumulate in the bank until you advance to Round 2.`,
+    },
+    2: {
+      label: 'Round 2 — Targeted',
+      subtitle: `Upload datasets built from your curated Round 1 keywords. Records get fit-scored against ${tenant.name}'s profile.`,
+    },
+    3: {
+      label: 'Round 3 — Vendor intelligence',
+      subtitle: `Upload vendor-focused datasets to deep-dive on specific awardees, primes, or teaming candidates.`,
+    },
+  }
+  const roundMeta = roundMetaMap[currentRound] || {
+    label: `Round ${currentRound}`,
+    subtitle: 'Continue adding turns within this round.',
+  }
+
+  const advanceRound = async () => {
+    if (!tenant) return
+    const nextRound = currentRound + 1
+    if (!confirm(`Move to Round ${nextRound}? You can always return to Round ${currentRound} later.`)) return
+    await supabase.from('tenants').update({ current_round: nextRound }).eq('id', tenant.id)
+    await useStore.getState().setActiveTenant(tenant.id)
+  }
+
+  const returnToPreviousRound = async () => {
+    if (!tenant || currentRound <= 1) return
+    const prevRound = currentRound - 1
+    if (!confirm(`Return to Round ${prevRound}? You'll be able to add more turns to that round.`)) return
+    await supabase.from('tenants').update({ current_round: prevRound }).eq('id', tenant.id)
+    await useStore.getState().setActiveTenant(tenant.id)
+  }
+
   return (
     <TabPage
-      eyebrow={`Turn ${Math.min(nextIteration, tenant.turn_count || 4)} of ${tenant.turn_count || 4}`}
+      eyebrow={`${roundMeta.label} · Turn ${nextTurnInRound} incoming`}
       title="Enrichment"
-      description={
-        `Drop a SAM.gov or HigherGov CSV export. Records get analyzed against ${tenant.name}'s commercial profile to extract Round 1 keyword candidates.`
-      }
+      description={roundMeta.subtitle}
       actions={
-        activeSession && activeSession.status !== 'complete' && !enriching ? (
-          <Button onClick={runEnrichment} disabled={!hasProfile}>
-            {hasProfile ? 'Run enrichment' : 'Build profile first'}
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {currentRound > 1 && (
+            <Button variant="secondary" size="small" onClick={returnToPreviousRound}>
+              ← Return to Round {currentRound - 1}
+            </Button>
+          )}
+          <Button size="small" onClick={advanceRound}>
+            Move to Enrichment Round {currentRound + 1}
           </Button>
-        ) : null
+        </div>
       }
     >
       {!hasProfile && (
@@ -686,7 +740,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         }}
       >
         <div style={{ fontSize: '15px', fontWeight: 500, marginBottom: '8px' }}>
-          Drop Turn {nextIteration} export here
+          Drop Round {currentRound} · Turn {nextTurnInRound} export here
         </div>
         <div style={{ fontSize: '13px', color: 'var(--color-text-secondary)', marginBottom: '16px' }}>
           CSV file from SAM.gov, HigherGov, or USASpending
@@ -821,7 +875,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                     textAlign: 'left',
                   }}
                 >
-                  <div style={{ fontSize: '14px', fontWeight: 500 }}>Turn {s.iteration}</div>
+                  <div style={{ fontSize: '14px', fontWeight: 500 }}>
+                    Round {s.round_number || 1} · Turn {s.turn_number || s.iteration}
+                  </div>
                   <div
                     style={{
                       fontSize: '12px',
@@ -830,6 +886,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                     }}
                   >
                     {s.record_count} records · {s.status}
+                    {s.source_scope_tags && s.source_scope_tags.length > 0 && (
+                      <> · #{s.source_scope_tags[0]}</>
+                    )}
                     {s.file_name && <> · {s.file_name}</>}
                   </div>
                 </button>
@@ -848,7 +907,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                   margin: 0,
                 }}
               >
-                {activeSession ? `Records — Turn ${activeSession.iteration}` : 'No session selected'}
+                {activeSession
+                  ? `Records — Round ${activeSession.round_number || 1} · Turn ${activeSession.turn_number || activeSession.iteration}`
+                  : 'No session selected'}
               </h3>
               {activeSession && records.length > 0 && (
                 <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>

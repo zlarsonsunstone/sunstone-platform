@@ -51,6 +51,7 @@ export interface Tenant {
   turn_count: number
   batch_size: number
   archive_age_days: number
+  current_round: number
   created_at: string
   updated_at: string
 }
