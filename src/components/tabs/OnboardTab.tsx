@@ -3,6 +3,7 @@ import { useStore } from '@/store/useStore'
 import { supabase } from '@/lib/supabase'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 import { resetTenantDownstream } from '@/lib/tenantReset'
+import { logMethodology } from '@/lib/methodologyLog'
 import { TabPage } from '@/components/TabPage'
 import { Card } from '@/components/Card'
 import { Button } from '@/components/Button'
@@ -261,7 +262,44 @@ export function OnboardTab() {
 
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
+
+      // === METHODOLOGY LOG: profile built ===
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: bucket === 'commercial' ? 'commercial_profile_built' : 'federal_profile_built',
+        actor: 'claude-sonnet-4-5',
+        summary: `${bucket === 'commercial' ? 'Commercial' : 'Federal'} profile synthesized from ${usableSources.length} source${usableSources.length === 1 ? '' : 's'} (${narrative.length} chars)`,
+        details: {
+          bucket,
+          variant_id: variantId,
+          model: 'claude-sonnet-4-5',
+          max_tokens: 8192,
+          source_count: usableSources.length,
+          narrative_length_chars: narrative.length,
+          sources_used: usableSources.map((s) => ({
+            id: s.id,
+            label: s.label,
+            source_type: s.source_type,
+            digest_status: s.digest_status,
+          })),
+          sources_skipped: unusable.map((s) => ({
+            id: s.id,
+            label: s.label,
+            reason: s.digest_status === 'pending' ? 'not digested' : `status: ${s.digest_status}`,
+          })),
+          has_structured_output: !!structured,
+        },
+      })
     } catch (err: any) {
+      if (activeTenant) {
+        await logMethodology({
+          tenantId: activeTenant.id,
+          eventType: `${bucket}_profile_build_failed`,
+          actor: 'system',
+          summary: `${bucket} profile build failed: ${err?.message || 'unknown error'}`,
+          details: { error: err?.message, bucket },
+        })
+      }
       setBuildError(err.message || 'Build failed')
       setBuildProgress(null)
     } finally {
@@ -320,7 +358,35 @@ export function OnboardTab() {
 
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
+
+      // === METHODOLOGY LOG: reconciliation complete ===
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: 'reconciliation_built',
+        actor: 'claude-sonnet-4-5',
+        summary: `${isFramework ? 'Federal entry framework' : 'Reconciliation'} v${nextVersion} generated (${cleaned.length} chars)`,
+        details: {
+          mode: isFramework ? 'framework' : 'reconcile',
+          variant_id: variantId,
+          model: 'claude-sonnet-4-5',
+          version: nextVersion,
+          narrative_length: cleaned.length,
+          has_alignment: !!sections.alignment,
+          has_divergence: !!sections.divergence,
+          has_suggestions: !!sections.suggestions || isFramework,
+          has_structured_output: !!structured,
+        },
+      })
     } catch (err: any) {
+      if (activeTenant) {
+        await logMethodology({
+          tenantId: activeTenant.id,
+          eventType: 'reconciliation_failed',
+          actor: 'system',
+          summary: `Reconciliation failed: ${err?.message || 'unknown error'}`,
+          details: { error: err?.message },
+        })
+      }
       setBuildError(err.message || 'Reconciliation failed')
       setBuildProgress(null)
     } finally {
@@ -354,6 +420,7 @@ export function OnboardTab() {
     setBuilding('reconcile')
     setBuildError(null)
     setBuildProgress('Generating Round 1 search scopes…')
+    const startedAt = new Date()
     try {
       const prompt = `You are generating Round 1 federal search scopes for ${activeTenant.name} based on their commercial company profile.
 
@@ -423,6 +490,22 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 }
 \`\`\``
 
+      // === METHODOLOGY LOG: scope generation start ===
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: 'scope_generation_start',
+        actor: 'claude-sonnet-4-5',
+        summary: `Generating Round 1 search scopes for ${activeTenant.name} from commercial profile (${commercialProfile.synthesized_text.length} chars)`,
+        details: {
+          model: 'claude-sonnet-4-5',
+          max_tokens: 3000,
+          profile_length: commercialProfile.synthesized_text.length,
+          started_at: startedAt.toISOString(),
+          prompt_length_chars: prompt.length,
+          prompt_summary: 'Generate 6-10 NAICS+PSC scopes covering the federal pursuit surface with correlation scoring',
+        },
+      })
+
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
         maxTokens: 3000,
@@ -471,9 +554,59 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         if (insertError) throw new Error(`Failed to save scopes: ${insertError.message}`)
       }
 
+      // === METHODOLOGY LOG: scope generation complete ===
+      const runtimeMs = Date.now() - startedAt.getTime()
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: 'scope_generation_complete',
+        actor: 'claude-sonnet-4-5',
+        summary: `Generated ${inserts.length} Round 1 search scopes in ${(runtimeMs / 1000).toFixed(1)}s. Total estimated annual market: $${inserts.reduce((sum: number, s: any) => sum + (s.estimated_annual_dollars || 0), 0).toLocaleString()}.`,
+        details: {
+          runtime_ms: runtimeMs,
+          runtime_seconds: runtimeMs / 1000,
+          scope_count: inserts.length,
+          scopes: inserts.map((s: any) => ({
+            name: s.name,
+            scope_tag: s.scope_tag,
+            tier: s.tier,
+            naics_codes: s.naics_codes,
+            psc_prefixes: s.psc_prefixes,
+            correlation_score: s.correlation_score,
+            correlation_rationale: s.correlation_rationale,
+            rationale: s.rationale,
+            strategic_angle: s.strategic_angle,
+            estimated_annual_awards: s.estimated_annual_awards,
+            estimated_annual_dollars: s.estimated_annual_dollars,
+            estimated_size_label: s.estimated_size_label,
+            keyword_layers: s.keyword_layers,
+          })),
+          tier_breakdown: {
+            primary: inserts.filter((s: any) => s.tier === 'primary').length,
+            secondary: inserts.filter((s: any) => s.tier === 'secondary').length,
+            exploratory: inserts.filter((s: any) => s.tier === 'exploratory').length,
+          },
+          correlation_distribution: {
+            '9-10': inserts.filter((s: any) => (s.correlation_score || 0) >= 9).length,
+            '7-8': inserts.filter((s: any) => (s.correlation_score || 0) >= 7 && (s.correlation_score || 0) < 9).length,
+            '5-6': inserts.filter((s: any) => (s.correlation_score || 0) >= 5 && (s.correlation_score || 0) < 7).length,
+            '<5': inserts.filter((s: any) => (s.correlation_score || 0) < 5).length,
+          },
+        },
+      })
+
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
     } catch (err: any) {
+      // === METHODOLOGY LOG: scope generation failed ===
+      if (activeTenant) {
+        await logMethodology({
+          tenantId: activeTenant.id,
+          eventType: 'scope_generation_failed',
+          actor: 'system',
+          summary: `Scope generation failed: ${err?.message || 'unknown error'}`,
+          details: { error: err?.message, stack: err?.stack?.slice(0, 2000) },
+        })
+      }
       setBuildError(err.message || 'Scope generation failed')
       setBuildProgress(null)
     } finally {
@@ -491,12 +624,46 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 
   async function deleteScope(scopeId: string) {
     if (!confirm('Delete this search scope?')) return
+    const scope = searchScopes.find((s) => s.id === scopeId)
     await supabase.from('search_scopes').delete().eq('id', scopeId)
+    if (activeTenant && scope) {
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: 'scope_deleted',
+        actor: 'user',
+        summary: `User deleted scope "${scope.name}" (#${scope.scope_tag}) — correlation ${scope.correlation_score}/10`,
+        details: {
+          scope_id: scopeId,
+          name: scope.name,
+          scope_tag: scope.scope_tag,
+          correlation_score: scope.correlation_score,
+          tier: scope.tier,
+          naics_codes: scope.naics_codes,
+          psc_prefixes: scope.psc_prefixes,
+          estimated_annual_dollars: scope.estimated_annual_dollars,
+        },
+      })
+    }
     if (activeTenant) await loadProfileData(activeTenant.id)
   }
 
   async function togglePinScope(scopeId: string, nextPinned: boolean) {
+    const scope = searchScopes.find((s) => s.id === scopeId)
     await supabase.from('search_scopes').update({ pinned: nextPinned }).eq('id', scopeId)
+    if (activeTenant && scope) {
+      await logMethodology({
+        tenantId: activeTenant.id,
+        eventType: nextPinned ? 'scope_pinned' : 'scope_unpinned',
+        actor: 'user',
+        summary: `User ${nextPinned ? 'pinned' : 'unpinned'} scope "${scope.name}" (#${scope.scope_tag})`,
+        details: {
+          scope_id: scopeId,
+          name: scope.name,
+          scope_tag: scope.scope_tag,
+          correlation_score: scope.correlation_score,
+        },
+      })
+    }
     if (activeTenant) await loadProfileData(activeTenant.id)
   }
 
@@ -1271,7 +1438,7 @@ function ReconciliationColumn({
         )}
 
         {recMatchesMode && reconciliation && (
-          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px', maxHeight: '240px', overflowY: 'auto' }}>
+          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
             <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
               v{reconciliation.version}
               {reconciliation.last_built_at &&
