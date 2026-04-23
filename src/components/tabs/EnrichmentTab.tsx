@@ -4,6 +4,7 @@ import { useStore } from '@/store/useStore'
 import { parseCsv, mapCsvRowToRecord } from '@/lib/csv'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 import { logMethodology } from '@/lib/methodologyLog'
+import { analyzePhrasePiids, type AnalyzedPiid } from '@/lib/piidAnalysis'
 import { TabPage } from '../TabPage'
 import { Card } from '../Card'
 import { Button } from '../Button'
@@ -1189,6 +1190,9 @@ Return ONLY JSON in a \`\`\`json block:
           progress={progress}
           onRerun={() => runKeywordAnalysis(activeSession)}
           onSaveKeywords={(phrases) => saveKeywordsToBank(phrases, activeSession)}
+          tenantId={tenant.id}
+          tenantName={tenant.name}
+          tenantProfileText={commercialProfile?.synthesized_text || ''}
         />
       )}
 
@@ -2269,12 +2273,18 @@ function KeywordAnalysisPanel({
   progress,
   onRerun,
   onSaveKeywords,
+  tenantId,
+  tenantName,
+  tenantProfileText,
 }: {
   session: SessionRow
   analyzing: boolean
   progress: { done: number; total: number; label?: string } | null
   onRerun: () => void
   onSaveKeywords: (phrases: KeywordPhrase[]) => Promise<void>
+  tenantId: string
+  tenantName: string
+  tenantProfileText: string
 }) {
   const analysis = session.market_analysis
   const allPhrases: KeywordPhrase[] = analysis?.phrases || []
@@ -2529,7 +2539,7 @@ function KeywordAnalysisPanel({
         <div
           style={{
             display: 'grid',
-            gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px',
+            gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px 28px',
             gap: '8px',
             padding: '10px 12px',
             fontSize: '11px',
@@ -2556,6 +2566,7 @@ function KeywordAnalysisPanel({
           <SortHeader active={sortKey === 'avg'} desc={sortDesc} onClick={() => toggleSort('avg')} align="right">
             Avg
           </SortHeader>
+          <span></span>
         </div>
 
         {sorted.length === 0 ? (
@@ -2570,6 +2581,12 @@ function KeywordAnalysisPanel({
                 phrase={p}
                 selected={selectedPhrases.has(p.phrase)}
                 onToggle={() => togglePhrase(p.phrase)}
+                tenantId={tenantId}
+                tenantName={tenantName}
+                tenantProfileText={tenantProfileText}
+                sessionId={session.session_id}
+                roundNumber={session.round_number || 1}
+                turnNumber={session.turn_number || session.iteration || 1}
               />
             ))}
           </div>
@@ -2623,16 +2640,73 @@ function KeywordRow({
   phrase,
   selected,
   onToggle,
+  tenantId,
+  tenantName,
+  tenantProfileText,
+  sessionId,
+  roundNumber,
+  turnNumber,
 }: {
   phrase: KeywordPhrase
   selected: boolean
   onToggle: () => void
+  tenantId: string
+  tenantName: string
+  tenantProfileText: string
+  sessionId: string
+  roundNumber: number
+  turnNumber: number
 }) {
   const [expanded, setExpanded] = useState(false)
+  const [forensicState, setForensicState] = useState<
+    'idle' | 'running' | 'loaded' | 'error'
+  >('idle')
+  const [forensicProgress, setForensicProgress] = useState<{
+    done: number
+    total: number
+    label?: string
+  } | null>(null)
+  const [forensicResults, setForensicResults] = useState<AnalyzedPiid[]>([])
+  const [forensicError, setForensicError] = useState<string | null>(null)
+  const [viewingPiid, setViewingPiid] = useState<AnalyzedPiid | null>(null)
 
   const rs = phrase.relevance_score
   const relevanceColor = rs === null ? '#86868B' : rs >= 8 ? '#34C759' : rs >= 6 ? '#007AFF' : rs >= 4 ? '#D4920A' : '#FF3B30'
   const relevanceBg = rs === null ? 'rgba(134,134,139,0.12)' : rs >= 8 ? 'rgba(52,199,89,0.12)' : rs >= 6 ? 'rgba(0,122,255,0.12)' : rs >= 4 ? 'rgba(212,146,10,0.12)' : 'rgba(255,59,48,0.12)'
+
+  const runForensicAnalysis = async () => {
+    setForensicState('running')
+    setForensicError(null)
+    setForensicProgress({ done: 0, total: 0, label: 'Starting forensic analysis…' })
+    try {
+      const results = await analyzePhrasePiids({
+        tenantId,
+        tenantName,
+        tenantProfileText,
+        sessionId,
+        roundNumber,
+        turnNumber,
+        phrase: phrase.phrase,
+        onProgress: (done, total, label) => setForensicProgress({ done, total, label }),
+      })
+      setForensicResults(results)
+      setForensicState('loaded')
+      setForensicProgress(null)
+    } catch (err: any) {
+      setForensicError(err?.message || 'Analysis failed')
+      setForensicState('error')
+      setForensicProgress(null)
+    }
+  }
+
+  const handleToggleExpanded = () => {
+    const newExpanded = !expanded
+    setExpanded(newExpanded)
+    // Auto-check for cached results on first expand
+    if (newExpanded && forensicState === 'idle') {
+      runForensicAnalysis()
+    }
+  }
 
   return (
     <div
@@ -2644,13 +2718,13 @@ function KeywordRow({
       <div
         style={{
           display: 'grid',
-          gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px',
+          gridTemplateColumns: '32px 2.2fr 90px 110px 80px 90px 28px',
           gap: '8px',
           padding: '10px 12px',
           alignItems: 'center',
           cursor: 'pointer',
         }}
-        onClick={() => setExpanded(!expanded)}
+        onClick={handleToggleExpanded}
       >
         <input
           type="checkbox"
@@ -2692,21 +2766,494 @@ function KeywordRow({
         <span style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
           {formatDollarsBrief(phrase.avg_contract)}
         </span>
+        <span
+          style={{
+            textAlign: 'center',
+            fontSize: '11px',
+            color: 'var(--color-text-tertiary)',
+            userSelect: 'none',
+          }}
+        >
+          {expanded ? '▼' : '▶'}
+        </span>
       </div>
-      {expanded && (phrase.context || phrase.relevance_rationale) && (
-        <div style={{ padding: '0 12px 12px 60px', fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+
+      {expanded && (
+        <div style={{ padding: '0 12px 16px 60px', fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
           {phrase.context && (
-            <div style={{ marginBottom: phrase.relevance_rationale ? '6px' : 0 }}>
+            <div style={{ marginBottom: '8px' }}>
               <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>Context:</span> {phrase.context}
             </div>
           )}
           {phrase.relevance_rationale && (
-            <div>
-              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>Why {phrase.relevance_score}/10:</span> {phrase.relevance_rationale}
+            <div style={{ marginBottom: '12px' }}>
+              <span style={{ color: 'var(--color-text-tertiary)', fontWeight: 500 }}>Aggregate relevance rationale ({phrase.relevance_score}/10):</span> {phrase.relevance_rationale}
             </div>
           )}
+
+          {/* Forensic analysis section */}
+          <div
+            style={{
+              marginTop: '12px',
+              paddingTop: '12px',
+              borderTop: '1px solid var(--color-hairline)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+                Per-PIID forensic analysis
+              </div>
+              {forensicState === 'loaded' && (
+                <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+                  {forensicResults.length} PIIDs analyzed
+                </span>
+              )}
+            </div>
+
+            {forensicState === 'running' && (
+              <div style={{ padding: '12px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
+                <div style={{ fontSize: '12px', marginBottom: '6px' }}>
+                  {forensicProgress?.label || 'Analyzing…'}
+                </div>
+                {forensicProgress && forensicProgress.total > 0 && (
+                  <>
+                    <div
+                      style={{
+                        height: '4px',
+                        background: 'var(--color-hairline)',
+                        borderRadius: '2px',
+                        overflow: 'hidden',
+                        marginBottom: '4px',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${(forensicProgress.done / forensicProgress.total) * 100}%`,
+                          background: 'var(--color-accent)',
+                          transition: 'width 0.3s',
+                        }}
+                      />
+                    </div>
+                    <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', fontFamily: 'var(--font-mono)' }}>
+                      {forensicProgress.done} of {forensicProgress.total}
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            {forensicState === 'error' && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  background: 'rgba(255, 59, 48, 0.08)',
+                  border: '1px solid rgba(255, 59, 48, 0.2)',
+                  borderRadius: 'var(--radius-input)',
+                  color: 'var(--color-danger)',
+                  fontSize: '12px',
+                }}
+              >
+                {forensicError}
+                <button
+                  onClick={runForensicAnalysis}
+                  style={{
+                    marginLeft: '8px',
+                    padding: '2px 8px',
+                    fontSize: '11px',
+                    background: 'transparent',
+                    border: '1px solid var(--color-danger)',
+                    borderRadius: '3px',
+                    color: 'var(--color-danger)',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Retry
+                </button>
+              </div>
+            )}
+
+            {forensicState === 'loaded' && forensicResults.length === 0 && (
+              <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                No PIIDs matched this phrase in the session.
+              </div>
+            )}
+
+            {forensicState === 'loaded' && forensicResults.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                {forensicResults.map((r) => (
+                  <PiidRow key={r.id} result={r} onClick={() => setViewingPiid(r)} />
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
+
+      {viewingPiid && (
+        <PiidForensicDrawer
+          piid={viewingPiid}
+          phrase={phrase.phrase}
+          onClose={() => setViewingPiid(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+/**
+ * Compact PIID row in the accordion. Click to open forensic drawer.
+ */
+function PiidRow({ result, onClick }: { result: AnalyzedPiid; onClick: () => void }) {
+  const rs = result.per_piid_relevance_score
+  const color = rs === null ? '#86868B' : rs >= 8 ? '#34C759' : rs >= 6 ? '#007AFF' : rs >= 4 ? '#D4920A' : '#FF3B30'
+  const bg = rs === null ? 'rgba(134,134,139,0.1)' : rs >= 8 ? 'rgba(52,199,89,0.1)' : rs >= 6 ? 'rgba(0,122,255,0.1)' : rs >= 4 ? 'rgba(212,146,10,0.1)' : 'rgba(255,59,48,0.1)'
+
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '50px 1.5fr 80px 80px 60px',
+        gap: '8px',
+        padding: '6px 8px',
+        background: 'transparent',
+        border: '1px solid transparent',
+        borderRadius: 'var(--radius-input)',
+        cursor: 'pointer',
+        textAlign: 'left',
+        fontFamily: 'inherit',
+        fontSize: '11px',
+        alignItems: 'center',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'var(--color-bg-subtle)'
+        e.currentTarget.style.border = '1px solid var(--color-hairline)'
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = 'transparent'
+        e.currentTarget.style.border = '1px solid transparent'
+      }}
+    >
+      <span
+        style={{
+          padding: '1px 5px',
+          fontSize: '10px',
+          fontFamily: 'var(--font-mono)',
+          fontWeight: 600,
+          color,
+          background: bg,
+          borderRadius: '3px',
+          textAlign: 'center',
+        }}
+      >
+        {rs !== null ? `${rs}/10` : '—'}
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '11px',
+          color: 'var(--color-text-primary)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={result.piid}
+      >
+        {result.piid}
+      </span>
+      <span
+        style={{
+          fontSize: '11px',
+          color: 'var(--color-text-secondary)',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+        }}
+        title={result.vendor_name || result.awardee || ''}
+      >
+        {result.vendor_name || result.awardee || '—'}
+      </span>
+      <span
+        style={{
+          fontFamily: 'var(--font-mono)',
+          fontSize: '11px',
+          color: 'var(--color-text-secondary)',
+          textAlign: 'right',
+        }}
+      >
+        {formatDollarsBrief(result.obligated || 0)}
+      </span>
+      <span
+        style={{
+          fontSize: '10px',
+          color: 'var(--color-text-tertiary)',
+          textAlign: 'right',
+          fontFamily: 'var(--font-mono)',
+        }}
+      >
+        {result.naics_code || '—'}
+      </span>
+    </button>
+  )
+}
+
+/**
+ * Full-screen forensic drawer for a single PIID.
+ * Shows: contract description, system interpretation, NAICS/PSC alignment,
+ * per-PIID relevance, vendor intel.
+ */
+function PiidForensicDrawer({
+  piid,
+  phrase,
+  onClose,
+}: {
+  piid: AnalyzedPiid
+  phrase: string
+  onClose: () => void
+}) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  const ScoreBadge = ({ label, score, rationale }: { label: string; score: number | null; rationale: string | null }) => {
+    const color = score === null ? '#86868B' : score >= 8 ? '#34C759' : score >= 6 ? '#007AFF' : score >= 4 ? '#D4920A' : '#FF3B30'
+    const bg = score === null ? 'rgba(134,134,139,0.08)' : score >= 8 ? 'rgba(52,199,89,0.08)' : score >= 6 ? 'rgba(0,122,255,0.08)' : score >= 4 ? 'rgba(212,146,10,0.08)' : 'rgba(255,59,48,0.08)'
+    return (
+      <div style={{ padding: '12px 14px', background: bg, borderRadius: 'var(--radius-input)', marginBottom: '8px' }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-primary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+            {label}
+          </span>
+          <span style={{ fontSize: '18px', fontWeight: 700, color, fontFamily: 'var(--font-mono)' }}>
+            {score !== null ? `${score}/10` : '—'}
+          </span>
+        </div>
+        {rationale && (
+          <div style={{ fontSize: '12px', color: 'var(--color-text-secondary)', lineHeight: 1.5 }}>
+            {rationale}
+          </div>
+        )}
+      </div>
+    )
+  }
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: 'fixed',
+        inset: 0,
+        background: 'rgba(0,0,0,0.4)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 1000,
+        padding: '40px 20px',
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: 'var(--color-bg-primary)',
+          borderRadius: 'var(--radius-modal)',
+          maxWidth: '840px',
+          width: '100%',
+          maxHeight: '92vh',
+          overflowY: 'auto',
+          boxShadow: '0 20px 60px rgba(0,0,0,0.2)',
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            padding: '20px 24px',
+            borderBottom: '0.5px solid var(--color-hairline)',
+            position: 'sticky',
+            top: 0,
+            background: 'var(--color-bg-primary)',
+            zIndex: 2,
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '4px' }}>
+                Forensic analysis · Phrase match: <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--color-text-primary)' }}>{phrase}</span>
+              </div>
+              <h2 style={{ fontSize: '18px', fontWeight: 600, margin: 0, fontFamily: 'var(--font-mono)' }}>
+                {piid.piid}
+              </h2>
+            </div>
+            <button
+              onClick={onClose}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '20px',
+                color: 'var(--color-text-tertiary)',
+                padding: '0 4px',
+              }}
+              aria-label="Close"
+            >
+              ×
+            </button>
+          </div>
+        </div>
+
+        <div style={{ padding: '20px 24px' }}>
+          {/* Contract facts */}
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              padding: '14px',
+              background: 'var(--color-bg-subtle)',
+              borderRadius: 'var(--radius-input)',
+              marginBottom: '16px',
+            }}
+          >
+            <Fact label="Obligated" value={piid.obligated ? `$${piid.obligated.toLocaleString()}` : '—'} mono />
+            <Fact label="NAICS" value={piid.naics_code || '—'} mono />
+            <Fact label="Agency" value={piid.agency || '—'} />
+            <Fact label="PSC" value={piid.psc_code || '—'} mono />
+            <Fact label="Awardee" value={piid.awardee || '—'} wide />
+          </div>
+
+          {/* Description */}
+          <Section title="Contract description">
+            <div style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--color-text-primary)' }}>
+              {piid.contract_description || '(no description)'}
+            </div>
+          </Section>
+
+          {/* System interpretation */}
+          <Section title="System interpretation">
+            <div style={{ fontSize: '13px', lineHeight: 1.6, color: 'var(--color-text-primary)', padding: '10px 12px', background: 'rgba(0,122,255,0.06)', borderRadius: 'var(--radius-input)' }}>
+              {piid.system_interpretation || '(not interpreted)'}
+            </div>
+          </Section>
+
+          {/* Scores */}
+          <Section title="Alignment & relevance">
+            <ScoreBadge
+              label={`Per-PIID relevance to this client`}
+              score={piid.per_piid_relevance_score}
+              rationale={piid.per_piid_relevance_rationale}
+            />
+            <ScoreBadge
+              label={`NAICS alignment (${piid.naics_code || 'n/a'})`}
+              score={piid.naics_alignment_score}
+              rationale={piid.naics_alignment_rationale}
+            />
+            <ScoreBadge
+              label={`PSC alignment (${piid.psc_code || 'n/a'})`}
+              score={piid.psc_alignment_score}
+              rationale={piid.psc_alignment_rationale}
+            />
+          </Section>
+
+          {/* Vendor intel */}
+          {piid.vendor_name && (
+            <Section title="Vendor intel">
+              <div style={{ padding: '12px 14px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                  <div style={{ fontSize: '13px', fontWeight: 600 }}>{piid.vendor_name}</div>
+                  {piid.vendor_similarity_score !== null && (
+                    <span
+                      style={{
+                        padding: '2px 8px',
+                        fontSize: '11px',
+                        fontFamily: 'var(--font-mono)',
+                        fontWeight: 600,
+                        background: 'var(--color-bg-primary)',
+                        border: '1px solid var(--color-hairline)',
+                        borderRadius: '3px',
+                      }}
+                    >
+                      Similarity {piid.vendor_similarity_score}/10
+                    </span>
+                  )}
+                </div>
+                {piid.vendor_description && (
+                  <div style={{ fontSize: '12px', lineHeight: 1.5, color: 'var(--color-text-secondary)' }}>
+                    {piid.vendor_description}
+                  </div>
+                )}
+              </div>
+            </Section>
+          )}
+
+          {/* Audit footer */}
+          <div
+            style={{
+              marginTop: '16px',
+              paddingTop: '12px',
+              borderTop: '0.5px solid var(--color-hairline)',
+              fontSize: '10px',
+              color: 'var(--color-text-tertiary)',
+              fontFamily: 'var(--font-mono)',
+            }}
+          >
+            Analyzed {new Date(piid.analyzed_at).toLocaleString()}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{ marginBottom: '18px' }}>
+      <div
+        style={{
+          fontSize: '11px',
+          fontWeight: 600,
+          color: 'var(--color-text-primary)',
+          textTransform: 'uppercase',
+          letterSpacing: '0.04em',
+          marginBottom: '8px',
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </div>
+  )
+}
+
+function Fact({
+  label,
+  value,
+  mono,
+  wide,
+}: {
+  label: string
+  value: string
+  mono?: boolean
+  wide?: boolean
+}) {
+  return (
+    <div style={{ gridColumn: wide ? 'span 2' : undefined }}>
+      <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em', marginBottom: '2px' }}>
+        {label}
+      </div>
+      <div
+        style={{
+          fontSize: '13px',
+          color: 'var(--color-text-primary)',
+          fontFamily: mono ? 'var(--font-mono)' : 'inherit',
+          fontWeight: 500,
+        }}
+      >
+        {value}
+      </div>
     </div>
   )
 }

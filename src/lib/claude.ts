@@ -20,11 +20,17 @@ export interface CallClaudeOptions {
   maxTokens?: number
   system?: string
   signal?: AbortSignal
+  /** Enable web_search tool. Claude can choose to search the web before answering. */
+  enableWebSearch?: boolean
+  /** Max web searches per call (server-side limit). Default 5. */
+  maxWebSearches?: number
 }
 
 export interface CallClaudeResult {
   text: string
   usage?: { input_tokens: number; output_tokens: number }
+  /** Number of web searches actually performed during the call. */
+  webSearchesUsed?: number
 }
 
 export async function callClaudeBrowser(
@@ -43,6 +49,19 @@ export async function callClaudeBrowser(
     messages: [{ role: 'user', content: prompt }],
   }
   if (options.system) body.system = options.system
+
+  // Server-side web search tool. Only attached when explicitly requested so
+  // deterministic calls (keyword extraction, etc.) aren't accidentally paying
+  // for search turns.
+  if (options.enableWebSearch) {
+    body.tools = [
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: options.maxWebSearches || 5,
+      },
+    ]
+  }
 
   const resp = await fetch(API_URL, {
     method: 'POST',
@@ -71,7 +90,12 @@ export async function callClaudeBrowser(
     .map((b: any) => b.text)
     .join('\n')
 
-  return { text, usage: data.usage }
+  // Count web_search_tool_result blocks to track actual usage
+  const webSearchesUsed = (data.content || []).filter(
+    (b: any) => b.type === 'web_search_tool_result'
+  ).length
+
+  return { text, usage: data.usage, webSearchesUsed: webSearchesUsed || undefined }
 }
 
 export function extractJsonBlock(text: string): any | null {
