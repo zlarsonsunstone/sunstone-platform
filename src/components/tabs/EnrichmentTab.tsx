@@ -153,13 +153,83 @@ export function EnrichmentTab() {
       // Resolve the selected scope (may be empty string = "not from a scope")
       const scope = searchScopes.find((s) => s.id === selectedScopeId) || null
 
+      // === DEDUPE AGAINST EXISTING TENANT RECORDS ===
+      // Key: (tenant_id, contract_number, contract_award_unique_key).
+      // contract_number is the PIID (USASpending award_id_piid).
+      // contract_award_unique_key is the full composite ID.
+      // A record is a true dupe only if BOTH match. Otherwise it's a distinct row.
+
+      // Build a set of lookup keys from the incoming file (only for rows with a PIID)
+      const candidateKeys = new Set<string>()
+      for (const r of filtered as any[]) {
+        if (r.contract_number) {
+          candidateKeys.add(`${r.contract_number}::${r.contract_award_unique_key || ''}`)
+        }
+      }
+
+      // Fetch existing records for this tenant matching any of those PIIDs
+      const piids = Array.from(new Set(filtered.map((r: any) => r.contract_number).filter(Boolean)))
+      const existingByKey = new Map<string, any>()
+      if (piids.length > 0) {
+        // Chunked IN query (Supabase has practical URL length limits around ~2000 PIIDs)
+        const chunkSize = 500
+        for (let i = 0; i < piids.length; i += chunkSize) {
+          const chunk = piids.slice(i, i + chunkSize)
+          const { data: existing } = await supabase
+            .from('enrichment_records')
+            .select('id, contract_number, contract_award_unique_key, source_scope_tags, source_scope_ids, source_session_ids, obligated')
+            .eq('tenant_id', tenant.id)
+            .in('contract_number', chunk)
+          for (const e of (existing as any[]) || []) {
+            existingByKey.set(`${e.contract_number}::${e.contract_award_unique_key || ''}`, e)
+          }
+        }
+      }
+
+      // Partition the incoming rows
+      const newRecords: any[] = []
+      const existingToRetag: any[] = []
+      const trueDupes: any[] = []
+      for (const r of filtered as any[]) {
+        if (!r.contract_number) {
+          newRecords.push(r)  // no PIID, can't dedupe — keep as new
+          continue
+        }
+        const key = `${r.contract_number}::${r.contract_award_unique_key || ''}`
+        const existing = existingByKey.get(key)
+        if (existing) {
+          // Both PIID and unique key match. If the scope is already in this record's
+          // tags, this is a true duplicate and should be discarded entirely.
+          const alreadyTagged = scope && existing.source_scope_tags?.includes(scope.scope_tag)
+          if (alreadyTagged) {
+            trueDupes.push(existing)
+          } else {
+            existingToRetag.push({ existing, incoming: r })
+          }
+        } else {
+          newRecords.push(r)
+        }
+      }
+
+      // Create the session. Record count = new + re-tagged (not true dupes).
+      const effectiveCount = newRecords.length + existingToRetag.length
+
+      if (effectiveCount === 0) {
+        setError(
+          `All ${filtered.length} records in this CSV are already in the database and already tagged to the selected scope. No new contracts to add.`
+        )
+        setUploading(false)
+        setPendingUpload(null)
+        return
+      }
+
       const { data: sessionData, error: sessionError } = await supabase
         .from('enrichment_sessions')
         .insert({
           tenant_id: tenant.id,
           iteration: nextIteration,
           file_name: file.name,
-          record_count: filtered.length,
+          record_count: effectiveCount,
           status: 'pending',
           source_scope_ids: scope ? [scope.id] : [],
           source_scope_tags: scope ? [scope.scope_tag] : [],
@@ -173,9 +243,10 @@ export function EnrichmentTab() {
 
       const session = sessionData as SessionRow
 
+      // Insert NEW records with scope provenance arrays
       const batchSize = 100
-      for (let i = 0; i < filtered.length; i += batchSize) {
-        const batch = filtered.slice(i, i + batchSize).map((r: any) => ({
+      for (let i = 0; i < newRecords.length; i += batchSize) {
+        const batch = newRecords.slice(i, i + batchSize).map((r: any) => ({
           ...r,
           session_id: session.session_id,
           tenant_id: tenant.id,
@@ -183,6 +254,9 @@ export function EnrichmentTab() {
           enrichment_status: 'pending',
           source_scope_id: scope?.id || null,
           source_scope_tag: scope?.scope_tag || null,
+          source_scope_tags: scope ? [scope.scope_tag] : [],
+          source_scope_ids: scope ? [scope.id] : [],
+          source_session_ids: [session.session_id],
         }))
 
         const { error: insertError } = await supabase
@@ -194,21 +268,54 @@ export function EnrichmentTab() {
         }
       }
 
-      // Backfill actual counts on the scope (if one was selected)
+      // Append scope + session to EXISTING records that were re-tagged
+      if (scope && existingToRetag.length > 0) {
+        for (const pair of existingToRetag) {
+          const e = pair.existing
+          const newTags = Array.from(new Set([...(e.source_scope_tags || []), scope.scope_tag]))
+          const newIds = Array.from(new Set([...(e.source_scope_ids || []), scope.id]))
+          const newSessionIds = Array.from(
+            new Set([...(e.source_session_ids || []), session.session_id])
+          )
+          await supabase
+            .from('enrichment_records')
+            .update({
+              source_scope_tags: newTags,
+              source_scope_ids: newIds,
+              source_session_ids: newSessionIds,
+            })
+            .eq('id', e.id)
+        }
+      }
+
+      // Backfill actual counts on the scope (new + retagged, since both surface under this scope)
       if (scope) {
-        const totalDollars = filtered.reduce((sum: number, r: any) => {
-          return sum + (typeof r.obligated === 'number' ? r.obligated : 0)
-        }, 0)
+        const allTaggedObligated =
+          newRecords.reduce((sum: number, r: any) => sum + (typeof r.obligated === 'number' ? r.obligated : 0), 0) +
+          existingToRetag.reduce((sum: number, p: any) => sum + (typeof p.existing.obligated === 'number' ? p.existing.obligated : 0), 0)
+
+        // Actual count = all records for this tenant carrying this scope tag (after our update)
+        const { count: scopeRecordCount } = await supabase
+          .from('enrichment_records')
+          .select('id', { count: 'exact', head: true })
+          .eq('tenant_id', tenant.id)
+          .contains('source_scope_tags', [scope.scope_tag])
+
         await supabase
           .from('search_scopes')
           .update({
-            actual_award_count: filtered.length,
-            actual_dollar_volume: Math.round(totalDollars),
+            actual_award_count: scopeRecordCount ?? effectiveCount,
+            actual_dollar_volume: Math.round(allTaggedObligated),
             last_imported_at: new Date().toISOString(),
           })
           .eq('id', scope.id)
-        // Reload scopes so the Onboard tab reflects calibration
         if (tenant) await loadProfileData(tenant.id)
+      }
+
+      // User-facing summary of what happened
+      if (existingToRetag.length > 0 || trueDupes.length > 0) {
+        const msg = `Imported ${newRecords.length} new contracts. ${existingToRetag.length} already existed from other scopes — re-tagged with #${scope?.scope_tag || 'no_scope'}. ${trueDupes.length} exact duplicates discarded.`
+        console.log(msg)
       }
 
       await loadSessions()
@@ -217,7 +324,7 @@ export function EnrichmentTab() {
       setPendingUpload(null)
       setSelectedScopeId('')
 
-      // Auto-trigger market analysis for the new session
+      // Auto-trigger keyword analysis
       runKeywordAnalysis(session)
     } catch (err: any) {
       setError(err?.message || 'Upload failed')

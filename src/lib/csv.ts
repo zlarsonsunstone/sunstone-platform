@@ -142,10 +142,13 @@ export function mapCsvRowToRecord(
   return {
     contract_number: pickOrNull(
       'contract_number',
-      'award_id_piid',
-      'contract_award_unique_key',
+      'award_id_piid',                // USASpending: the true PIID (primary dedupe key)
       'piid',
       'notice_id'
+    ),
+    contract_award_unique_key: pickOrNull(
+      'contract_award_unique_key',    // USASpending: full composite ID (secondary dedupe key)
+      'award_unique_key'
     ),
     awardee: pickOrNull(
       'awardee',
