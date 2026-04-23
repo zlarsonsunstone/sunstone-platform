@@ -419,52 +419,110 @@ export function OnboardTab() {
     }
     setBuilding('reconcile')
     setBuildError(null)
-    setBuildProgress('Generating Round 1 search scopes…')
+    setBuildProgress('Loading PSC + NAICS reference data…')
     const startedAt = new Date()
     try {
+      // === STEP 1: Pull canonical PSC + NAICS reference data ===
+      // We pass Claude the REAL active codes as authoritative input rather than
+      // letting it hallucinate stale codes from training data.
+      const { data: pscCodes } = await supabase
+        .from('psc_codes')
+        .select('code, name, full_name, level_1_name, level_2_name, category, parent_code')
+        .eq('is_active', true)
+        .order('code')
+
+      const { data: naicsCodes } = await supabase
+        .from('naics_codes')
+        .select('code, title')
+        .order('code')
+
+      if (!pscCodes || pscCodes.length === 0) {
+        throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
+      }
+      if (!naicsCodes || naicsCodes.length === 0) {
+        throw new Error('NAICS reference table is empty. Run migration 0015 + seed SQL in Supabase.')
+      }
+
+      // Build compact PSC reference organized by Level 1 category.
+      // For each PSC we show: code | name | parent_name. Level 1 groups organize the list.
+      const pscByL1 = new Map<string, any[]>()
+      for (const p of pscCodes) {
+        const l1 = p.level_1_name || 'Uncategorized'
+        if (!pscByL1.has(l1)) pscByL1.set(l1, [])
+        pscByL1.get(l1)!.push(p)
+      }
+
+      const pscReference = Array.from(pscByL1.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([l1, codes]) => {
+          const lines = codes.slice(0, 100).map((c) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
+          return `### ${l1}\n${lines.join('\n')}`
+        })
+        .join('\n\n')
+
+      // NAICS is simpler — flat list organized by 2-digit sector
+      const naicsBySector = new Map<string, any[]>()
+      for (const n of naicsCodes) {
+        const sector = n.code.substring(0, 2)
+        if (!naicsBySector.has(sector)) naicsBySector.set(sector, [])
+        naicsBySector.get(sector)!.push(n)
+      }
+
+      const naicsReference = Array.from(naicsBySector.entries())
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([sector, codes]) => {
+          const lines = codes.map((c) => `  ${c.code} — ${c.title}`)
+          return `### Sector ${sector}\n${lines.join('\n')}`
+        })
+        .join('\n\n')
+
+      setBuildProgress(`Generating Round 1 search scopes from ${pscCodes.length} PSC + ${naicsCodes.length} NAICS codes…`)
+
       const prompt = `You are generating Round 1 federal search scopes for ${activeTenant.name} based on their commercial company profile.
 
-A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement — the same NAICS code can have very different markets depending on which PSC prefix the work falls under. Example: NAICS 541511 (Custom Computer Programming) + PSC R- (Support Services) is professional services consulting; NAICS 541511 + PSC D3 is sustained IT services; NAICS 541511 + PSC 70 is bundled with IT equipment.
+A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement — the same NAICS code can have very different markets depending on which PSC prefix the work falls under.
 
 COMMERCIAL PROFILE:
 ${commercialProfile.synthesized_text}
 
+## AUTHORITATIVE PSC REFERENCE (April 2025 GSA Manual — currently active codes only)
+You MUST pick PSC codes from this list. Do NOT use codes outside this list. Do NOT use deprecated codes like D3xx, 7030, 7045 — those have been retired and replaced by the DA/DB/DC/DD/DE/DF/DG/DH/DJ service codes and 7A/7B/7C/7D/7E/7F/7G/7H/7J product codes.
+
+${pscReference}
+
+## AUTHORITATIVE NAICS REFERENCE (2022 revision — 6-digit codes)
+You MUST pick NAICS codes from this list.
+
+${naicsReference}
+
+## TASK
+
 Generate 6-10 search scopes that together cover the company's realistic federal pursuit surface.
 
 RULES — NON-NEGOTIABLE:
-- Use ONLY real, published NAICS codes (6 digits) and real PSC prefixes (letters + optional digit). Do not invent codes.
+- Use ONLY PSC codes and NAICS codes from the authoritative reference lists above. Do not invent codes.
 - Each scope MUST combine NAICS + PSC — never NAICS alone, never PSC alone.
-- Prefer BROAD scopes that will actually return hits (hundreds to thousands of opportunities per year in federal contracting) over narrow scopes that perfectly describe the company's tech stack but return zero results. The goal is to get a dataset to analyze.
+- For PSC prefixes, use either full codes (e.g. "DB01", "7B22") OR 2-character prefixes (e.g. "DA", "7B") when you want to match a whole category. NEVER use retired formats like "D3" or "R-".
+- Prefer BROAD scopes that will actually return hits (hundreds to thousands of opportunities per year in federal contracting) over narrow scopes that perfectly describe the company's tech stack but return zero results.
 - Each scope should have a clear strategic rationale.
 - Include at least one EXPLORATORY scope — adjacent/unexpected where the company's core capability could credibly apply.
 
-COMMON PSC PREFIXES (for reference):
-- A: Research & Development
-- B: Special Studies / Analyses (not R&D)
-- D: Information Technology & Telecommunications (D3 = IT services, D3XX are specific IT scopes)
-- R: Support Services (professional, administrative, management)
-- 70: General Purpose IT Equipment
-- 7A: IT Services (hardware-adjacent)
-- H: Quality Control / Testing
-- J: Maintenance / Repair
-- 6W: AI / Machine Learning
-
 FOR EACH SCOPE PROVIDE:
 - name: short memorable label (3-5 words)
-- scope_tag: lowercase snake_case slug (e.g. "core_prof_services")
+- scope_tag: lowercase snake_case slug
 - tier: "primary" | "secondary" | "exploratory"
-- naics_codes: array of 1-4 NAICS codes (6 digits each)
-- psc_prefixes: array of 1-4 PSC prefixes (e.g. ["R-", "D3"])
+- naics_codes: array of 1-4 NAICS codes (6 digits each) FROM THE REFERENCE LIST
+- psc_prefixes: array of 1-4 PSC codes or 2-char prefixes FROM THE REFERENCE LIST
 - rationale: 1-2 sentences on why this scope fits
-- correlation_score: integer 1-10 — how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match (only include such scopes if they're exploratory and there's a clear strategic angle).
+- correlation_score: integer 1-10 — how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match.
 - correlation_rationale: 1 sentence explaining the score
-- estimated_annual_awards: rough integer estimate — how many federal awards per year are let under this NAICS+PSC combo across all agencies? Your best guess, grounded in what you know about federal contracting scale.
-- estimated_annual_dollars: rough integer dollar volume per year (e.g. 2000000000 = $2B). Be realistic.
-- estimated_size_label: one of "large" | "medium" | "small" | "niche"
-- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) — reality-checked SOW language for narrowing
+- estimated_annual_awards: rough integer estimate for this NAICS+PSC combo across all agencies
+- estimated_annual_dollars: rough integer dollar volume per year
+- estimated_size_label: "large" | "medium" | "small" | "niche"
+- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) — real SOW language
 - strategic_angle: 1 sentence — "displace incumbent X", "subcontract under primes", "capture emerging Z demand"
 
-IMPORTANT: Don't inflate correlation scores. A score below 5 is a signal to the user that the scope is a stretch — include such scopes only when the strategic_angle genuinely justifies exploring anyway.
+Don't inflate correlation scores. A score below 5 is a signal that the scope is a stretch.
 
 Return ONLY valid JSON in a \`\`\`json block, no other text:
 
@@ -476,7 +534,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       "scope_tag": "...",
       "tier": "primary",
       "naics_codes": ["541511"],
-      "psc_prefixes": ["R-", "D3"],
+      "psc_prefixes": ["DA01", "DB"],
       "rationale": "...",
       "correlation_score": 9,
       "correlation_rationale": "...",
@@ -495,20 +553,23 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         tenantId: activeTenant.id,
         eventType: 'scope_generation_start',
         actor: 'claude-sonnet-4-5',
-        summary: `Generating Round 1 search scopes for ${activeTenant.name} from commercial profile (${commercialProfile.synthesized_text.length} chars)`,
+        summary: `Generating Round 1 search scopes grounded in ${pscCodes.length} active PSC codes + ${naicsCodes.length} NAICS codes`,
         details: {
           model: 'claude-sonnet-4-5',
-          max_tokens: 3000,
+          max_tokens: 8000,
           profile_length: commercialProfile.synthesized_text.length,
+          psc_reference_count: pscCodes.length,
+          naics_reference_count: naicsCodes.length,
+          psc_source: 'GSA PSC Manual April 2025 (v2.psc_codes)',
+          naics_source: 'Census Bureau 2022 NAICS revision (v2.naics_codes)',
           started_at: startedAt.toISOString(),
           prompt_length_chars: prompt.length,
-          prompt_summary: 'Generate 6-10 NAICS+PSC scopes covering the federal pursuit surface with correlation scoring',
         },
       })
 
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
-        maxTokens: 3000,
+        maxTokens: 8000,
       })
 
       const parsed = extractJsonBlock(text)
