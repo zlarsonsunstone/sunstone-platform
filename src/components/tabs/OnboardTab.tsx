@@ -4,6 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 import { resetTenantDownstream } from '@/lib/tenantReset'
 import { logMethodology } from '@/lib/methodologyLog'
+import { fetchAllActivePscCodes, fetchAllNaicsCodes } from '@/lib/referenceData'
 import { TabPage } from '@/components/TabPage'
 import { Card } from '@/components/Card'
 import { Button } from '@/components/Button'
@@ -334,16 +335,8 @@ export function OnboardTab() {
       let naicsCount = 0
 
       if (variant.prompt_template.includes('{{psc_reference}}') || variant.prompt_template.includes('{{naics_reference}}')) {
-        const { data: pscCodes } = await supabase
-          .from('psc_codes')
-          .select('code, name, full_name, level_1_name')
-          .eq('is_active', true)
-          .order('code')
-
-        const { data: naicsCodes } = await supabase
-          .from('naics_codes')
-          .select('code, title')
-          .order('code')
+        const pscCodes = await fetchAllActivePscCodes()
+        const naicsCodes = await fetchAllNaicsCodes()
 
         if (!pscCodes || pscCodes.length === 0) {
           throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
@@ -497,16 +490,8 @@ export function OnboardTab() {
       // === STEP 1: Pull canonical PSC + NAICS reference data ===
       // We pass Claude the REAL active codes as authoritative input rather than
       // letting it hallucinate stale codes from training data.
-      const { data: pscCodes } = await supabase
-        .from('psc_codes')
-        .select('code, name, full_name, level_1_name, level_2_name, category, parent_code')
-        .eq('is_active', true)
-        .order('code')
-
-      const { data: naicsCodes } = await supabase
-        .from('naics_codes')
-        .select('code, title')
-        .order('code')
+      const pscCodes = await fetchAllActivePscCodes()
+      const naicsCodes = await fetchAllNaicsCodes()
 
       if (!pscCodes || pscCodes.length === 0) {
         throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
