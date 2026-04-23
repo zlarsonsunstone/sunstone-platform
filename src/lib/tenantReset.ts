@@ -36,7 +36,7 @@ export async function resetTenantDownstream(tenantId: string): Promise<{
     if (psErr) throw new Error(`Profile sources fetch failed: ${psErr.message}`)
 
     const { data: commercialProfiles } = await supabase
-      .from('commercial_profiles')
+      .from('commercial_profile')
       .select('built_at, sources_count, synthesized_text')
       .eq('tenant_id', tenantId)
 
