@@ -192,17 +192,47 @@ async function fetchMatchingRecords(sessionId: string, phrase: string): Promise<
   const all: any[] = []
   const PAGE = 1000
   let offset = 0
-  // ilike for case-insensitive partial match. Claude extracted phrases are
-  // 1-3 words so this will match most instances in contract descriptions.
-  const pattern = `%${phrase.toLowerCase()}%`
+
+  // TOKEN-BASED MATCHING
+  //
+  // Earlier version used `ilike '%phrase%'` which required the exact literal
+  // substring. That badly underfetched records because Claude's phrase
+  // extraction is semantic: a description containing "GPU-accelerated compute
+  // workloads" counts toward the "GPU compute" phrase bucket in the count
+  // display, but a literal `ilike '%gpu compute%'` won't find it.
+  //
+  // Token-based matching: split the phrase on whitespace, then require every
+  // token to appear somewhere in the description (case-insensitive, any
+  // order, any position). This mirrors how most search engines handle
+  // multi-word queries and brings PIID analysis count in line with the
+  // semantic count Claude reported.
+  //
+  // Trade-off: an occasional spurious match where all tokens appear but not
+  // as a coherent phrase (e.g. "GPU" and "compute" in a description about
+  // GPU hardware AND compute staff). Acceptable noise — the per-PIID
+  // relevance scoring in the Haiku analysis step will catch and down-score
+  // those.
+  const tokens = phrase
+    .toLowerCase()
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+
+  if (tokens.length === 0) return []
+
   while (true) {
-    const { data, error } = await supabase
+    let query = supabase
       .from('enrichment_records')
       .select('id, contract_number, contract_award_unique_key, description, obligated, awardee, agency, naics_code, psc_code, uei')
       .eq('session_id', sessionId)
       .is('deleted_at', null)
-      .ilike('description', pattern)
-      .range(offset, offset + PAGE - 1)
+
+    // Every token must be present somewhere in the description
+    for (const token of tokens) {
+      query = query.ilike('description', `%${token}%`)
+    }
+
+    const { data, error } = await query.range(offset, offset + PAGE - 1)
     if (error) throw new Error(`Record fetch failed: ${error.message}`)
     if (!data || data.length === 0) break
     all.push(...data)
