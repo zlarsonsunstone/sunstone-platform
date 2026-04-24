@@ -198,6 +198,13 @@ The Research Engine takes an approved CBP and produces a full intelligence packa
 
 Each round has **turns** — parallel investigations within the round. A Round 1 Turn 1 might be one NAICS scope; Round 1 Turn 2 might be a different scope or a pivot. Keywords accumulate in a shared bank across turns. The methodology log captures every decision.
 
+**Vocabulary note — Rounds/Turns vs. Tiers.** Two different terms with different meanings:
+
+- **Rounds and Turns** belong to the **client-facing research workflow**. Round 1 Discovery → Round 2 Targeted → Round 3 Convergence. Within each Round, Turns are specific investigations (a CSV upload, a scope combination). This is the unit of work the client understands and pays for. Applies to both research paths.
+- **Tiers** belong to the **Vendor Path internal pipeline**. Tier 0 structural fence → Tier 1 name-signal filter → Tier 2 quick-scan analysis → Tier 3 deep analysis → Tier 4 federal history reverse-lookup. This is an implementation funnel the client doesn't need to understand.
+
+The two vocabularies intersect: one complete Vendor Path Tier 0-4 run produces a baseline doppelganger dataset whose Tier 4 federal-history output can then feed a NAICS Path Round 1 Turn 2 (now armed with accurate codes). The Vendor Path feeds back into the NAICS Path. That architectural loop is described in Section 3.C.
+
 ### 3.B — The Dual-Path Architecture
 
 A foundational platform insight: **not every client's federal market is discoverable the same way.** Some clients have capabilities the federal government actively buys under clear codes — those map cleanly to NAICS/PSC-based analysis. Other clients have capabilities that are either pre-federal, hidden under mis-coded contracts, or classified under "tribal" language unrelated to their commercial vocabulary — those require an inverted investigation.
