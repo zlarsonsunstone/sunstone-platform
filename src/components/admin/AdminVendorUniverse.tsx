@@ -169,13 +169,26 @@ export function AdminVendorUniverse() {
         throw new Error('No valid data rows parsed')
       }
 
+      // Deduplicate by UEI. Postgres rejects ON CONFLICT DO UPDATE that
+      // touches the same row twice within a single statement, so if the
+      // source CSV has duplicate UEIs (rare but possible — the SAM monthly
+      // extract occasionally has same UEI appearing twice with slightly
+      // different metadata), we must collapse them before upserting. Keep
+      // last occurrence to favor the most recent metadata entry.
+      const byUei = new Map<string, any>()
+      for (const r of rows) {
+        byUei.set(r.uei, r)
+      }
+      const dedupedRows = Array.from(byUei.values())
+      const duplicateCount = rows.length - dedupedRows.length
+
       // Batch insert — 1000 rows per upsert to avoid timeout
       const BATCH_SIZE = 1000
       let inserted = 0
-      setImportProgress({ done: 0, total: rows.length })
+      setImportProgress({ done: 0, total: dedupedRows.length })
 
-      for (let i = 0; i < rows.length; i += BATCH_SIZE) {
-        const batch = rows.slice(i, i + BATCH_SIZE)
+      for (let i = 0; i < dedupedRows.length; i += BATCH_SIZE) {
+        const batch = dedupedRows.slice(i, i + BATCH_SIZE)
         const { error: insertError } = await supabase
           .from('vendor_universe')
           .upsert(batch, { onConflict: 'uei', ignoreDuplicates: false })
@@ -183,10 +196,11 @@ export function AdminVendorUniverse() {
           throw new Error(`Batch ${i / BATCH_SIZE + 1} failed: ${insertError.message}`)
         }
         inserted += batch.length
-        setImportProgress({ done: inserted, total: rows.length })
+        setImportProgress({ done: inserted, total: dedupedRows.length })
       }
 
-      setSuccess(`Imported ${inserted.toLocaleString()} vendors.`)
+      const dupNote = duplicateCount > 0 ? ` (${duplicateCount.toLocaleString()} duplicate UEIs collapsed)` : ''
+      setSuccess(`Imported ${inserted.toLocaleString()} vendors.${dupNote}`)
       setCsvText('')
       setFileName(null)
       setFileSize(0)
