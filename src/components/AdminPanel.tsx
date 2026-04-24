@@ -4,8 +4,9 @@ import { AdminTenants } from './admin/AdminTenants'
 import { AdminUsers } from './admin/AdminUsers'
 import { AdminVariants } from './admin/AdminVariants'
 import { AdminAuditLog } from './admin/AdminAuditLog'
+import { AdminVendorUniverse } from './admin/AdminVendorUniverse'
 
-type AdminTab = 'tenants' | 'users' | 'variants' | 'audit'
+type AdminTab = 'tenants' | 'users' | 'variants' | 'audit' | 'vendor_universe'
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const currentUser = useStore((s) => s.currentUser)
@@ -17,6 +18,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
     { id: 'tenants', label: 'Tenants' },
     { id: 'users', label: 'Users' },
     { id: 'variants', label: 'Prompt Variants', superadminOnly: true },
+    { id: 'vendor_universe', label: 'Vendor Universe', superadminOnly: true },
     { id: 'audit', label: 'Audit Log', superadminOnly: true },
   ]
 
@@ -143,6 +145,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
           {tab === 'tenants' && <AdminTenants />}
           {tab === 'users' && <AdminUsers />}
           {tab === 'variants' && isSuperAdmin && <AdminVariants />}
+          {tab === 'vendor_universe' && isSuperAdmin && <AdminVendorUniverse />}
           {tab === 'audit' && isSuperAdmin && <AdminAuditLog />}
         </div>
       </div>
