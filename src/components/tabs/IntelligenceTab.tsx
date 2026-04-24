@@ -5,6 +5,7 @@ import { renderPrompt } from '@/lib/prompt'
 import { TabPage } from '../TabPage'
 import { Card } from '../Card'
 import { Button } from '../Button'
+import { DoppelgangerScanner } from '../DoppelgangerScanner'
 
 interface EnrichedRecord {
   id: string
@@ -35,10 +36,19 @@ export function IntelligenceTab() {
   const [loading, setLoading] = useState(true)
   const [synthesizing, setSynthesizing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [tenantProfileText, setTenantProfileText] = useState<string>('')
 
   const loadData = async () => {
     if (!tenant) return
     setLoading(true)
+
+    // Load the tenant's commercial profile for the doppelganger scanner
+    const { data: profileData } = await supabase
+      .from('commercial_profile')
+      .select('synthesized_text')
+      .eq('tenant_id', tenant.id)
+      .maybeSingle()
+    setTenantProfileText(profileData?.synthesized_text || '')
 
     const { data: sData } = await supabase
       .from('enrichment_sessions')
@@ -168,6 +178,18 @@ export function IntelligenceTab() {
         )
       }
     >
+      {/* Vendor Doppelganger Tier 2 scanner — baseline dataset generation.
+          Appears first because this is the active workstream for tenants where
+          the NAICS Path produced a wrong-room diagnosis. For tenants with good
+          NAICS Path fit, the scanner shows 0 pending and becomes informational. */}
+      {tenant && (
+        <DoppelgangerScanner
+          tenantId={tenant.id}
+          tenantName={tenant.name}
+          tenantProfileText={tenantProfileText}
+        />
+      )}
+
       {error && (
         <div
           style={{
