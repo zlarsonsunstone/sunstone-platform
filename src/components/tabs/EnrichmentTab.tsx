@@ -758,8 +758,94 @@ Return ONLY JSON in a \`\`\`json block:
         (p) => p.batches_seen >= 2 || p.dollar_volume >= NOISE_FLOOR_DOLLARS
       )
 
+      // === STEP 5.5: Reconcile counts with token matcher ===
+      //
+      // Claude's per-batch counts are semantic — it tags records with phrases
+      // based on meaning ("GPU-accelerated compute" counts toward "GPU compute").
+      // The PIID forensic analysis downstream uses strict token matching — every
+      // word of the phrase must appear literally in the description.
+      //
+      // This mismatch caused displayed counts to diverge from analyzable counts
+      // (phrase showing "15 PIIDs" but only 1 actually matches on expand).
+      //
+      // We reconcile here: for each surviving phrase, query the DB with the same
+      // token matcher the PIID analysis uses, and overwrite count + dollar_volume
+      // with the ground-truth values. The displayed count now IS the analyzable
+      // count.
+      //
+      // Phrases Claude extracted proactively (not literally present in data, e.g.
+      // "confidential computing" suggested because it's core to Manifold's
+      // architecture) will reconcile to count=0, dollar_volume=0. Those get marked
+      // `proactive: true` so the UI can distinguish them from in-data phrases.
+      //
+      // 8-concurrent Supabase queries to keep runtime reasonable.
+      setProgress({
+        done: 0,
+        total: filtered.length,
+        label: `Reconciling phrase counts with database…`,
+      })
+
+      const reconcileOne = async (p: any) => {
+        const tokens = String(p.phrase)
+          .toLowerCase()
+          .split(/\s+/)
+          .map((t) => t.trim())
+          .filter((t) => t.length > 0)
+        if (tokens.length === 0) {
+          return { ...p, count: 0, dollar_volume: 0, proactive: true }
+        }
+        let query = supabase
+          .from('enrichment_records')
+          .select('obligated', { count: 'exact' })
+          .eq('session_id', session.session_id)
+          .is('deleted_at', null)
+        for (const token of tokens) {
+          query = query.ilike('description', `%${token}%`)
+        }
+        // We need count + sum of obligated. Supabase doesn't do sums directly
+        // in this client call, so fetch all matching obligated values and sum.
+        // In practice phrases rarely match more than a few hundred records.
+        const { data, count: exactCount, error } = await query.limit(10000)
+        if (error) {
+          console.warn(`[reconcile] token match failed for "${p.phrase}":`, error.message)
+          return { ...p, proactive: false }
+        }
+        const matched = data || []
+        const realCount = exactCount ?? matched.length
+        const realDollars = matched.reduce(
+          (sum: number, r: any) => sum + (r.obligated || 0),
+          0
+        )
+        return {
+          ...p,
+          count: realCount,
+          dollar_volume: realDollars,
+          proactive: realCount === 0,
+        }
+      }
+
+      const RECONCILE_CONCURRENCY = 8
+      const reconciled: any[] = []
+      let reconcileDone = 0
+      for (let waveStart = 0; waveStart < filtered.length; waveStart += RECONCILE_CONCURRENCY) {
+        const wave = filtered.slice(waveStart, waveStart + RECONCILE_CONCURRENCY)
+        const results = await Promise.all(
+          wave.map(async (p) => {
+            const r = await reconcileOne(p)
+            reconcileDone++
+            setProgress({
+              done: reconcileDone,
+              total: filtered.length,
+              label: `Reconciling phrase counts with database…`,
+            })
+            return r
+          })
+        )
+        reconciled.push(...results)
+      }
+
       // Finalize with avg_contract
-      const normalized = filtered
+      const normalized = reconciled
         .map((p) => ({
           phrase: p.phrase,
           dollar_volume: p.dollar_volume,
@@ -769,6 +855,7 @@ Return ONLY JSON in a \`\`\`json block:
           relevance_score: p.relevance_score || null,
           relevance_rationale: p.relevance_rationale,
           batches_seen: p.batches_seen,
+          proactive: !!p.proactive,
         }))
         .sort((a, b) => b.dollar_volume - a.dollar_volume)
 
@@ -2263,6 +2350,8 @@ interface KeywordPhrase {
   context: string
   relevance_score: number | null
   relevance_rationale: string
+  /** True if Claude extracted the phrase proactively (not literally present in data). */
+  proactive?: boolean
 }
 
 type KeywordSortKey = 'relevance' | 'dollars' | 'count' | 'avg' | 'phrase'
@@ -2736,8 +2825,26 @@ function KeywordRow({
           onClick={(e) => e.stopPropagation()}
           style={{ cursor: 'pointer', width: '16px', height: '16px' }}
         />
-        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500 }}>
+        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '13px', color: 'var(--color-text-primary)', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
           {phrase.phrase}
+          {phrase.proactive && (
+            <span
+              title="Proactive — Claude suggested this phrase as relevant to the tenant, but it doesn't literally appear in this batch. Count = 0 is expected."
+              style={{
+                fontSize: '9px',
+                fontFamily: 'var(--font-sans)',
+                fontWeight: 600,
+                padding: '1px 6px',
+                background: 'rgba(0,122,255,0.12)',
+                color: '#007AFF',
+                borderRadius: '3px',
+                letterSpacing: '0.04em',
+                textTransform: 'uppercase',
+              }}
+            >
+              Proactive
+            </span>
+          )}
         </span>
         <div style={{ textAlign: 'right' }}>
           <span
