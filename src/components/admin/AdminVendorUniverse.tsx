@@ -41,10 +41,31 @@ export function AdminVendorUniverse() {
   const [stats, setStats] = useState<StatsRow | null>(null)
   const [loading, setLoading] = useState(true)
   const [csvText, setCsvText] = useState('')
+  const [fileName, setFileName] = useState<string | null>(null)
+  const [fileSize, setFileSize] = useState<number>(0)
   const [importing, setImporting] = useState(false)
   const [importProgress, setImportProgress] = useState<{ done: number; total: number } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setError(null)
+    setSuccess(null)
+    setFileName(file.name)
+    setFileSize(file.size)
+    try {
+      // Read the file as text. For 8.7MB CSV this is sub-second.
+      const text = await file.text()
+      setCsvText(text)
+    } catch (err: any) {
+      setError(`Failed to read file: ${err?.message || 'unknown error'}`)
+      setFileName(null)
+      setFileSize(0)
+      setCsvText('')
+    }
+  }
 
   const loadStats = async () => {
     setLoading(true)
@@ -167,6 +188,8 @@ export function AdminVendorUniverse() {
 
       setSuccess(`Imported ${inserted.toLocaleString()} vendors.`)
       setCsvText('')
+      setFileName(null)
+      setFileSize(0)
       await loadStats()
     } catch (err: any) {
       setError(err?.message || 'Import failed')
@@ -265,30 +288,95 @@ export function AdminVendorUniverse() {
         <h4 style={{ margin: '0 0 8px 0', fontSize: '15px', fontWeight: 600 }}>
           Import from CSV
         </h4>
-        <p style={{ color: 'var(--color-text-secondary)', fontSize: '12px', margin: '0 0 12px 0' }}>
+        <p style={{ color: 'var(--color-text-secondary)', fontSize: '12px', margin: '0 0 16px 0' }}>
           Expected columns: <code>uei,cage,legal_name,website,naics</code>. Upsert on UEI — re-import
           updates existing rows. Tier 1 capability signal tags are applied automatically at
           import time.
         </p>
 
-        <textarea
-          value={csvText}
-          onChange={(e) => setCsvText(e.target.value)}
-          placeholder="Paste CSV content here..."
-          disabled={importing}
-          style={{
-            width: '100%',
-            minHeight: '240px',
-            fontFamily: 'var(--font-mono)',
-            fontSize: '11px',
-            padding: '12px',
-            border: '1px solid var(--color-hairline)',
-            borderRadius: 'var(--radius-input)',
-            background: 'var(--color-bg-subtle)',
-            color: 'var(--color-text-primary)',
-            resize: 'vertical',
-          }}
-        />
+        {/* File upload (primary) */}
+        <div style={{ marginBottom: '16px' }}>
+          <label
+            htmlFor="vendor-csv-upload"
+            style={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '32px 20px',
+              border: `2px dashed ${fileName ? 'var(--color-accent)' : 'var(--color-hairline)'}`,
+              borderRadius: 'var(--radius-input)',
+              background: fileName ? 'rgba(212,146,10,0.04)' : 'var(--color-bg-subtle)',
+              cursor: importing ? 'not-allowed' : 'pointer',
+              transition: 'var(--transition-default)',
+              opacity: importing ? 0.5 : 1,
+            }}
+          >
+            <div style={{ fontSize: '24px', marginBottom: '8px' }}>
+              {fileName ? '📄' : '⬆️'}
+            </div>
+            <div
+              style={{
+                fontSize: '14px',
+                fontWeight: 500,
+                color: 'var(--color-text-primary)',
+                marginBottom: '4px',
+              }}
+            >
+              {fileName || 'Click to choose CSV file (or drag and drop)'}
+            </div>
+            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
+              {fileName
+                ? `${(fileSize / 1024 / 1024).toFixed(2)} MB — ${csvText.split('\n').length - 1} rows`
+                : 'Typical Manifold-fence file: ~8.7 MB / 119K rows'}
+            </div>
+            <input
+              id="vendor-csv-upload"
+              type="file"
+              accept=".csv,text/csv,text/plain"
+              disabled={importing}
+              onChange={handleFileChange}
+              style={{ display: 'none' }}
+            />
+          </label>
+        </div>
+
+        {/* Or paste fallback */}
+        <details style={{ marginBottom: '12px' }}>
+          <summary
+            style={{
+              fontSize: '12px',
+              color: 'var(--color-text-tertiary)',
+              cursor: 'pointer',
+              userSelect: 'none',
+            }}
+          >
+            Or paste CSV content directly (for small files)
+          </summary>
+          <textarea
+            value={csvText}
+            onChange={(e) => {
+              setCsvText(e.target.value)
+              setFileName(null)
+              setFileSize(0)
+            }}
+            placeholder="Paste CSV content here..."
+            disabled={importing}
+            style={{
+              width: '100%',
+              marginTop: '8px',
+              minHeight: '180px',
+              fontFamily: 'var(--font-mono)',
+              fontSize: '11px',
+              padding: '12px',
+              border: '1px solid var(--color-hairline)',
+              borderRadius: 'var(--radius-input)',
+              background: 'var(--color-bg-subtle)',
+              color: 'var(--color-text-primary)',
+              resize: 'vertical',
+            }}
+          />
+        </details>
 
         {importProgress && (
           <div style={{ marginTop: '12px' }}>
@@ -361,7 +449,8 @@ export function AdminVendorUniverse() {
             disabled={importing || !csvText.trim()}
             style={{
               padding: '8px 20px',
-              background: importing || !csvText.trim() ? 'var(--color-hairline)' : 'var(--color-accent)',
+              background:
+                importing || !csvText.trim() ? 'var(--color-hairline)' : 'var(--color-accent)',
               color: 'white',
               border: 'none',
               borderRadius: 'var(--radius-input)',
