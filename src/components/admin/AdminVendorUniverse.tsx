@@ -78,9 +78,15 @@ export function AdminVendorUniverse() {
         .select('*', { count: 'exact', head: true })
         .eq('has_capability_signal', true)
 
-      // Sector breakdown — pull all rows' sector column (light)
+      // Sector breakdown — pull all rows' sector column paginated.
+      // Supabase enforces a hard 1000-row cap on SELECTs regardless of
+      // .range() request size, so we page through in 1000-row chunks and
+      // loop until we get back fewer than 1000. Earlier code used PAGE=10000
+      // which silently got capped to 1000 and then exited the loop because
+      // data.length (1000) was < PAGE (10000), producing only the first
+      // page's breakdown.
       const sectorMap = new Map<string, number>()
-      const PAGE = 10000
+      const PAGE = 1000
       let offset = 0
       for (;;) {
         const { data } = await supabase
