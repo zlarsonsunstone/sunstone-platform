@@ -722,7 +722,92 @@ Every engagement deliverable set follows this structure:
 
 ---
 
-## Section 8 — Evolution and Maintenance
+## Section 8 — Roadmap: Solicitation-Side Intelligence (Planned)
+
+This section is forward-looking. It describes capability the platform does not yet have, but which will move Sunstone from "federal market analysis" to "federal capture operating system with forecasting." The design below is captured at v1.0 time so that future implementation preserves the vision.
+
+Once the Round 1/2/3 intelligence pipeline matures, three additional analytical layers will be added, each building on the previous.
+
+### 8.A — Analysis #1: Solicitation Source Intelligence
+
+**The insight:** SAM.gov is one of about a dozen federal procurement posting venues. For many kinds of work, SAM is not the primary venue. A client watching only SAM sees 40-60% of their market — the rest flows through NITAAC, eBuy, SEWP, CIO-SP4, OTA consortiums (Tradewinds, DIU, NSC), agency-specific portals, and GSA Schedule task-order channels.
+
+**What the platform does:**
+
+For every PIID in the analyzed set, determine:
+1. Was this award competitively solicited at all? (USASpending `extent_competed` field)
+2. If solicited, where was the solicitation posted?
+3. If on SAM — what notice type and when in the lifecycle?
+4. If elsewhere — which specific portal/consortium/vehicle?
+
+**Deliverable to client:** Posting-venue map. "In your analyzed market, 42% of awards were solicited on SAM, 23% on NITAAC, 18% through Tradewinds OTA, 11% on eBuy task orders, 6% sole-source. Your current SAM-only monitoring covers 42% of visible market. The other 58% requires separate monitoring infrastructure."
+
+This alone is worth the engagement. Nobody tells clients this.
+
+### 8.B — Analysis #2: SOW Extraction and Multi-Dimensional Enrichment
+
+**The insight:** USASpending contract descriptions are 200-character agency shorthand. They don't describe the actual work. The SOW (or PWS/SOO) describes the actual work — often 40-200 pages of specifications. If we can pull every SOW and extract structured intelligence from it, we go from 200-character line items to forensic-grade intelligence dossiers.
+
+**What the platform does:**
+
+For every PIID:
+
+1. **Acquire the SOW document.** From SAM attachments API where available, from other venue APIs where applicable, from mod documents as fallback.
+2. **Extract structured intelligence via Haiku/Sonnet.** Schema: technical requirements, deliverables, evaluation criteria, period of performance, dollar sizing, incumbent commentary, security requirements (clearance/CMMC/FedRAMP), performance metrics, small business plan, technologies mentioned, key personnel, program office, CO contact.
+3. **Cross-reference enrichment.** Join SOW extraction with vendor_intel (who won and why they matched), LC data (who at the agency), PSC/NAICS reference (was classification correct given actual SOW content?), market pattern comparison (this SOW vs. 500 others in same program).
+4. **Cache in piid_sow_extracted table** with JSONB for flexible schema evolution.
+
+**What this unlocks:**
+
+- Keyword extraction moves from description-based (~500 phrases/batch) to SOW-based (~5,000 phrases/batch)
+- Teaming analysis becomes real — SOW tells you what specialties the prime needs
+- Go/No-Go gets real — fit scoring against full requirements doc instead of 200-character blurb
+- Capture positioning gets real — read 20 past SOWs from a CO and the tribal vocabulary surfaces definitively
+- Methodology Report gains authority: "analyzed 14,882 SOWs, extracted 500,000+ distinct requirement statements"
+
+**This is the foundation for Analysis #3.** Cannot do predictive modeling on solicitation language without SOW-level corpus.
+
+### 8.C — Analysis #3: Predictive Solicitation Modeling
+
+**The insight:** Once we have historical solicitation data (title, notice type, posting date, SOW, outcome) across thousands of competitions per agency, we can predict:
+
+1. **Language patterns.** How does each agency title this type of work? What phrases do they consistently use? What's the tribal dialect?
+2. **Notice-type sequences.** Does the agency go straight to RFP, or do they Sources Sought → RFI → Presolicitation → RFP? What's the typical cadence?
+3. **Timing patterns.** How often does this agency post this type of work? 3-year cycles? Continuous BAA? Annual?
+4. **Lead time patterns.** From Sources Sought to award, what's the typical timeline?
+5. **Next-posting prediction.** When is the next likely solicitation in this cluster, with probability distribution?
+
+**What the platform does:**
+
+1. **Build historical corpus.** Ingest 5 years of SAM.gov + other venue solicitations, link to USASpending award outcomes. Table: `solicitation_history` keyed by PIID with full metadata.
+2. **Per-agency pattern extraction.** Cluster historical solicitations by capability within each agency. For each cluster, compute notice-type sequences, typical lead times, cadence, title variation patterns.
+3. **Predictive model per cluster.** Fit model on time-since-last-posting, seasonality, budget-cycle alignment. Output: probability distribution over "when is the next posting."
+4. **Language prediction.** For each cluster, identify the tribal dictionary — title conventions, required phrases, characteristic phrases. When client targets work at an agency, return the specific vocabulary to use in capability statements and responses.
+5. **Forecast delivery.** Client sees forward-looking solicitation forecasts per target agency. "DISA will likely post 4 solicitations in next 6 months matching your capability. Three Sources Sought, one RFP. RFP is for a $30-50M vehicle, typically 14 bidders, last recompete went to Leidos."
+
+**Competitive moat:** Deltek, Bloomberg Government, and GovWin have historical opportunity data. None of them do predictive modeling on language + timing dimensions combined. This would be the first genuinely predictive federal capture platform.
+
+### 8.D — Implementation Sequence
+
+1. **Foundation** — complete current Round 1/2/3 pipeline, Vendor Path, confidence-layered scoring (v1.0 target: done by end of Manifold engagement)
+2. **Analysis #2 first** — SOW extraction pipeline. Becomes new foundation for all PIID analysis. Estimated: 3-4 dev sessions for V1.
+3. **Analysis #1 second** — posting venue intelligence. Layers on top of SOW pipeline because we need to know where to fetch SOWs from. Estimated: 2-3 dev sessions.
+4. **Analysis #3 third** — predictive modeling. Requires 6-12 months of SOW corpus accumulation across client engagements to train credibly. Estimated: 4-6 dev sessions + continuous tuning.
+
+### 8.E — Commercial Implications
+
+These three analyses fundamentally change the commercial model. Today's engagements are $150K one-time + Steptoe retainer. With the predictive capability:
+
+- **Continuous intelligence subscription** becomes viable at $25-50K/month for serious federal pursuers
+- **Per-opportunity forecasting reports** as ad-hoc deliverables ($5K-15K each)
+- **Agency-specific intelligence packages** as annual subscriptions ($100-200K/year per agency)
+- **Platform licensing to other federal advisory firms** becomes possible — white-label the predictive engine for firms that lack AI capability
+
+The ~$150K one-time engagement becomes the entry point to a long-term subscription relationship. This is how Sunstone becomes a 9-figure business rather than a consulting shop with AI tools.
+
+---
+
+
 
 This playbook is a **living document.** It is updated whenever the platform's architecture, analytical logic, or commercial model evolves. Every update is timestamped in the changelog below.
 
@@ -743,13 +828,41 @@ Update the playbook when:
 - Reviewers: Hector Caro (long-term technology partner)
 - Client-facing variants: curated by Zack for client delivery
 
-### Migration to Section 9+ live Methodology Tab
+### Migration to live Methodology Tab
+
+This playbook is currently a markdown document in the repo root. Future state: the content migrates into a live "Methodology" tab inside the Sunstone Intelligence Engine, with each section stored in a `playbook` table and auto-updating as the platform makes architectural decisions. At that point, the Methodology Report generator reads from the live tab plus the per-engagement methodology log to produce the client-facing Methodology Report automatically.
+
+---
+
+## Section 9 — Evolution and Maintenance
+
+This playbook is a **living document.** It is updated whenever the platform's architecture, analytical logic, or commercial model evolves. Every update is timestamped in the changelog below.
+
+### Update triggers
+
+Update the playbook when:
+- A new first-class platform feature ships (new tab, new analytical routine, new data model element)
+- A new pattern is identified across multiple client engagements
+- A design decision is made that contradicts or refines existing guidance
+- A commercial model change is made (pricing, packaging, alliance structure)
+- A new external intelligence source is integrated
+- A new tool joins the ecosystem
+
+### Who maintains it
+
+- Primary: Zack Larson (Sunstone Principal)
+- Technical: Claude (via cross-session continuity with Zack)
+- Reviewers: Hector Caro (long-term technology partner)
+- Client-facing variants: curated by Zack for client delivery
+
+### Migration to live Methodology Tab
 
 This playbook is currently a markdown document in the repo root. Future state: the content migrates into a live "Methodology" tab inside the Sunstone Intelligence Engine, with each section stored in a `playbook` table and auto-updating as the platform makes architectural decisions. At that point, the Methodology Report generator reads from the live tab plus the per-engagement methodology log to produce the client-facing Methodology Report automatically.
 
 ### Changelog
 
-- **v1.0 — April 2026.** Initial authoring. Captures all platform thinking developed through the Manifold Labs engagement, including dual-path architecture, PROACTIVE flag, trap phrase pattern, wrong-room diagnosis, capability × evidence matrix, and the full customer journey across five stages with three gates. Author: Claude, in session with Zack.
+- **v1.0 — April 2026.** Initial authoring. Captures all platform thinking developed through the Manifold Labs engagement: dual-path architecture, PROACTIVE flag, trap phrase pattern, wrong-room diagnosis, capability × evidence matrix, full customer journey across five stages with three gates. Author: Claude, in session with Zack.
+- **v1.1 — April 2026.** Added Section 8 (Solicitation-Side Intelligence Roadmap) capturing the three-analysis vision: posting venue intelligence, SOW extraction and enrichment, predictive solicitation modeling. Commercial implications for subscription pricing and long-term revenue model included. Author: Claude, in session with Zack, following Zack's articulation of the three-analysis insight.
 
 ---
 
