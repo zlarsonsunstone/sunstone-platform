@@ -807,7 +807,120 @@ The pivot from pre-commercial to "wrong-vocabulary" changes the engagement outpu
 - **v1.2 — April 25 2026.** Added Session 9.
 - **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight, HigherGov investigation).
 - **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder elevation + Synthesis v2 written).
+- **v1.5 — April 25 2026.** Added Session 12 (Coleridge $7.5M award found, USDA tribe fully characterized, Steptoe→ARS LC connections mapped, per-tribe DNA architecture proposed).
 
 ---
 
-*End of Session Journal v1.4*
+## Session 12 — The Coleridge Discovery and Per-Tribe DNA Architecture (April 25 2026 evening, continuation)
+
+**Participants:** Zack, Claude
+
+### What Zack provided
+
+Three uploads in one turn:
+1. **CSV of 269 USDA past solicitations under NAICS 518210** (HigherGov export, 2004-2026)
+2. **Leadership Connect connection chart** showing Steptoe LLP relationships to USDA Agricultural Research Service
+3. **The architectural challenge:** "Start also re-thinking how we use the DNA sequencing / clustering tool on the site with all this new-found knowledge. I almost feel like the dna sequences should be inside the tribes. The code to keyword to work description to vendor should live inside the USDA tribe for this effort."
+
+### What we found in the data
+
+**The USDA Secure Data Enclave Services contract WAS awarded.**
+
+On September 27 2024, USDA Agricultural Research Service awarded a $7,499,999.37 contract for "USDA Secure Data Enclave Services" to **The Coleridge Initiative Inc** under PSC R702.
+
+This contract didn't appear in our earlier Notice ID 1232SA24X tracking because:
+- The original NASS RFI from Dec 2023 / Jan 2024 inactivated without award
+- The actual contract emerged later under a different solicitation, awarded by ARS instead of NASS
+- ARS sub-tribe (within USDA tribe) is a different procurement entity than NASS sub-tribe
+
+**Strategic implications:**
+1. Manifold's federal market for this work is real, not pre-commercial. $7.5M was actually spent.
+2. The Coleridge Initiative (academic nonprofit) is the incumbent.
+3. Recompete likely 2027-2029 timeframe.
+4. Coleridge as nonprofit = teaming opportunity, not direct competitor.
+5. ARS (not NASS) is the actual buyer.
+
+### USDA Tribe DNA — first full characterization
+
+Used the 269-solicitation corpus to characterize the USDA tribe completely:
+
+**Sub-tribe distribution:** ARS (38), OCFO (31), Business Service Centers (16), Aerial Photography (11), MRPBS (10), FPCBC (10), Acquisitions (10), parent USDA (44).
+
+**PSC family** (USDA does NOT use one consistent PSC):
+DB10, R799, R702, DA10, R617, DC10, DB01, DK01, DA01 — 8 different PSCs all under NAICS 518210. Sub-tribes prefer different codes.
+
+**Award rate: 15%** (41 of 269) — anomalously low. Diagnostic insight: USDA's data-infrastructure procurement is struggling. Gate 3 entry point.
+
+**Cloud "Pool 1" task orders 2024:** AWS, Microsoft, Google, Oracle. USDA OCFO awarded all four enterprise cloud primes. Manifold positioning: sub to one of these primes for GPU/confidential compute layer.
+
+### The Steptoe→USDA ARS path is real
+
+Leadership Connect data shows direct Steptoe-to-USDA-ARS connections:
+- Adam Webman (Steptoe Senior Health Care Adviser) → ARS
+- David S. Schwartz (Steptoe Senior Health Care Adviser) → ARS
+- Tomara Y. Crittenden (Steptoe Senior Health Care Adviser) → ARS
+- Ryan Bossowick (Steptoe) → ARS
+
+**Why this is unexpectedly strong:** Three of four Steptoe bridges are positioned as Health Care Advisers. USDA ARS does have a health-related portfolio (food safety, agricultural health, FSIS). The path likely runs through science-policy / regulatory-affairs side — exactly the audience for Manifold's secure compute pitch.
+
+This is a legitimate Gate 3 path that doesn't require building from scratch.
+
+### The architectural shift Zack proposed
+
+Current platform: DNA Strand tab shows ENGAGEMENT-LEVEL compounding signals.
+
+Zack's insight: DNA strands belong INSIDE TRIBES.
+
+Each tribe has its own DNA:
+- Code patterns (USDA's 8 PSCs vs. some other agency's different set)
+- Keyword vocabulary (its dialect)
+- Vendor base (the contractors it routinely uses — Coleridge for USDA, others for Census, others for NIH)
+- Work descriptions (its SOW conventions)
+- POCs (its program office personnel)
+- Vehicle preferences (Alliant II vs. agency-specific vs. open)
+- Award patterns (% awarded vs. canceled, dollar size, recompete cadence)
+
+**Why this is the right architecture:**
+
+The engagement-level question ("where does Manifold's federal market live?") is really N sub-questions, one per tribe. Each sub-question has its own DNA strand answering it.
+
+**Cross-tribe similarity becomes a first-class analytic.** USDA tribe DNA might be 73% similar to Census tribe DNA (both statistical agencies). Tells the client: after USDA, target Census next. After Census, BLS. After BLS, the gap widens — DARPA tribe is only 12% similar.
+
+**Cross-tribe vendors become teaming target priorities.** If Coleridge appears in USDA tribe AND Census tribe AND NIH tribe, Coleridge is uniquely positioned across statistical agencies. Either Manifold's biggest competitor or biggest teaming target — either way, critical intel.
+
+### What shipped
+
+- **Synthesis v2.1** — Comprehensive USDA tribe deep-dive section added with full sub-tribe breakdown, PSC family, award patterns, Coleridge incumbency finding, and Steptoe activation path
+- **PLAYBOOK v1.6** — Section 8.D significantly expanded to include **Per-Tribe DNA Sequencing** as the architectural pattern. Schema implications documented. The DNA Strand tab UI shifts from engagement-level to per-tribe with cross-tribe similarity matrix
+- **Source documents preserved**: USDA SOW + LC connection chart + 269-solicitation CSV
+- **Session 12 entry** in journal
+
+### Pending
+
+- Cross-tribe investigation: Census Bureau (FSRDC), BLS, NCHS, NIH, DoD/CDAO, Treasury, etc. — applying the USDA tribe template
+- Sunstone Round 1 Turn 2 against USDA codes (validate analytical pipeline)
+- Steptoe activation through Adam Webman/David Schwartz/Tomara Crittenden→ARS bridges
+- Schema work for engagement_tribes table + DNA Strand tab refactor (significant build)
+- Tier 2 final 618 vendors completion
+- Coleridge Initiative deep dive — are they teaming target or competitive threat across multiple tribes?
+
+### Patterns reinforced
+
+- **Pattern 3 (Zack's questions become architecture):** Reinforced. DNA-inside-tribes is an architectural insight that emerged from looking at real engagement data.
+- **Pattern 4 (Claude builds, Zack reframes):** Reinforced. Claude was prepared to do per-tribe vocabulary mapping but didn't see the DNA-inside-tribes pattern until Zack named it.
+- **NEW Pattern 12 — Multi-document upload as architectural trigger.** When Zack uploads multiple data sources simultaneously (CSV + relationship chart + question), the convergence point usually IS the architectural insight. The act of placing multiple data types side-by-side surfaces relationships the platform should support.
+
+---
+
+### Changelog
+
+- **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
+- **v1.1 — April 25 2026.** Added Session 8.
+- **v1.2 — April 25 2026.** Added Session 9.
+- **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight, HigherGov investigation).
+- **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder elevation).
+- **v1.5 — April 25 2026.** Added Session 12 (Coleridge finding + USDA tribe DNA + per-tribe DNA architecture).
+
+---
+
+*End of Session Journal v1.5*

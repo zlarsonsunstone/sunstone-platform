@@ -867,37 +867,82 @@ For every PIID:
 
 **Competitive moat:** Deltek, Bloomberg Government, and GovWin have historical opportunity data. None of them do predictive modeling on language + timing dimensions combined. This would be the first genuinely predictive federal capture platform.
 
-### 8.D — Analysis #4: Cross-Tribe Vocabulary Mapping
+### 8.D — Analysis #4: Cross-Tribe Vocabulary Mapping AND Per-Tribe DNA Sequencing
 
-**The insight:** Each federal agency tribe has its own dialect for the same underlying capability. USDA calls it "secure enclave services" and codes it under NAICS 518210 + PSC R702. Census Bureau calls the same thing "FSRDC" (Federal Statistical Research Data Center) and uses entirely different procurement structures. DoD uses "trusted execution environment" or "trusted compute" with classified-environment vehicles. NIH may call it "trusted research environment." Treasury and IRS have their own language for restricted-data computing.
+**The insight:** Each federal agency tribe has its own dialect for the same underlying capability. USDA calls it "secure enclave services" and codes it under NAICS 518210 + a family of PSCs (R702, R799, DB10, DA10, DB01, DC10, DK01, DA01 — eight different classifications even within ONE agency tribe). Census Bureau calls the same thing "FSRDC" (Federal Statistical Research Data Center) and uses entirely different procurement structures. DoD uses "trusted execution environment" or "trusted compute" with classified-environment vehicles. NIH may call it "trusted research environment." Treasury and IRS have their own language for restricted-data computing.
 
-**No single NAICS/PSC combination represents the federal market for any given capability.** The market is fragmented across agency tribes, each with its own classification, vehicle, and procurement language.
+**No single NAICS/PSC combination represents the federal market for any given capability.** The market is fragmented across agency tribes, each with its own classification, vehicle, and procurement language. **Even within ONE tribe, the PSCs vary by sub-agency** (USDA ARS uses different PSCs than USDA NASS, even for similar work).
 
 **The methodological correction this enforces:** The platform cannot treat one agency's codes as universal. Round 1 of every engagement must explicitly avoid the trap of "we found the right codes" — it must instead produce a per-tribe map showing how each agency procures the client's capability.
+
+### Per-Tribe DNA Sequencing — The Architectural Shift
+
+The DNA Strand concept (compounding signals into a compact representation of "what this market looks like") **must be scoped per tribe, not per engagement.**
+
+Each tribe has its own:
+- Code patterns (the specific NAICS/PSC combinations it uses)
+- Keyword vocabulary (its dialect)
+- Vendor base (the contractors it routinely uses)
+- Work descriptions (its SOW conventions)
+- POCs (its program office personnel)
+- Vehicle preferences (Alliant II vs. agency-specific vs. open)
+- Award patterns (what % gets awarded vs. canceled, average dollar size, recompete cadence)
+
+When these compound INSIDE a tribe, you get a **per-tribe DNA strand** — a compact representation of how that tribe procures the client's capability.
+
+**The engagement-level question** ("where does the client's federal market live?") **is really N sub-questions**, one per tribe. Each sub-question has its own DNA strand answering it.
+
+**Cross-tribe similarity becomes a first-class analytic.** Once two tribes have DNA strands, the platform can show: "USDA tribe DNA is 73% similar to Census tribe DNA, 41% similar to NIH tribe, 12% similar to DARPA tribe." That tells the client: after cracking USDA, Census is the next-most-accessible tribe. After NIH, DoD is harder. The cross-tribe similarity matrix becomes the engagement's strategic compass.
+
+**Vendors that appear in multiple tribe DNAs become high-priority teaming targets.** If Coleridge Initiative shows up in both USDA NASS DNA AND Census Bureau DNA AND NIH DNA, Coleridge Initiative is a vendor uniquely positioned across statistical agency procurement. They're either Manifold's biggest competitor or Manifold's biggest teaming target — either way, critical intel.
+
+### Schema Implications
+
+The current data model is engagement-scoped. The new model needs:
+
+```
+engagement
+  └── engagement_tribes (many per engagement)
+        ├── tribe_name (e.g., "USDA NASS", "Census Bureau", "DARPA")
+        ├── dialect_terms (the agency-specific vocabulary)
+        ├── observed_codes (NAICS + PSC combinations used)
+        ├── observed_vendors (with frequency counts)
+        ├── observed_pocs (named contracting officers, program managers)
+        ├── observed_vehicles (Alliant II, MAS, agency-specific, etc.)
+        ├── dna_strand (compact representation of the above)
+        └── confidence_score (how complete is this tribe's DNA?)
+```
+
+The DNA Strand tab on the platform shifts from "show me the engagement's DNA" to "show me each tribe's DNA, plus the cross-tribe similarity matrix."
 
 **What the platform does:**
 
 For each engagement, after Round 1 / Vendor Path / Solicitation analysis surface initial findings:
 
-1. **Build the per-tribe target list.** Identify all agencies that plausibly have demand for the client's capability. For Manifold this includes USDA NASS/ERS/APHIS, Census Bureau, BLS, BEA, NCHS, BJS, NIH, DARPA, AFRL, CDAO, Treasury, IRS, Federal Reserve, FDIC, State Department, and others.
+1. **Build the per-tribe target list.** Identify all agencies that plausibly have demand for the client's capability.
+2. **Run agency-specific dialect searches.** For each agency, search its solicitation history using vocabulary native to that agency. Use HigherGov, SAM.gov, agency-specific portals.
+3. **Identify per-agency codes.** From matching solicitations, extract the NAICS, PSC, vehicle, and contracting structure each agency uses. These will be different per tribe — and even within one tribe, expect multiple PSCs.
+4. **Map to award data.** Pull award history under the per-agency codes. Identify who's winning the work, how much, when contracts recompete. Note award-to-solicitation ratio (low ratio = procurement struggling, opportunity for influence).
+5. **Build per-tribe DNA strand.** Compound signals (codes + dialect + vendors + POCs + work patterns) into a compact representation. Store in `engagement_tribes` table.
+6. **Compute cross-tribe similarity matrix.** Pairwise comparison of tribe DNAs. Surface: which tribes look like each other, which vendors appear in multiple tribes, which dialect terms cross over.
 
-2. **Run agency-specific dialect searches.** For each agency, search its solicitation history using vocabulary native to that agency. Census uses "FSRDC." NIH uses "trusted research environment." DoD uses "secure compartmented compute" or program-specific names (Mosaic, Project IKE, Maven). The dialect is empirical — discovered by looking at what the agency actually publishes.
+**Deliverable:** Per-engagement cross-tribe map with DNA strands. A client like Manifold sees not "your federal market is $X" but "your federal market exists at agencies A, B, C, D, E, each with its own DNA. Here's the similarity matrix showing pursuit sequencing. Here are the cross-tribe vendors who already serve multiple of these tribes (your teaming targets). Here are the cross-tribe POCs (your relationship targets)."
 
-3. **Identify per-agency codes.** From matching solicitations, extract the NAICS, PSC, vehicle, and contracting structure each agency uses. These will be different per tribe.
+**Why this is structurally important:**
 
-4. **Map to award data.** Pull award history under the per-agency codes. Identify who's winning the work, how much, when contracts recompete.
+The deliverable difference is enormous. Single-tribe finding ("USDA wants this") = single-agency strategy. Cross-tribe finding with DNA strands = multi-agency parallel pursuit strategy with sequencing intelligence.
 
-5. **Build per-agency tribal dictionary.** Each agency gets its own row in the engagement's tribal dictionary: dialect terms, codes, vehicles, prime contractors, contracting officers, program managers, recompete schedules.
+**Trigger origin:** This capability was identified during the Manifold engagement when Zack:
 
-**Deliverable:** Per-engagement cross-tribe map. A client like Manifold sees not "your federal market is $X" but "your federal market exists at agencies A, B, C, D, E, each with its own entry path, vehicle requirement, and POC. Pursue them in parallel through Gate 1, recruit primes A2, B2, C2 through Gate 2, and use Gate 3 to position with GSA program offices and the agency procurement offices simultaneously."
+1. Asked "Just because the award descriptions don't say it doesn't mean it wasn't described correctly in the solicitations themselves, right?" That question led to HigherGov solicitation investigation, which surfaced the USDA Secure Enclave Services finding.
 
-**Why this is a Tier 5 (NOT Tier 4) capability:**
+2. Then provided the methodological correction: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee." This prevented over-fitting to USDA codes.
 
-The original Vendor Path was structured as Tier 0 (fence) → Tier 1 (name signal) → Tier 2 (capability scan) → Tier 3 (deep analysis on survivors) → Tier 4 (federal history reverse-lookup). This solicitation-side cross-tribe vocabulary mapping is a parallel analytical layer that informs ALL of those tiers — it's not part of the vendor pipeline at all. It runs alongside the Vendor Path and feeds back into NAICS Path Round 2/3 with corrected per-agency codes.
+3. Then proposed the DNA architectural shift: "Start also re-thinking how we use the DNA sequencing / clustering tool on the site with all this new-found knowledge. I almost feel like the dna sequences should be inside the tribes. the code to keyword to work description to vendor should live inside the USDA tribe for this effort."
 
-**Trigger origin:** This capability was identified during the Manifold engagement when Zack asked "Just because the award descriptions don't say it doesn't mean it wasn't described correctly in the solicitations themselves, right?" That question led to HigherGov solicitation investigation, which surfaced the USDA Secure Enclave Services finding. The methodological correction came when Claude was about to treat USDA's codes (NAICS 518210 + PSC R702) as the answer for all agencies, and Zack said: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee."
+**Implementation status:** Defined here as platform capability. Manual execution underway for Manifold engagement (HigherGov searches per agency, codes extraction, vendor reverse-lookup, USDA tribe being characterized first). Automated execution requires Section 8.B (SOW extraction) plus an agency-targeting layer plus the new schema for per-tribe DNA. Estimated: 4-6 sessions for v1 implementation. The DNA Strand tab UI needs significant refactor.
 
-**Implementation status:** Defined here as platform capability. Manual execution underway for Manifold engagement (HigherGov searches per agency, codes extraction, vendor reverse-lookup). Automated execution requires Section 8.B (SOW extraction) plus an agency-targeting layer. Estimated: 3-4 sessions for v1 implementation.
+
 
 ### 8.E — Implementation Sequence
 
@@ -980,6 +1025,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.3 — April 2026.** Replaced single "Strategic Narrative" deliverable with three audience-tuned reports composed from the same source synthesis artifacts: The CEO Report (4-8 pages, strategic), The Federal BD Report (15-25 pages, operational), The Engineering Report (20-40 pages, technical with appendices). Each is a complete deliverable for its audience. View generator architecture: synthesis artifacts as source-of-truth, three composers produce the three reports, regeneration is cheap, new audiences (Steptoe Brief, Investor Update) plug in as new generators. Triggered by Zack's product instinct: "I want the CEO Report. I want the Procurement BD Report. I want the Geek/Engineer Report. Different frames for different audiences." Names finalized as descriptive rather than cute: "The CEO Report. The Federal BD Report. The Engineering Report. Simple. Not cute. Descriptive. Decisive."
 - **v1.4 — April 2026.** Established visual identity for the three audience reports. Three persona icons (suit/tie executive, blazer-with-insignia BD professional, glasses-with-gear engineer) sharing visual grammar — same gray silhouette base, same Sunstone-orange accent matching `var(--color-accent)`, same head-and-shoulders crop. Used on report covers, page headers, in-platform deliverable cards, and the future Methodology tab. Icons stored at `/public/report-icons/`. Source image plus three split icon files committed. Triggered by Zack uploading the source image mid-session: "Check THIS shit out for the report icons!!!"
 - **v1.5 — April 2026.** Added Section 8.D — Cross-Tribe Vocabulary Mapping as the fourth solicitation-side analytical layer. Captures the methodological insight that each federal agency tribe has its own dialect for the same underlying capability, and that no single NAICS/PSC combination represents a federal market. Sections renumbered (old 8.D → 8.E Implementation Sequence; old 8.E → 8.F Commercial Implications). Triggered by Zack's discovery during Manifold engagement that USDA Secure Enclave Services solicitations exist under NAICS 518210 + PSC R702 (entirely different from Round 1's 541511/541512/541519), AND by Zack's immediate methodological correction: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee." This insight elevates tribal-decoder from a subordinate goal to a primary platform capability.
+- **v1.6 — April 2026.** Major expansion of Section 8.D to include **Per-Tribe DNA Sequencing**. Establishes that the DNA Strand concept (compounding signals into compact representation) must be scoped per tribe, not per engagement. Each tribe (and even sub-tribes within tribes — USDA ARS uses different PSCs than USDA NASS) has its own DNA: code patterns, dialect vocabulary, vendor base, work patterns, POCs, vehicles, award patterns. Cross-tribe similarity matrix becomes a first-class analytic. Vendors appearing in multiple tribe DNAs become high-priority teaming targets. Schema implications documented (engagement → engagement_tribes table → DNA strand per tribe). Triggered by Zack's architectural insight: "Start also re-thinking how we use the DNA sequencing / clustering tool on the site with all this new-found knowledge. I almost feel like the dna sequences should be inside the tribes. The code to keyword to work description to vendor should live inside the USDA tribe for this effort." First tribe fully characterized: USDA. First major finding from tribe DNA analysis: $7.5M USDA Secure Data Enclave Services award to The Coleridge Initiative on Sept 27 2024 — confirming Manifold's federal market is real (not pre-commercial), with Coleridge as incumbent and ~2027-2029 recompete window.
 
 ---
 

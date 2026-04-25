@@ -25,7 +25,136 @@ Manifold's federal market exists. It is invisible to award-side analysis because
 
 ---
 
-## How We Got Here
+## USDA Tribe Deep-Dive — DNA Strand for the USDA Tribe
+
+**Status:** First fully-characterized tribe. Used as the template for cross-tribe DNA sequencing methodology.
+
+### USDA Tribe Profile
+
+**Tribe scope:** All USDA components procuring under NAICS 518210
+**Source:** SAM.gov / HigherGov export, 269 solicitations, 2004-2026
+
+**Sub-agency activity (sub-tribes within USDA):**
+```
+44 — Department of Agriculture (parent)
+38 — Agricultural Research Service (ARS) ← Steptoe has direct LC connection
+31 — USDA Office of the Chief Financial Officer (OCFO) ← cloud infrastructure buyer
+16 — Business Service Centers
+11 — Aerial Photography Field Office
+10 — Marketing and Regulatory Programs Business Services
+10 — Farm Production and Conservation Business Center
+10 — Acquisitions
+```
+
+**Key insight:** Even WITHIN USDA, sub-agencies use different PSCs and have different procurement patterns. ARS does scientific data and research enclaves. OCFO does enterprise cloud infrastructure. NASS does statistical data. **Sub-tribes within tribes is itself a finding.**
+
+### USDA's PSC Family (under NAICS 518210)
+
+USDA does NOT use one consistent PSC. The full distribution:
+
+```
+DB10 (21) — IT and Telecom: Data Processing/Centers/Storage Hosting
+R799 (20) — Other Professional Services - Information & data services
+R702 (19) — Support: Data Collection ← USDA Secure Enclave RFI used this
+DA10 (12) — IT and Telecom: Auto Data Processing Services
+R617  (7) — Education and Training: Other (data-adjacent training)
+DC10  (6) — IT and Telecom: ADP Telecommunications Hosting
+DB01  (5) — IT and Telecom: Computer & Telecommunications Services
+DK01  (4) — IT and Telecom: ADP Communications Services
+DA01  (3) — IT and Telecom: ADP/Information Services
+```
+
+**Manifold's USDA capture strategy must monitor all 8 PSCs**, not just R702. Using R702 alone misses 80% of the relevant procurement activity.
+
+### Award Pattern (Critical Finding)
+
+**Award rate: 15%** (41 awards from 269 solicitations).
+
+Typical federal procurement runs 40-60% award rate. **USDA's 15% award rate on data-infrastructure procurement is anomalous.** Possible explanations:
+- Many solicitations are RFIs / Sources Sought / canceled
+- USDA budget constraints
+- Vendor competition driving cancellations
+- Re-solicitations under different vehicles
+
+**This is itself a Gate 3 entry point.** Steptoe can legitimately approach USDA leadership saying "your data-infrastructure procurement keeps failing or being deprioritized — let us help you fix that, with Manifold as the cleaner path."
+
+### THE WATERSHED FINDING — USDA Secure Data Enclave Services WAS Awarded
+
+**On September 27, 2024, the Agricultural Research Service awarded a $7.5M contract for "USDA Secure Data Enclave Services" to THE COLERIDGE INITIATIVE INC.**
+
+- PSC: R702 (matches the pattern from the original USDA NASS RFI)
+- NAICS: 518210 (same)
+- Buyer: ARS (NOT NASS as the original RFI suggested — sub-tribe shifted)
+- Awardee: The Coleridge Initiative (academic nonprofit specializing in federal data enclaves)
+- Award amount: $7,499,999.37
+- This is the actual contract that emerged from the multi-year USDA Secure Enclave Services scoping process
+
+**Strategic implications:**
+
+1. **Manifold's federal market for this work is REAL — not pre-commercial.** $7.5M was spent in Sept 2024 on exactly this category.
+
+2. **The Coleridge Initiative is the incumbent.** They will dominate the recompete (likely 2027-2029 timeframe given typical 3-5 year contract terms with options).
+
+3. **Coleridge is a nonprofit, not a commercial competitor.** This is a teaming opportunity, not a competitive battle. Manifold could potentially sub to Coleridge or partner with them on extensions.
+
+4. **The original NASS RFI didn't go to NASS — it went to ARS.** This is the sub-tribe pattern. The agency that originally scoped the work isn't always the agency that funds it. Worth tracking.
+
+5. **PSC R702 + NAICS 518210 IS the right code combination FOR THIS SPECIFIC WORK at USDA ARS.** But not for all USDA data infrastructure (which uses 8 different PSCs).
+
+### Cloud Infrastructure Task Orders (2024 — Major Finding)
+
+USDA OCFO awarded **four enterprise cloud "Pool 1" task orders in 2024:**
+
+```
+2024-08-19 | AWS Pool 1 Task Order
+2024-07-16 | Microsoft Pool 1 Task Order
+2024-08-20 | Google Pool 1 Task Order
+2025-01-31 | Oracle Pool 1 Task Order
+```
+
+These are the **enterprise cloud infrastructure backbone** for USDA. Manifold's potential plays:
+
+1. **Sub to one of the four primes** to provide GPU compute or confidential computing as a layer on top
+2. **Position for FY26+ task order pool expansions** that might add specialty compute providers
+3. **Steptoe-led influence at OCFO** to shape future cloud strategy for AI workloads
+
+### Other Awarded Vendors of Interest (USDA Tribe DNA, 41 awards)
+
+- **The Coleridge Initiative ($7.5M, 2024)** — Federal data enclave specialist, academic nonprofit
+- **A F S LLC ($4.97M, 2019)** — Loan application services for rural housing
+- **Aerial mapping cluster (5 vendors × $5M each, 2015)** — multi-award scanning contract: HAS Images, Blue Skies Consulting, AeroTech Mapping, Aero-Graphics, Aerial Services
+- **Trichy's LLC dba Workzone ($6B notional, 2009)** — Workspace server hosting (likely typo, but huge ceiling)
+- **HP Enterprise Services ($65K, 2016)** — Light credentialing
+- **Oxford Economics ($136K, 2019)** — Macroeconomic forecasting
+- **Haver Analytics ($106K, 2019)** — Economic data subscriptions
+
+### Steptoe / Manifold Activation Path Through USDA
+
+**The Leadership Connect data shows direct Steptoe→ARS connections:**
+
+- **Adam Webman, Steptoe Senior Health Care Adviser** → USDA ARS
+- **David S. Schwartz, Steptoe Senior Health Care Adviser** → USDA ARS
+- **Tomara Y. Crittenden, Steptoe Senior Health Care Adviser** → USDA ARS
+- **Ryan Bossowick, Steptoe** → USDA ARS
+
+**ARS-side relationship targets:**
+- Karen Plaut, ARS Administrator
+- Roger D. Smith, ARS
+- Danielle Ratliff, ARS
+
+**Activation strategy:**
+1. Steptoe Health Care Advisers (already connected to ARS) can introduce Manifold leadership to ARS science leadership
+2. Discussion topic: "Coleridge Initiative is doing good work, but Manifold offers complementary capability — operator-supplied confidential GPU compute that Coleridge's centralized model can't match"
+3. Position Manifold as a TEAMING addition to extend Coleridge's reach, not as a Coleridge replacement
+4. Long-term: position Manifold for the recompete in 2027-2029 OR for related task orders at NASS, ERS, APHIS, or other USDA sub-agencies that might want their own enclaves
+
+**Why Steptoe's USDA ARS path is better than expected:**
+
+Adam Webman, David Schwartz, and Tomara Crittenden are positioned as Health Care Advisers. USDA ARS does have a health-related portfolio (food safety, agricultural health research, FSIS coordination). The Steptoe path likely runs through the science-policy / regulatory-affairs side of ARS — which is exactly the audience for "Manifold provides the secure compute infrastructure your sensitive research data needs."
+
+This is a legitimate Gate 3 path that doesn't require building from scratch.
+
+
 
 ### Sequence of Investigation
 
