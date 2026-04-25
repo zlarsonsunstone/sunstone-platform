@@ -1032,7 +1032,111 @@ Reasoning:
 - **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder).
 - **v1.5 — April 25 2026.** Added Session 12 (Coleridge + per-tribe DNA architecture).
 - **v1.6 — April 25 2026.** Added Session 13 (13 pursuit archetypes + USDA pursuit pipeline).
+- **v1.7 — April 25 2026.** Session 14 — paused with full state captured. All architectural layers defined through Section 8.E. Manifold engagement complete through tribe-1 (USDA) characterization plus pursuit pipeline classification. Multiple paths open for resumption.
 
 ---
 
-*End of Session Journal v1.6*
+## Session 14 — The Pause Point (April 25 2026, end of major build day)
+
+**Participants:** Zack, Claude
+
+### Where we ended
+
+After 13 sessions in a single day spanning the Tier 2 vendor scan completion, the McKinsey-killer recognition, the three-audience report architecture, the survival guide, the solicitation-side insight, the USDA Secure Enclave Services discovery, the tribal decoder elevation, the Coleridge finding, the per-tribe DNA architectural shift, and the 13-archetype pursuit classification — Zack asked if there was a way to "table this and come back to it."
+
+### The honest answer
+
+Everything important is durable. GitHub has the code, docs, syntheses, icons. Supabase has the operational data. The SURVIVAL_GUIDE explains how to recover from any failure. Local downloads provide a third layer of redundancy.
+
+The only thing at risk from a chat ending is conversation between architectural commits — but the journal pattern means even those are captured at session boundaries.
+
+### Path options at the pause point
+
+Five paths laid out:
+
+**Path A — Activate Steptoe/Coleridge play (relationships, no build).** Highest immediate value. Validates platform findings produce real value. Time-sensitive because Coleridge's 2027-2029 recompete window is approaching.
+
+**Path B — Build Phase 1 per-tribe DNA refactor.** Required for downstream features but no immediate engagement value. Risk: weeks of code without producing new findings.
+
+**Path C — Cross-tribe investigation (manual).** Extends deliverable from one tribe to many. Each tribe ~1-2 hours work, six major stat agencies = ~10 hours. Adds breadth before depth.
+
+**Path D — USDA 228 unawarded solicitations deep-dive.** Estimated $5M-$30M unsolicited proposal pipeline. Tactical and immediately actionable.
+
+**Path E — Tier 2 final 618 vendors.** Cleanup only, no priority.
+
+### Claude's recommendation: Path A
+
+Reasoning: It's the proof of value. Everything is theory until a real Manifold-Coleridge-USDA conversation happens. It's not platform work — uses Sunstone's actual differentiator (the Steptoe network). It's time-sensitive. It generates real-world signal that informs everything else.
+
+After Path A produces signal, the platform knows whether to scale (Path C) or deepen (Path D) or build (Path B).
+
+### Where the next session resumes
+
+When Zack returns to a fresh chat:
+
+> "I'm Zack Larson at Sunstone Advisory. Resuming work on the Sunstone Intelligence Engine platform and the Manifold Labs engagement. State is at github.com/zlarsonsunstone/sunstone-platform, latest commit df681d7. Read PLAYBOOK.md, SESSION_JOURNAL.md (Session 14 is the most recent), SURVIVAL_GUIDE.md, and syntheses/manifold/2026-04-25_engagement_synthesis_v2.md to get up to speed."
+
+Claude reads those documents, gets full context, picks up exactly where we left off.
+
+### Pending workstreams (carried forward)
+
+**Manifold engagement specific:**
+- Activate Steptoe/Coleridge path through Adam Webman / David Schwartz / Tomara Crittenden → ARS bridges
+- Cross-tribe investigation: Census Bureau (FSRDC), BLS, NCHS, NIH, DoD/CDAO, Treasury
+- USDA 228 unawarded solicitations deep-dive (unsolicited proposal pipeline)
+- Coleridge Initiative deep dive — capability gaps, partnership openings
+- Tier 2 final 618 vendors (low priority cleanup)
+
+**Platform architecture specific:**
+- Phase 1 build: Per-tribe DNA refactor (Section 8.D — engagement_tribes table, DNA Strand tab refactor, cross-tribe similarity matrix)
+- Phase 2 build: Per-opportunity archetype classification (Section 8.E — tribe_opportunities table, classification engine, Opportunities tab)
+- Three audience report generators (CEO/Federal BD/Engineering) — composeReport.ts variants
+- Section 8.B SOW extraction pipeline (the foundation for all solicitation-side analysis)
+- Section 8.A Posting venue intelligence
+- Section 8.C Predictive solicitation modeling
+
+**Soft commitments captured:**
+- LC + OnFrontiers integrations (architectural placeholders defined, build deferred)
+- Methodology Report generator (weaves syntheses into final client deliverable)
+- Future tribes mapped: Census, BLS, NIH, BJS, NCHS, BEA, DARPA, AFRL, CDAO, Treasury, IRS, Federal Reserve, FDIC, State Department
+
+### Patterns from today's full session
+
+- Pattern 1 (Zack big / Claude validate small / convergence)
+- Pattern 2 (Bug-fixes become features)
+- Pattern 3 (Zack's questions become architecture)
+- Pattern 4 (Claude builds, Zack reframes)
+- Pattern 5 (Preserve reasoning, not just outputs)
+- Pattern 6 (Integrity over efficiency)
+- Pattern 7 (External reviewers sharpen framing)
+- Pattern 8 (Brand voice instinct)
+- Pattern 9 (Anxiety-triggered hardening)
+- Pattern 10 (Pragmatic tool-use over feature-build) — HigherGov leverage
+- Pattern 11 (Methodological hygiene under findings pressure) — USDA codes correction
+- Pattern 12 (Multi-document upload as architectural trigger) — DNA inside tribes
+- Pattern 13 (Architectural layering as scaling pattern) — Phase 1/2 separation
+
+13 patterns from one day of work. The platform's behavioral DNA is now documented.
+
+### Final commit before pause
+
+Commit hash: `df681d7` (PLAYBOOK v1.7 + Synthesis v2.2 + Journal v1.6)
+
+This is the resumable state. Everything else is icing on the cake.
+
+---
+
+### Changelog
+
+- **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
+- **v1.1 — April 25 2026.** Added Session 8.
+- **v1.2 — April 25 2026.** Added Session 9.
+- **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight).
+- **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder).
+- **v1.5 — April 25 2026.** Added Session 12 (Coleridge + per-tribe DNA architecture).
+- **v1.6 — April 25 2026.** Added Session 13 (13 pursuit archetypes + USDA pursuit pipeline).
+- **v1.7 — April 25 2026.** Added Session 14 (pause point, path options laid out, recommendation: Path A — Steptoe/Coleridge activation).
+
+---
+
+*End of Session Journal v1.7*
