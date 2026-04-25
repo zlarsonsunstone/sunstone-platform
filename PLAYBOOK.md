@@ -1189,11 +1189,14 @@ Every Lamb Package BLUF block contains the full scoring stack so Steptoe partner
 ```
 TARGET: [Federal need name]
 FIELD: [List of Goliaths in the field]
+MARKET STATE: [Stadium / Citadel / Frontier / Wilderness]
 FEDERAL DEMAND: $X annually
 OPPORTUNITY SCORE: [0-100, derived from three opportunity axes]
 PROBABILITY OF SUCCESS: [0-10]
 STEPTOE RISK LEVEL: [0-10]
+STEPTOE CONFLICT STATUS: [Clean / Adjacent / Potential / Confirmed]
 TIER: [1 / 2 / 3]
+PRIMARY PLAY: [Direct Strike / Coalition / Kingmaker / Disruption / Long Game / Architect]
 RECOMMENDATION: [Aggressive Pursuit / Measured Pursuit / Watch List]
 ```
 
@@ -1202,6 +1205,138 @@ The Talking Points section includes a dedicated **"What Could Go Wrong"** subsec
 The White Paper section includes the analytical defense of the Probability score — what specifically supports it, what factors could lower it, what triggers would raise it.
 
 This is dramatically more rigorous than a typical advisory deliverable. It's also exactly what Steptoe actually needs to make allocation decisions.
+
+#### Market State Typology — The Four-State Framework
+
+Every federal market for a client capability falls into one of four states. The state determines what plays are even possible. Sunstone uses geographically-grounded vocabulary that classifies without flattening:
+
+**The Stadium** — Mature, multi-player, competitive
+- Many established players competing openly under defined rules
+- Set procurement vehicles, predictable timing, transparent past-performance landscape
+- Hard to enter without vehicle access, brand recognition, established relationships
+- Client must "join the league" — get on the right vehicles, build past performance, find teaming arrangements
+- Available plays: Coalition, Direct Strike (when qualified), Long Game
+
+**The Citadel** — Mature, incumbent-dominated, displacement only
+- One or few entrenched incumbents holding the market
+- Decades of relationships, switching costs, often political protection
+- Recompete cycles infrequent and predictable; no openings between recompetes
+- Client must "break the walls" or "arm a challenger"
+- Available plays: Kingmaker (most common), Disruption, Long Game (recompete preparation)
+
+**The Frontier** — Novel, market forming, rules being written
+- Federal demand exists but procurement structure still evolving
+- Vocabulary emerging, vehicles unsettled, POCs being identified
+- Early movers can shape requirements before they're locked in
+- Client must "claim ground" through capability positioning and agency education
+- Available plays: Architect, Direct Strike (RFI responses), Long Game (procurement-window timing)
+
+**The Wilderness** — Non-existent, pre-category, no agency language yet
+- Federal need may be latent or emerging but not procured under any clear classification
+- Agencies don't yet have language for what the client offers
+- No procurement record to analyze, no incumbents to displace
+- Client must "draw the maps" — seed language, build awareness, create the category in agency consciousness
+- Available plays: Architect (primary), Long Game (deep horizon)
+
+**Practical use:** The Lamb Package BLUF includes a `MARKET STATE` field that immediately tells Steptoe partners what KIND of engagement this is. Pre-litigation conflicts in client-base, resource allocation, and time horizons all flow from the market state. A Citadel engagement requires different Steptoe muscle than a Wilderness engagement.
+
+**Hybrid states are real and worth flagging.** Manifold's USDA Secure Data Enclave market is structurally a **Citadel sub-market within a Frontier broader category** — Coleridge holds the specific contract while decentralized confidential compute as a category is still being defined federally. The Lamb Package surfaces both states because both inform strategy.
+
+#### Strategic Play Taxonomy — Six Named Plays
+
+The 14 pursuit archetypes group into six named strategic plays. Each play implies a different Steptoe relationship-type requirement, time horizon, and risk profile. Plays are named for action and evocation, not procurement vocabulary.
+
+**1. The Direct Strike** — Client competes openly when conditions allow
+- Maps to: Archetypes 6, 7, 8, 10, 11, 13 (active solicitations, RFIs, sources sought)
+- Steptoe role: agency advocacy during evaluation, GO/NO-GO support, proposal positioning
+- Available when: client has vehicle access, the procurement is open, capability fit is clean
+- Time horizon: immediate (proposal-deadline driven)
+- Steptoe muscle required: agency-side relationships, proposal-evaluation insight
+- Risk profile: low to moderate (defined competition, defined criteria)
+
+**2. The Coalition** — Client teams with an incumbent
+- Maps to: Archetypes 1 (nonprofit teaming), 2 (large prime subbing)
+- Steptoe role: introductions to prime capture teams, teaming agreement structuring
+- Available when: incumbent has the vehicle and relationship; client has the capability gap they need
+- Time horizon: near-term to medium (3-12 months)
+- Steptoe muscle required: prime-side relationships across the federal contracting ecosystem
+- Risk profile: low (no head-to-head conflict; partnership-based)
+
+**3. The Kingmaker** — Client arms a challenger to displace the incumbent
+- Maps to: Archetype 14 (Force Multiplier)
+- Steptoe role: introduce client to challenger's federal capture leadership; co-position at agency meetings
+- Available when: incumbent has structural capability gap that challenger can exploit with client's help
+- Time horizon: medium (3-12 months for challenger to integrate capability)
+- Steptoe muscle required: challenger-side relationships, ecosystem-spanning network
+- Risk profile: moderate (creates adversarial position vs. incumbent)
+
+**4. The Disruption** — Client displaces the incumbent directly
+- Maps to: Archetypes 3 (specialty competitor), 4 (niche recompete)
+- Steptoe role: agency education on capability superiority, recompete advocacy
+- Available when: client has vehicle access AND superior capability AND recompete window is approaching
+- Time horizon: long (12-36 months for recompete cycles)
+- Steptoe muscle required: agency-side relationships AND political-protection navigation
+- Risk profile: high (direct adversarial positioning, longer engagement)
+
+**5. The Long Game** — Client positions now, activates on triggers
+- Maps to: Archetypes 5 (recently-awarded watch), 9 (closed-no-award), 12 (recompete prep)
+- Steptoe role: continuous relationship maintenance, trigger-event monitoring
+- Available when: opportunity is real but timing is wrong; building toward future window
+- Time horizon: long (12-48+ months)
+- Steptoe muscle required: long-term relationship maintenance capacity
+- Risk profile: low immediate, moderate long-term (opportunity cost of resources)
+
+**6. The Architect** — Client shapes the market before procurement defines it
+- Maps to: Frontier and Wilderness market plays; pre-procurement engagement; category creation
+- Steptoe role: agency policy advocacy, language seeding, requirements influence
+- Available when: market state is Frontier or Wilderness; client's category is genuinely novel
+- Time horizon: long to very long (24-60 months for category creation)
+- Steptoe muscle required: policy advocacy, OFPP/OMB engagement, congressional appropriations awareness
+- Risk profile: high (long timeline, uncertain payoff, depends on agency willingness to recognize new category)
+
+**Practical use:** The Lamb Package BLUF includes a `PRIMARY PLAY` field. The brief may surface multiple plays for the same federal need — Manifold's USDA engagement supports a Coalition play (with Coleridge), a Kingmaker play (with AWS against Microsoft), a Disruption play (against Coleridge at recompete), and an Architect play (shaping decentralized confidential compute as a federal category). Steptoe selects which play(s) to pursue based on relationship base, conflict landscape, and risk appetite.
+
+#### Steptoe Conflict Check Methodology
+
+Every Lamb Package includes a Steptoe Conflict Status assessment so partners can triage on conflict before reading any further. The check uses public lobbying disclosure data, news monitoring, and pattern recognition to assign one of four tiers.
+
+**Data sources:**
+- OpenSecrets.org lobbying disclosure database (annual client-retainer filings)
+- Steptoe's public client list and case history (where available)
+- News coverage of major engagements
+- Public court filings and regulatory submissions
+
+**Conflict Status Tiers:**
+
+**Clean** — No Steptoe lobbying or other identified engagement with target or incumbent
+- Sunstone has reviewed available data and found no relationship that would create conflict
+- Engagement can proceed without partner-level conflict review
+- Example: AWS, Microsoft, Google, Oracle as Force Multiplier targets (none appear as Steptoe lobbying clients 2022-2025)
+
+**Adjacent** — Steptoe has tangential industry relationships but no direct conflict
+- Steptoe may represent companies in the same industry sector but not the specific target/incumbent
+- Engagement can proceed but partner should be aware of adjacency
+- Example: Steptoe has multiple insurance industry clients; an insurance-sector federal play is "Adjacent" not "Clean"
+
+**Potential** — Steptoe has some engagement that could create conflict if pursued
+- Lobbying retainer exists with the target or incumbent OR a closely affiliated entity
+- Partner-level review required before engagement
+- Mitigation may be possible via ethical wall or scope limitation
+- Example: If Microsoft were a Steptoe lobbying client (they're not), a Kingmaker play with AWS against Microsoft would be Potential
+
+**Confirmed** — Active Steptoe client/incumbent relationship; engagement requires explicit partner consent
+- Direct conflict identified; pursuing engagement could harm existing client relationship
+- Steptoe partner must explicitly authorize OR engagement should be redirected to alternative play
+- Example: Renco Manufacturing Group is a Steptoe lobbying client ($310K in 2025); an engagement structured against RMG would be Confirmed conflict
+
+**Caveats and limitations of conflict check:**
+
+1. **Lobbying data only.** OpenSecrets shows lobbying retainers, not Steptoe's full engagement portfolio. Steptoe could be doing litigation, M&A, antitrust, or regulatory work for a target that doesn't appear in lobbying disclosures.
+2. **Public data lag.** Lobbying filings are quarterly; recent engagements may not yet be reflected.
+3. **Affiliated entities may not surface.** A target's parent company, subsidiary, or industry association may have a Steptoe relationship that the target itself doesn't.
+4. **Always verify with the partner.** Sunstone's Conflict Status is a triage signal, not a conflict clearance. Steptoe partners run their own conflict checks before any engagement.
+
+**Sunstone's role:** Surface what's findable in public data and flag explicitly. Steptoe's role: run authoritative conflict checks, decide whether to engage, manage any required disclosures or ethical walls.
 
 
 ### Match Analysis Framework
