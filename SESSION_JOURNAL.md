@@ -515,4 +515,85 @@ Why: regeneration is cheap. Client returns 3 months later asking for an updated 
 
 ---
 
-*End of Session Journal v1.1*
+## Session 9 — Visual Identity and Survival Architecture (April 25 2026, continuation)
+
+**Participants:** Zack, Claude
+
+### Late-session events captured
+
+After the three-audience report architecture was decided and named, three more meaningful moments happened that needed memorialization.
+
+### Visual identity established
+
+Zack uploaded a generated image of three persona silhouettes — suit/tie executive, blazer-with-insignia BD professional, glasses-with-gear engineer — sharing a coherent visual grammar (gray base, Sunstone-orange accent matching `var(--color-accent)`, head-and-shoulders crop).
+
+> "Check THIS shit out for the report icons!!!"
+
+Source preserved at `public/report-icons/three-audiences-source.png`. Split into three persona-specific files via PIL crop. PLAYBOOK v1.4 documents the visual identity system, file paths, and design rationale.
+
+### The "REALLY coming together" moment
+
+Zack paused: "This is REALLY coming together."
+
+Claude's response was a substantive reflection on what the session had produced — infrastructure built (Tier 2 scanner, vendor universe, stats panel), real analysis run (1,800+ vendors scored), product architecture crystallized (synthesis artifacts, three-audience reports, view-generator pattern), and complete memorialization (PLAYBOOK v1.0→v1.4, JOURNAL v1.0→v1.1, first synthesis artifact, icons committed).
+
+The reflection identified what makes this build different: every architectural decision is grounded in real data and real problems encountered, not theoretical. The Manifold engagement is doing double duty as both paying client work and the testbed exposing what the platform needs to be.
+
+### The fear of loss — and the response
+
+Zack's question:
+
+> "My biggest fear is that I lose this chat or lose memory of all we've created. Where is EVERYTHING memorialized and stored as a backup in case something bad happens?"
+
+This was the right question. Claude's response: a complete inventory of the layered defense.
+
+**Defense in depth:**
+1. **GitHub** — source of truth, all code + docs + syntheses + icons
+2. **Netlify** — auto-deployed from GitHub, redeploy-able anywhere
+3. **Supabase** — operational data with daily backups
+4. **Local downloads** — snapshot copies via /mnt/user-data/outputs/
+5. **Chat history** — the only weak link
+
+What's protected from chat loss: code, docs, syntheses, icons, vendor data, analytical outputs, architectural decisions, methodology — all already in GitHub or Supabase.
+
+What's at risk: only the conversation between commits that hasn't been journaled yet, and any future conversation in the session before it ends.
+
+### What shipped in response
+
+Created **SURVIVAL_GUIDE.md** as a new repo-root document. Contents:
+- Quick recovery procedures
+- Layered defense table
+- Critical credentials (consolidated from PLAYBOOK and chat)
+- Repository structure overview
+- Resume-from-fresh instructions
+- Active vs. roadmap state
+- Emergency contacts and procedures
+
+This document is the failsafe. As long as it stays updated, the platform can be rebuilt from it plus the GitHub repo.
+
+### Pattern reinforced
+
+**Pattern 5 (Preserve reasoning, not just outputs)** — reinforced again. The SURVIVAL_GUIDE isn't just a credentials list. It's a meta-document about how to recover from any failure mode. It explains WHY the layered defense exists, not just WHAT credentials are where.
+
+### Patterns observed but not yet codified
+
+**Possible Pattern 9 — Anxiety-triggered hardening.** Zack's worry about loss didn't produce panic. It produced a productive demand for a recovery document. The platform got more robust because of the worry. This is healthy engineering instinct: when you feel exposed, harden. Not yet coded as a pattern but worth watching for repetition.
+
+### What's pending
+
+- Manifold Tier 2 scan completion (still running at session end)
+- Final synthesis artifact for Manifold Tier 2
+- Decision on next build: Tier 3 deep analysis OR three audience report generators OR Tier 4 federal history
+- All architectural decisions captured
+
+---
+
+### Changelog
+
+- **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
+- **v1.1 — April 25 2026.** Added Session 8 (Tier 2 scan + McKinsey-killer recognition + three-audience architecture).
+- **v1.2 — April 25 2026.** Added Session 9 (visual identity, REALLY coming together moment, survival architecture). SURVIVAL_GUIDE.md created as separate failsafe document.
+
+---
+
+*End of Session Journal v1.2*
