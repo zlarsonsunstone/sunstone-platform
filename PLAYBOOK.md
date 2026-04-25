@@ -1095,6 +1095,114 @@ The log function on Field Crowdedness ensures that one or two Goliaths is meanin
 
 **The vendors aren't lambs. The federal need is the lamb.** The vendors are the players in the field around that need. The Lamb Package describes the field; Steptoe picks which player to align with.
 
+#### Engagement-Level Scoring — Probability and Risk
+
+Opportunity Score tells Steptoe whether a federal need represents a viable engagement on technical/market terms. But Steptoe is a finite resource with reputational, political, and economic constraints. They cannot pursue every viable engagement. The framework needs to give them allocation logic.
+
+Two additional scores assess the engagement itself, distinct from the opportunity:
+
+**4. Probability of Success Score (0-10)** — likelihood of a positive engagement outcome, agnostic of Steptoe's desire to pursue.
+
+Probability factors include:
+
+*Engagement-side (working FOR success):*
+- Steptoe's existing access (warm relationships at the agency, named contacts)
+- Sunstone's intel quality (procurement timing known, POCs identified, budget visibility)
+- Manifold's vehicle access (GSA Schedule, Alliant II, OASIS+, etc.)
+- Manifold's past performance and credibility markers
+
+*Target-side (working AGAINST success):*
+- Incumbent relationship depth (multi-decade vendor-agency ties are nearly unbreakable)
+- Incumbent lobbying spend (they have their OWN Steptoe-equivalents)
+- Political protection (Congressional advocates, set-aside qualifications, geographic distribution)
+- Switching cost for the agency (data migration, retraining, security re-accreditation)
+- Procurement inertia (recompetes are infrequent and predictable)
+
+*Market-side:*
+- Procurement timing (active recompete window in the relevant horizon?)
+- Budget authority (does the agency have funds for this need?)
+- Strategic alignment (does agency leadership want change in this area?)
+
+**5. Steptoe Risk Score (0-10)** — what Steptoe specifically stands to lose if the engagement fails, distinct from probability.
+
+Risk factors:
+
+*Reputational:*
+- Steptoe's credibility if Manifold fails to execute on a Steptoe-introduced opportunity
+- Promises made by Steptoe that depend on Manifold's technical delivery
+
+*Relationship:*
+- Agency contacts Steptoe needs to preserve for OTHER engagements
+- Whether the incumbent is a current OR future Steptoe client (conflict)
+- Bridge-burning if displacement play is too aggressive
+
+*Political:*
+- Incumbent's Congressional backing (appropriator support, geographic concentration)
+- Faction alignment (does displacement align with or against political coalitions Steptoe needs?)
+
+*Resource:*
+- Hours consumed by engagement
+- Opportunity cost vs. higher-probability alternatives in Steptoe's portfolio
+
+*Strategic:*
+- Whether the engagement narrows Steptoe's book of business (looks like Manifold's exclusive advocate)
+- Or broadens it (positions Steptoe as the go-to firm for emerging tech)
+
+**Steptoe Allocation Recommendation — Tier Assignment**
+
+Combining Opportunity Score, Probability of Success, and Steptoe Risk produces a tier assignment that drives resource allocation:
+
+| Tier | Profile | Resource Allocation |
+|---|---|---|
+| **Tier 1 — Aggressive Pursuit** | High Opportunity × High Probability × Low Risk | Top-tier resources, multi-touch engagement plan, quarterly partner reviews |
+| **Tier 2 — Measured Pursuit** | Mixed profile (high Opportunity but lower Probability, OR high Probability but elevated Risk) | Working-team resources, position for opportunity, activate when triggers fire |
+| **Tier 3 — Watch List** | High Opportunity but Low Probability AND High Risk | Don't pursue actively; monitor for trigger events (new agency leadership, procurement cycles, political shifts) |
+
+A typical 10-Lamb portfolio should be a mix of tiers, not a uniform pursue-all list. Realistic distribution:
+- 3 Tier 1 (immediate wins where Steptoe should commit)
+- 5 Tier 2 (need timing or relationship development)
+- 2 Tier 3 (high value if conditions change, but not now)
+
+This portfolio composition is itself part of Sunstone's deliverable. Steptoe doesn't want a "to-do list of 10 items" — they want a "portfolio of 10 strategic options sized for finite firm resources."
+
+**Practical decision matrix Steptoe partners can read in 30 seconds:**
+
+```
+                       LOW RISK (0-4)        HIGH RISK (5-10)
+                       
+HIGH PROB (7-10)       [TIER 1] Aggressive   [TIER 2] Pursue if 
+                       pursuit                payoff justifies
+                       
+MEDIUM PROB (4-6)      [TIER 2] Measured     [TIER 2/3] Hard call
+                       pursuit                
+                       
+LOW PROB (0-3)         [TIER 2/3] Long-term  [TIER 3] Watch only
+                       relationship play     
+```
+
+This matrix appears in every Lamb Package's BLUF, with the specific lamb's coordinates plotted.
+
+#### Lamb Package BLUF — Required Scoring Fields
+
+Every Lamb Package BLUF block contains the full scoring stack so Steptoe partners can triage in seconds:
+
+```
+TARGET: [Federal need name]
+FIELD: [List of Goliaths in the field]
+FEDERAL DEMAND: $X annually
+OPPORTUNITY SCORE: [0-100, derived from three opportunity axes]
+PROBABILITY OF SUCCESS: [0-10]
+STEPTOE RISK LEVEL: [0-10]
+TIER: [1 / 2 / 3]
+RECOMMENDATION: [Aggressive Pursuit / Measured Pursuit / Watch List]
+```
+
+The Talking Points section includes a dedicated **"What Could Go Wrong"** subsection naming risks honestly. Steptoe partners aren't fooled by sunshine reports — explicit risk-naming builds credibility.
+
+The White Paper section includes the analytical defense of the Probability score — what specifically supports it, what factors could lower it, what triggers would raise it.
+
+This is dramatically more rigorous than a typical advisory deliverable. It's also exactly what Steptoe actually needs to make allocation decisions.
+
 
 ### Match Analysis Framework
 
@@ -1259,6 +1367,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.7 — April 2026.** Added Section 8.E — Per-Opportunity Pursuit Archetype Classification. The fifth solicitation-side analytical layer. Establishes that tribe-level DNA tells the strategic picture but client's actual question is operational ("of N opportunities, which to pursue and HOW"). Defines 13 pursuit archetypes covering Award-Stage (5: Nonprofit Teaming, Large Prime Sub, Specialty Threat, Niche Recompete, Adjacent Watch), Solicitation-Stage (4: Direct Pursuit, Teaming Required, Partial Match, No Clear Award), and Market Research/RFI-Stage (4: Active RFI, Closed RFI Unsolicited, Closed RFI Recompete Prep, Sources Sought) categories. Each archetype carries specific recommended action, time horizon, priority weighting. 5-dimension match analysis framework defined (capability, differentiation, risk, competitive context, time horizon). Schema documented (tribe_opportunities + pursuit_archetypes tables + match_analysis_json field). UI documented (Opportunities tab inside each tribe view, per-opportunity drawer). Build sequencing: Phase 2 ON TOP of per-tribe DNA (Section 8.D Phase 1). Sections renumbered: old 8.E Implementation Sequence → 8.F (now 6 phases including new Analysis #5); old 8.F Commercial Implications → 8.G. Triggered by Zack's product instinct during Manifold engagement: "I also believe as we dive into a tribe (as we are now with Agricultural Marketing Research Service), we list the aligned or adjacent opps, categorized by award, solicitation, market research, with Manifold match scores, synopsis of the 'thing', match analysis, and pursuit recommendation." Plus three illustrative archetypes Zack named (Coleridge nonprofit teaming, large prime subcontracting, RFI-without-solicitation unsolicited proposal). First application: Manifold synthesis updated with USDA tribe pursuit pipeline classifying 41 awards + 228 non-awards into pursuit archetypes with priority assignments. P0/P1/P2/P3 distribution and dollar opportunity estimates ($15M-$50M from USDA tribe alone over 3 years; $50M-$200M cross-tribe over 3-5 years).
 - **v1.8 — April 2026.** Added Archetype 14 — Force Multiplier (Arm a Challenger). Captures Zack's strategic insight: "Or subcontractor that helps Goliath A take marketshare from Goliath B?" Establishes a third pursuit pattern beyond direct competition or incumbent teaming: client provides differentiated capability that lets a credible challenger displace the incumbent. Client positioned as kingmaker, not competitor. Critical for category-creating clients whose novel capability is by definition absent from the incumbent's stack — that gap is exploitable by challengers specifically. Three-axis RSI scoring replaces two-axis: Federal Footprint × MAX(Direct Replaceability, Mobilization). MAX function captures that a high-footprint vendor is a target whether displaced directly OR mobilized against. Pursuit archetype determined by which axis is higher: Direct Replaceability dominant → Archetypes 3/4; Mobilization dominant → Archetype 14. Example pattern: USDA OCFO Pool 1 task orders 2024 — Microsoft Azure has Confidential Computing baked in (Goliath B); AWS lacks comparable operator-supplied confidential GPU (Goliath A); Manifold provides the capability AWS needs to displace Microsoft on next round of USDA secure-data task orders. Same play available across cloud primes (Oracle vs. AWS, Google vs. Microsoft, etc.). Triggered late in Session 14 during Lamb Package generation prep, after the original 13 archetypes had been applied to the cap≥3 vendor pool and were felt to be insufficient for the cloud Pool 1 displacement opportunities.
 - **v1.9 — April 2026.** Critical methodology correction: **Sunstone Agnostic Principle** added. Sunstone never tells Steptoe who to fight. Triggered by Zack's correction immediately after v1.8: "We should be agnostic when it comes to the Goliaths - we should let Steptoe decide who to back and who to kill - they will have conflicts of interest, political alignments, etc. to consider. We should give the 'lay of the land' for the Goliaths, and provide a strategy for attacking each." Foundational principle articulated: Sunstone = intelligence (what's possible). Steptoe = advocacy (what to do). Manifold = capability (technical execution). Pre-decided briefs are single-use; landscape-and-options briefs are reusable assets. Three-axis vendor-centric RSI scoring replaced with three-axis opportunity-centric scoring: Federal Demand Size × Capability Fit × log(Field Crowdedness + 1). Vendors are not lambs; the federal need is the lamb; vendors are players in the field around that need. Lamb Package structure changed: BLUF describes the federal need and Goliath landscape; "Manifold-with-Goliath strategy" sub-sections per major player; vendor-agnostic white paper for leave-behind use regardless of Steptoe's selection. Archetype 14 retained but reframed as one option among many that Sunstone presents and Steptoe selects from. This correction prevents Sunstone from generating briefs that conflict with Steptoe's existing client relationships and preserves role clarity in the Sunstone-Steptoe-Client partnership.
+- **v1.10 — April 2026.** Engagement-level scoring added beyond opportunity scoring. Triggered by Zack's question: "Also, give them a weighted score based on the likelihood of success. In other words, regardless of Steptoe's DESIRE, what are the chances of a successful outcome? Does Steptoe want to take that risk, and what is the level of risk being taken?" Foundational insight: Opportunity Score tells Steptoe whether a federal need is technically/market viable; that's not enough. Steptoe is a finite resource with reputational, political, and economic constraints. The framework needs to give them allocation logic, not just opportunity identification. **Two new scores added:** (4) Probability of Success (0-10) — likelihood of positive engagement outcome agnostic of Steptoe's desire to pursue, scored on engagement-side, target-side, and market-side factors; (5) Steptoe Risk (0-10) — what Steptoe specifically stands to lose if the engagement fails, scored on reputational, relationship, political, resource, and strategic dimensions. **Three-tier engagement classification system added:** Tier 1 (Aggressive Pursuit — high opportunity, high probability, low risk; top-tier resources allocated), Tier 2 (Measured Pursuit — mixed profile; working-team resources, position for trigger), Tier 3 (Watch List — high opportunity but low probability or high risk; monitor for changing conditions). Realistic 10-Lamb portfolio composition specified: 3 Tier 1 / 5 Tier 2 / 2 Tier 3. Decision matrix added (Probability × Risk 2x2) for at-a-glance Steptoe partner triage. Lamb Package BLUF structure updated to include all five scores plus tier assignment plus recommendation. Talking Points section now includes mandatory "What Could Go Wrong" subsection naming risks honestly. White Paper section now includes analytical defense of the Probability score with supporting factors and lowering/raising triggers. This update transforms Lamb Packages from "list of opportunities" to "portfolio of strategic options sized for finite firm resources" — exactly what Steptoe needs to make allocation decisions.
 
 ---
 
