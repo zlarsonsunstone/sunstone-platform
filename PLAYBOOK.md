@@ -697,17 +697,34 @@ Every engagement deliverable set follows this structure:
 - What it means for the client
 - Top 3 recommended actions
 
-**The Methodology Report (10-20 pages)**
-- How we did what we did
-- Every decision with its rationale
+**The Strategic Narrative (15-30 pages)** — the McKinsey-grade synthesis that justifies the engagement price
+- Composed from synthesis artifacts written at each milestone (see below)
+- Walks the reader through what we found AT EACH STAGE, what hypotheses we were testing, how the data confirmed/disconfirmed them, what new questions emerged, and what we did about it
+- This is the core deliverable. Backed at every claim by data and audit trail.
+
+**Synthesis Artifacts (the building blocks of the Strategic Narrative)**
+
+Every major analytical milestone produces a written synthesis artifact at the time the analysis happens. These are not afterthoughts — they're captured while context is fresh, then woven into the final report. Examples per engagement:
+
+- *synthesis_round_1_diagnosis.md* — what Round 1 NAICS Path produced and what it told us
+- *synthesis_tier_2_findings.md* — what the Vendor Path Tier 2 scan produced (e.g., the Manifold "Pre-Commercial Market signal" synthesis)
+- *synthesis_tier_4_market_verdict.md* — Hidden vs. Pre-Commercial verdict from Tier 4 federal history reverse-lookup
+- *synthesis_round_2_targeted.md* — agency-specific deep findings
+- *synthesis_round_3_intelligence.md* — converged intelligence package
+- *synthesis_gate_3_lobbying_strategy.md* — Steptoe war-room targeting
+
+Each synthesis is 5-15 pages of substantive analytical prose. Each cites its source data (vendor counts, PIID identifiers, score distributions, etc.). The Methodology Report generator weaves them into the final document.
+
+**The Methodology Report (5-10 pages)** — the audit trail backing the narrative
+- How we did what we did (mechanically — pipelines, prompts, data sources)
+- Every major decision with its rationale (drawn from methodology log)
 - Data sources and their reliability ratings
-- Analytical techniques applied (with plain-English explanation)
-- Full audit trail from methodology log
+- Analytical techniques applied (plain-English explanation)
 - Acknowledgments of limitations and uncertainties
 
 **The Intelligence Package (variable length)**
 - Federal market landscape for this client
-- NAICS/PSC tribal dictionary
+- NAICS/PSC tribal dictionary (when applicable to engagement)
 - Prime targets (ranked)
 - Teaming candidates (ranked)
 - Direct federal client recommendations (top 2-5)
@@ -870,6 +887,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 
 - **v1.0 — April 2026.** Initial authoring. Captures all platform thinking developed through the Manifold Labs engagement: dual-path architecture, PROACTIVE flag, trap phrase pattern, wrong-room diagnosis, capability × evidence matrix, full customer journey across five stages with three gates. Author: Claude, in session with Zack.
 - **v1.1 — April 2026.** Added Section 8 (Solicitation-Side Intelligence Roadmap) capturing the three-analysis vision: posting venue intelligence, SOW extraction and enrichment, predictive solicitation modeling. Commercial implications for subscription pricing and long-term revenue model included. Author: Claude, in session with Zack, following Zack's articulation of the three-analysis insight.
+- **v1.2 — April 2026.** Restructured Section 7 client report template to elevate "Strategic Narrative" as the core deliverable, supported by per-milestone "Synthesis Artifacts" written at the time of analysis. Methodology Report becomes the audit trail backing the narrative rather than the primary deliverable. This is the McKinsey-grade synthesis pattern — the analytical narrative IS the product, the methodology IS its backing. Triggered by Zack's recognition during Manifold Tier 2 scan: "This entire write-up - we can do this in the market research report, correct? This is McKinsey-style insights or better!" First synthesis artifact captured: syntheses/manifold/2026-04-25_tier_2_in_progress.md.
 
 ---
 
