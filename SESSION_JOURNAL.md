@@ -920,7 +920,119 @@ The engagement-level question ("where does Manifold's federal market live?") is 
 - **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight, HigherGov investigation).
 - **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder elevation).
 - **v1.5 — April 25 2026.** Added Session 12 (Coleridge finding + USDA tribe DNA + per-tribe DNA architecture).
+- **v1.6 — April 25 2026.** Added Session 13 (13 pursuit archetypes defined, USDA tribe pursuit pipeline classified, dollar opportunity sized).
 
 ---
 
-*End of Session Journal v1.5*
+## Session 13 — Per-Opportunity Pursuit Archetypes (April 25 2026 evening, continuation)
+
+**Participants:** Zack, Claude
+
+### Zack's product proposal
+
+After per-tribe DNA architecture was captured, Zack proposed the next analytical layer:
+
+> "I also believe as we dive into a tribe (as we are now with Agricultural Marketing Research Service), we list the aligned or adjacent opps, categorized by award, solicitation, market research, with Manifold match scores, synopsis of the 'thing', match analysis, and pursuit recommendation."
+
+Then provided three illustrative archetypes:
+
+> "This was awarded, non-profit, teaming opp."
+> "This was awarded, large Prime generalist, subcontracting opp."
+> "This was never awarded, likely they never found the right solution(s), here's why you meet / exceed what they were seeking, unsolicited proposal tied to previous market research that never manifested opp."
+
+### What this layer adds
+
+Tribe-level DNA tells the strategic picture (codes, dialect, vendor base, vehicles). But the client's actual question is operational: "of N opportunities, which do I pursue, and HOW?"
+
+Per-opportunity pursuit archetype classification answers that question. Every opportunity gets:
+- Procurement state (Award / Solicitation / Market Research)
+- Match score (capability alignment)
+- Plain-English synopsis
+- Match analysis (5-dimension framework)
+- Pursuit recommendation (one of 13 archetypes)
+- Priority assignment (P0-P3)
+- Specific action items
+
+This is the layer that makes the deliverable ACTIONABLE — turns "we found a tribe" into "here's exactly what to do with each opportunity in the tribe."
+
+### Claude's expansion
+
+Zack named 3 archetypes. Claude expanded to a comprehensive set of 13 covering all combinations of procurement-state + competitive-context:
+
+**Award-Stage (5):**
+1. Nonprofit-Awarded Teaming Target
+2. Large Prime Generalist Subcontracting Target
+3. Specialty Vendor Competitive Threat
+4. Niche Vendor with Recompete Window
+5. Recently-Awarded Adjacent Work (Watch List)
+
+**Solicitation-Stage (4):**
+6. Active Solicitation, Direct Pursuit
+7. Active Solicitation, Teaming Required
+8. Active Solicitation, Partial Match
+9. Closed Solicitation, No Clear Award
+
+**Market Research / RFI-Stage (4):**
+10. Active RFI, Submit Response
+11. Closed RFI Without Solicitation, Unsolicited Proposal Target ← Zack's third example
+12. Closed RFI With Different Solicitation, Recompete Preparation
+13. Sources Sought / Industry Day Notice
+
+Zack's response: "Yes, all 13 archetypes — capture and expand them all in the playbook."
+
+### Build sequencing
+
+Zack: "your call."
+
+Claude's call: **Phase 2 separate layer** on top of per-tribe DNA (Phase 1).
+
+Reasoning:
+- Per-tribe DNA refactor is its own substantial schema + UI lift (engagement_tribes table, DNA Strand tab refactor, cross-tribe similarity matrix)
+- Pursuit archetype layer is different concern (tribe_opportunities table, archetype classification engine, Opportunities tab)
+- Mashing them risks half-baked of both
+- Sequenced: each phase ships independently, each generates immediate engagement value
+
+### What shipped
+
+- **PLAYBOOK v1.7** with new Section 8.E (Per-Opportunity Pursuit Archetype Classification). Sections renumbered: old 8.E → 8.F Implementation, old 8.F → 8.G Commercial. Schema documented (tribe_opportunities + pursuit_archetypes). UI documented. Build sequencing as Phase 2 on top of Section 8.D Phase 1.
+- **Synthesis v2.2** with new "USDA Tribe — Per-Opportunity Pursuit Pipeline" section. Applied 13 archetypes to USDA's 269 solicitations:
+  - Archetype 1 Nonprofit Teaming: Coleridge ($7.5M, P0)
+  - Archetype 2 Large Prime Sub: AWS / MS / Google / Oracle Pool 1 task orders (P1-P2)
+  - Archetype 4 Niche Recompete: ARS scientific computing, ERS data services
+  - Archetype 5 Recently-Awarded Adjacent: GrowSafes, USFS forestry
+  - Archetype 11 Unsolicited Proposal Targets: ~10-30 from the 228 unawarded RFIs
+- **Pursuit pipeline value estimate** for Manifold:
+  - USDA tribe alone: $15M-$50M over 3 years
+  - Cross-tribe (Census, BLS, NIH, etc.): $50M-$200M over 3-5 years
+- **Session 13 entry** in journal
+
+### Pending
+
+- Cross-tribe investigation: apply 13-archetype classification to Census, BLS, NIH, DoD/CDAO, Treasury, etc.
+- Per-tribe DNA UI implementation (Phase 1 build)
+- Per-opportunity archetype classification engine (Phase 2 build)
+- Steptoe activation through Adam Webman/David Schwartz/Tomara Crittenden → ARS bridges
+- Coleridge Initiative deep dive — capability gaps, partnership openings
+- Tier 2 final 618 vendors completion
+
+### Patterns reinforced
+
+- **Pattern 4 (Claude builds, Zack reframes):** Reinforced. Zack named 3 archetypes, Claude expanded to 13. Zack accepted "yes all 13" without trimming. Trust working in both directions.
+- **Pattern 6 (Integrity over efficiency):** Reinforced. 13 archetypes is more nuanced than 3. Better deliverable, more work.
+- **NEW Pattern 13 — Architectural layering as the right scaling pattern.** Per-tribe DNA (8.D) and pursuit archetypes (8.E) are SEPARATE phases that COMPOSE. This is the right pattern for adding capability without breaking what exists. Each layer has its own schema, UI, and value. Together they form the complete tribe-level analytical stack.
+
+---
+
+### Changelog
+
+- **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
+- **v1.1 — April 25 2026.** Added Session 8.
+- **v1.2 — April 25 2026.** Added Session 9.
+- **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight).
+- **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder).
+- **v1.5 — April 25 2026.** Added Session 12 (Coleridge + per-tribe DNA architecture).
+- **v1.6 — April 25 2026.** Added Session 13 (13 pursuit archetypes + USDA pursuit pipeline).
+
+---
+
+*End of Session Journal v1.6*

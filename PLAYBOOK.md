@@ -942,19 +942,209 @@ The deliverable difference is enormous. Single-tribe finding ("USDA wants this")
 
 **Implementation status:** Defined here as platform capability. Manual execution underway for Manifold engagement (HigherGov searches per agency, codes extraction, vendor reverse-lookup, USDA tribe being characterized first). Automated execution requires Section 8.B (SOW extraction) plus an agency-targeting layer plus the new schema for per-tribe DNA. Estimated: 4-6 sessions for v1 implementation. The DNA Strand tab UI needs significant refactor.
 
+### 8.E — Analysis #5: Per-Opportunity Pursuit Archetype Classification
 
+**The insight:** Tribe-level DNA tells you "this tribe procures the client's capability under these codes, with these dialect terms, from these vendors." But that's still aggregate. The client's actual question is more specific: **"of the N opportunities I now know about in this tribe, which ones do I pursue, and HOW?"**
 
-### 8.E — Implementation Sequence
+Every opportunity in a tribe gets classified into one of 13 pursuit archetypes. Each archetype carries a specific recommended action, priority weighting, and time horizon. The result: a per-tribe pursuit pipeline where every line item is decision-ready, not a generic "this looks interesting."
+
+**This is the layer that makes the engagement deliverable actionable.** Tribe DNA gives the strategic picture. Pursuit archetypes give the operational playbook.
+
+### The 13 Pursuit Archetypes
+
+Each archetype is a procurement-state + competitive-context combination that maps to a specific recommended action.
+
+#### Award-Stage Archetypes
+
+**1. Nonprofit-Awarded Teaming Target**
+- **Description:** Awardee is academic, research nonprofit, mission-driven org, or federally funded research center
+- **Why it matters:** Doesn't compete commercially against the client; likely needs the client's tech to scale or differentiate; shared mission creates partnership rationale
+- **Action:** Research awardee's capability gaps → unsolicited subcontract or partnership proposal
+- **Time horizon:** Near-term (3-6 months)
+- **Priority:** P0 if capability fit is high, P1 otherwise
+- **Example (Manifold/USDA):** The Coleridge Initiative ($7.5M USDA Secure Data Enclave award, Sept 2024). Coleridge is academic nonprofit doing federal data enclaves; Manifold can offer operator-supplied confidential GPU compute as a complementary capability they don't have.
+
+**2. Large Prime Generalist Subcontracting Target**
+- **Description:** Awardee is one of the major federal IT primes (Booz, GDIT, Leidos, SAIC, ManTech, Accenture, IBM, Northrop, Peraton, CACI, etc.)
+- **Why it matters:** They won the work but don't have client-specific niche capability natively; they need tech partners and routinely sub on capability gaps
+- **Action:** BD outreach to their capture team; position client as the specialty subcontractor
+- **Time horizon:** Near-term to medium (3-12 months, depending on contract phase)
+- **Priority:** P1 if specialty fit is clear, P2 if generic
+- **Example (Manifold/USDA):** AWS, Microsoft, Google, Oracle Pool 1 task orders at USDA OCFO (2024). Manifold can sub to any of these primes for confidential GPU compute layer.
+
+**3. Specialty Vendor Competitive Threat**
+- **Description:** Awardee actually does what client does (commercial doppelganger or near-doppelganger)
+- **Why it matters:** Direct competition for recompete; need to understand their performance and weaknesses
+- **Action:** Competitive intelligence on their delivery; position for displacement at recompete window
+- **Time horizon:** Long-term (12-36 months until recompete)
+- **Priority:** P1 (high-value future opportunity), P0 if recompete is imminent
+- **Example (Manifold/USDA):** None surfaced yet in USDA tribe — would apply if a true Manifold-doppelganger had won
+
+**4. Niche Vendor with Recompete Window**
+- **Description:** Awardee is small specialty firm; contract ending in 12-36 months
+- **Why it matters:** They likely won by being first-mover with a narrow capability; client may have superior or expanded offering
+- **Action:** Recompete targeting — start positioning 18 months before contract expiry
+- **Time horizon:** Long-term (12-36 months)
+- **Priority:** P2 unless contract is high-value, then P1
+
+**5. Recently-Awarded Adjacent Work (Watch List)**
+- **Description:** Award is in same code family / agency / dollar range but for different specific work
+- **Why it matters:** Suggests the agency has budget priority in this space; future related procurements likely
+- **Action:** Monitor; flag related solicitations as they emerge
+- **Time horizon:** Ongoing
+- **Priority:** P3 (intelligence value, not direct pursuit)
+
+#### Solicitation-Stage Archetypes
+
+**6. Active Solicitation, Direct Pursuit**
+- **Description:** Open RFP/RFQ; client has vehicle access; high match score
+- **Why it matters:** Immediate revenue opportunity
+- **Action:** Go decision; mobilize proposal team
+- **Time horizon:** Immediate (proposal deadline-driven)
+- **Priority:** P0
+- **Caveat:** "Vehicle access" is rare for emerging vendors — many clients won't qualify for archetype 6 until they're on a GSA Schedule or join a GWAC
+
+**7. Active Solicitation, Teaming Required**
+- **Description:** Open RFP; client lacks vehicle access; high match score
+- **Why it matters:** Cannot bid alone but capability is right
+- **Action:** Identify qualified prime, propose teaming arrangement, support their proposal
+- **Time horizon:** Immediate (proposal deadline + teaming negotiation)
+- **Priority:** P0 if prime is identified, P1 during prime-search phase
+
+**8. Active Solicitation, Partial Match**
+- **Description:** Open RFP; client can do part of the work but not all
+- **Why it matters:** Sub-only opportunity; specific portion of SOW maps to client capability
+- **Action:** Subcontract targeting on the relevant portion; coordinate with prime offerors
+- **Time horizon:** Immediate
+- **Priority:** P1
+
+**9. Closed Solicitation, No Clear Award**
+- **Description:** RFP closed; no award visible in databases (could be pending, canceled, or re-solicited)
+- **Why it matters:** Procurement disposition is unclear; could indicate failed competition
+- **Action:** Investigate disposition (FOIA, agency contact, news monitoring); surface as competitive intel
+- **Time horizon:** Investigation-dependent
+- **Priority:** P2
+
+#### Market Research / RFI-Stage Archetypes
+
+**10. Active RFI, Submit Response**
+- **Description:** RFI is currently open; client capability matches
+- **Why it matters:** Direct path to influencing downstream solicitation
+- **Action:** Prepare and submit RFI response; request follow-up meeting
+- **Time horizon:** Immediate (RFI deadline-driven)
+- **Priority:** P0
+
+**11. Closed RFI Without Solicitation, Unsolicited Proposal Target**
+- **Description:** Agency conducted market research but never moved to procurement; no follow-on solicitation issued
+- **Why it matters:** Requirement was real and budgeted; no presented solution met threshold; opportunity to propose unsolicited
+- **Action:** Prepare unsolicited proposal explicitly tied to the prior RFI; demonstrate that client's solution exceeds what was scoped
+- **Time horizon:** Near-term (3-6 months for proposal preparation and submission)
+- **Priority:** P1 if match is strong, P2 otherwise
+- **Example (Manifold/USDA):** USDA NASS Notice ID 1232SA24X did eventually move to procurement (Coleridge won), but the pattern applies broadly. Of USDA's 269 solicitations, 228 had no clear award — many are candidates for this archetype.
+
+**12. Closed RFI With Different Solicitation, Recompete Preparation**
+- **Description:** RFI led to a procurement client missed; awardee identified
+- **Why it matters:** Client wasn't aware in time, but recompete cycle is predictable
+- **Action:** Prepare for the recompete cycle; build relationships with the buyer NOW; position as a recompete contender 18 months out
+- **Time horizon:** Long-term (12-48 months)
+- **Priority:** P2 unless contract value is large
+
+**13. Sources Sought / Industry Day Notice**
+- **Description:** Pre-solicitation engagement — agency invites industry input before formal RFP
+- **Why it matters:** Critical positioning window; agencies often let early industry input shape SOW requirements
+- **Action:** Submit response, request individual meeting, attend industry day, propose capability briefing
+- **Time horizon:** Immediate
+- **Priority:** P0 if match is high; P1 otherwise
+
+### Match Analysis Framework
+
+For each opportunity, the match analysis answers five dimensions:
+
+1. **Capability dimension** — which of the client's capabilities apply to this work? Specific match, not generic.
+2. **Differentiation dimension** — what does the client do that the awardee/competitor doesn't? Why would the buyer prefer the client?
+3. **Risk dimension** — what's missing? Vehicle access? Past performance? Clearances? FedRAMP authorization? Set-aside qualification?
+4. **Competitive context** — who else could/should pursue this? Who has historically won similar work?
+5. **Time horizon** — immediate / near-term / long-term opportunity?
+
+This makes every opportunity's pursuit recommendation defensible, not vague. **It also makes the engagement's deliverable indefensibly valuable** — every line item has its reasoning trail.
+
+### Schema Implications
+
+```
+tribe_opportunities
+├── opp_id (HigherGov / SAM notice ID)
+├── tribe_id (USDA, Census, NIH, etc.)
+├── sub_tribe (USDA-ARS, USDA-NASS, USDA-OCFO, etc.)
+├── procurement_state (Award | Solicitation | Market Research | RFI)
+├── opp_title
+├── opp_synopsis (Haiku-generated plain-English summary, 2-3 sentences)
+├── posted_date
+├── deadline_or_award_date
+├── awardee (if applicable)
+├── awardee_archetype (Nonprofit | Large Prime | Specialty | Niche | TBD)
+├── codes (NAICS, PSC family, set-aside)
+├── vehicle (Alliant II Unrestricted, MAS, agency-specific, OTA, etc.)
+├── dollar_value (numeric where available)
+├── match_score (0-10, dual-axis like Vendor Path)
+├── match_analysis_json (5-dimension structure: capability/differentiation/risk/context/horizon)
+├── pursuit_archetype (one of 13, foreign key to pursuit_archetypes table)
+├── pursuit_priority (P0 | P1 | P2 | P3)
+├── pursuit_rationale (Haiku-generated, 2-3 sentences)
+├── action_items (array of specific next steps)
+└── source_documents (paths to preserved SOW, RFI, award notice, etc.)
+
+pursuit_archetypes (reference table)
+├── archetype_id (1-13)
+├── name
+├── description
+├── recommended_action_template
+├── default_time_horizon
+├── default_priority_logic
+└── example_pattern
+```
+
+### UI Implications
+
+Each tribe view gets an **Opportunities tab** (companion to the tribe-level DNA Strand tab):
+
+- All in-scope opportunities for the tribe, sortable and filterable
+- Filter by archetype: "show me only nonprofit teaming targets"
+- Filter by procurement state: "show me only RFIs that closed without solicitation"
+- Filter by match score: "show me only opportunities scoring 7+"
+- Sort by priority, value, deadline
+- Click any opportunity → drawer with full match analysis + pursuit recommendation + action items + source documents
+
+The Opportunities tab feeds the per-engagement reports:
+- **CEO Report:** total opportunities, total potential value, pursuit pipeline summary, top P0 items
+- **Federal BD Report:** full pursuit pipeline with action items, target lists, teaming candidates, RFI response queue
+- **Engineering Report:** technical match analysis depth, capability mapping, differentiation analysis
+
+### Build Sequencing
+
+This is a **Phase 2 build** that sits ON TOP of the per-tribe DNA work (Phase 1 from Section 8.D).
+
+**Phase 1 (Section 8.D — Per-Tribe DNA):** New schema for engagement_tribes, DNA Strand tab refactor for per-tribe view, cross-tribe similarity matrix. Validates against existing USDA tribe data. Estimated: 4-6 dev sessions.
+
+**Phase 2 (Section 8.E — Pursuit Archetypes):** tribe_opportunities table, archetype classification engine (Haiku-driven), Opportunities tab inside each tribe view, per-opportunity drawer with match analysis. Builds on Phase 1 foundation. Estimated: 4-6 dev sessions.
+
+Both phases ship independently. Each generates immediate engagement value. Together they form the complete tribe-level analytical layer.
+
+**Trigger origin:** This capability was identified during the Manifold engagement when Zack proposed: "I also believe as we dive into a tribe (as we are now with Agricultural Marketing Research Service), we list the aligned or adjacent opps, categorized by award, solicitation, market research, with Manifold match scores, synopsis of the 'thing', match analysis, and pursuit recommendation." Then provided three illustrative archetypes ("This was awarded, non-profit, teaming opp" / "This was awarded, large Prime generalist, subcontracting opp" / "This was never awarded, likely they never found the right solution(s), here's why you meet/exceed what they were seeking, unsolicited proposal tied to previous market research that never manifested opp.") — which Claude expanded into the 13-archetype framework above.
+
+**Implementation status:** Defined as platform capability. Manual execution available now for Manifold engagement (Haiku-classified opportunities in synthesis artifacts). Full UI build deferred to Phase 2.
+
+### 8.F — Implementation Sequence
 
 1. **Foundation** — complete current Round 1/2/3 pipeline, Vendor Path, confidence-layered scoring (v1.0 target: done by end of Manifold engagement)
 2. **Analysis #2 first** — SOW extraction pipeline. Becomes new foundation for all PIID analysis. Estimated: 3-4 dev sessions for V1.
 3. **Analysis #1 second** — posting venue intelligence. Layers on top of SOW pipeline because we need to know where to fetch SOWs from. Estimated: 2-3 dev sessions.
-4. **Analysis #4 third** — cross-tribe vocabulary mapping. Requires Analysis #2 (SOW corpus) plus agency-targeting layer. Estimated: 3-4 dev sessions for V1.
-5. **Analysis #3 fourth** — predictive modeling. Requires 6-12 months of SOW corpus accumulation across client engagements to train credibly. Estimated: 4-6 dev sessions + continuous tuning.
+4. **Analysis #4 third (Phase 1)** — per-tribe DNA + cross-tribe vocabulary mapping. Requires Analysis #2 (SOW corpus) plus agency-targeting layer. Estimated: 4-6 dev sessions for V1.
+5. **Analysis #5 fourth (Phase 2)** — per-opportunity pursuit archetype classification. Builds on per-tribe DNA. Estimated: 4-6 dev sessions for V1.
+6. **Analysis #3 fifth** — predictive modeling. Requires 6-12 months of SOW corpus accumulation across client engagements to train credibly. Estimated: 4-6 dev sessions + continuous tuning.
 
-### 8.F — Commercial Implications
+### 8.G — Commercial Implications
 
-These four analyses fundamentally change the commercial model. Today's engagements are $150K one-time + Steptoe retainer. With the predictive and cross-tribe capability:
+These five analyses fundamentally change the commercial model. Today's engagements are $150K one-time + Steptoe retainer. With the predictive, cross-tribe, and pursuit-classification capability:
 
 - **Continuous intelligence subscription** becomes viable at $25-50K/month for serious federal pursuers
 - **Per-opportunity forecasting reports** as ad-hoc deliverables ($5K-15K each)
@@ -1026,6 +1216,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.4 — April 2026.** Established visual identity for the three audience reports. Three persona icons (suit/tie executive, blazer-with-insignia BD professional, glasses-with-gear engineer) sharing visual grammar — same gray silhouette base, same Sunstone-orange accent matching `var(--color-accent)`, same head-and-shoulders crop. Used on report covers, page headers, in-platform deliverable cards, and the future Methodology tab. Icons stored at `/public/report-icons/`. Source image plus three split icon files committed. Triggered by Zack uploading the source image mid-session: "Check THIS shit out for the report icons!!!"
 - **v1.5 — April 2026.** Added Section 8.D — Cross-Tribe Vocabulary Mapping as the fourth solicitation-side analytical layer. Captures the methodological insight that each federal agency tribe has its own dialect for the same underlying capability, and that no single NAICS/PSC combination represents a federal market. Sections renumbered (old 8.D → 8.E Implementation Sequence; old 8.E → 8.F Commercial Implications). Triggered by Zack's discovery during Manifold engagement that USDA Secure Enclave Services solicitations exist under NAICS 518210 + PSC R702 (entirely different from Round 1's 541511/541512/541519), AND by Zack's immediate methodological correction: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee." This insight elevates tribal-decoder from a subordinate goal to a primary platform capability.
 - **v1.6 — April 2026.** Major expansion of Section 8.D to include **Per-Tribe DNA Sequencing**. Establishes that the DNA Strand concept (compounding signals into compact representation) must be scoped per tribe, not per engagement. Each tribe (and even sub-tribes within tribes — USDA ARS uses different PSCs than USDA NASS) has its own DNA: code patterns, dialect vocabulary, vendor base, work patterns, POCs, vehicles, award patterns. Cross-tribe similarity matrix becomes a first-class analytic. Vendors appearing in multiple tribe DNAs become high-priority teaming targets. Schema implications documented (engagement → engagement_tribes table → DNA strand per tribe). Triggered by Zack's architectural insight: "Start also re-thinking how we use the DNA sequencing / clustering tool on the site with all this new-found knowledge. I almost feel like the dna sequences should be inside the tribes. The code to keyword to work description to vendor should live inside the USDA tribe for this effort." First tribe fully characterized: USDA. First major finding from tribe DNA analysis: $7.5M USDA Secure Data Enclave Services award to The Coleridge Initiative on Sept 27 2024 — confirming Manifold's federal market is real (not pre-commercial), with Coleridge as incumbent and ~2027-2029 recompete window.
+- **v1.7 — April 2026.** Added Section 8.E — Per-Opportunity Pursuit Archetype Classification. The fifth solicitation-side analytical layer. Establishes that tribe-level DNA tells the strategic picture but client's actual question is operational ("of N opportunities, which to pursue and HOW"). Defines 13 pursuit archetypes covering Award-Stage (5: Nonprofit Teaming, Large Prime Sub, Specialty Threat, Niche Recompete, Adjacent Watch), Solicitation-Stage (4: Direct Pursuit, Teaming Required, Partial Match, No Clear Award), and Market Research/RFI-Stage (4: Active RFI, Closed RFI Unsolicited, Closed RFI Recompete Prep, Sources Sought) categories. Each archetype carries specific recommended action, time horizon, priority weighting. 5-dimension match analysis framework defined (capability, differentiation, risk, competitive context, time horizon). Schema documented (tribe_opportunities + pursuit_archetypes tables + match_analysis_json field). UI documented (Opportunities tab inside each tribe view, per-opportunity drawer). Build sequencing: Phase 2 ON TOP of per-tribe DNA (Section 8.D Phase 1). Sections renumbered: old 8.E Implementation Sequence → 8.F (now 6 phases including new Analysis #5); old 8.F Commercial Implications → 8.G. Triggered by Zack's product instinct during Manifold engagement: "I also believe as we dive into a tribe (as we are now with Agricultural Marketing Research Service), we list the aligned or adjacent opps, categorized by award, solicitation, market research, with Manifold match scores, synopsis of the 'thing', match analysis, and pursuit recommendation." Plus three illustrative archetypes Zack named (Coleridge nonprofit teaming, large prime subcontracting, RFI-without-solicitation unsolicited proposal). First application: Manifold synthesis updated with USDA tribe pursuit pipeline classifying 41 awards + 228 non-awards into pursuit archetypes with priority assignments. P0/P1/P2/P3 distribution and dollar opportunity estimates ($15M-$50M from USDA tribe alone over 3 years; $50M-$200M cross-tribe over 3-5 years).
 
 ---
 

@@ -154,7 +154,98 @@ Adam Webman, David Schwartz, and Tomara Crittenden are positioned as Health Care
 
 This is a legitimate Gate 3 path that doesn't require building from scratch.
 
+## USDA Tribe — Per-Opportunity Pursuit Pipeline
 
+The USDA tribe DNA tells the strategic picture. The pursuit pipeline tells Manifold what to DO about each specific opportunity. Each in-scope opportunity from the 269-solicitation corpus gets classified into one of 13 pursuit archetypes (see PLAYBOOK Section 8.E for full archetype definitions).
+
+### Award-Stage Opportunities Classified
+
+**Archetype 1 — Nonprofit-Awarded Teaming Targets**
+
+| Opportunity | Awardee | Value | Date | Action |
+|---|---|---:|---|---|
+| USDA Secure Data Enclave Services | The Coleridge Initiative Inc | $7,499,999 | Sept 27 2024 | **P0** — Unsolicited subcontract proposal positioning Manifold's confidential GPU compute as complementary to Coleridge's centralized enclave architecture. Activate via Steptoe → ARS science-policy bridges (Adam Webman, David Schwartz, Tomara Crittenden). |
+| Macroeconomic Forecasting subscription (USDA-ERS) | Oxford Economics USA | $136,523 | June 2019 | P3 (watch) — small, subscription-based |
+| Food Security Outlook Research Data subscription | Haver Analytics Inc | $106,756 | June 2019 | P3 (watch) — small, subscription-based |
+| CAS SciFinder Discovery Platform | American Chemical Society | $38,970 | August 2023 | P3 (watch) — research data subscription |
+
+**Coleridge is the watershed pursuit target.** Recompete window approximately 2027-2029. Manifold has 2-3 years to position. Three Steptoe Health Care Advisers already have direct LC connections to USDA ARS, reducing the cold-start cost dramatically.
+
+**Archetype 2 — Large Prime Generalist Subcontracting Targets**
+
+| Opportunity | Awardee | Value | Date | Action |
+|---|---|---:|---|---|
+| AWS Pool 1 Task Order | Amazon Web Services | TBD | Aug 19 2024 | **P1** — Sub to AWS for confidential GPU compute layer; AWS GovCloud has TEE primitives but operator-supplied confidential compute is a Manifold differentiator |
+| Microsoft Pool 1 Task Order | Microsoft | TBD | July 16 2024 | P1 — Same play with Azure Government Confidential Computing |
+| Google Pool 1 Task Order | Google | TBD | Aug 20 2024 | P1 — Google Cloud Confidential Computing complementary positioning |
+| Oracle Pool 1 Task Order | Oracle | TBD | Jan 31 2025 | P2 — Oracle's confidential compute is less mature; smaller positioning opportunity |
+
+These four task orders represent USDA's enterprise cloud backbone. Manifold's positioning: not as a replacement for hyperscalers, but as a specialized confidential GPU compute capability that ANY of these primes can pull through on USDA task orders requiring operator-supplied confidential compute.
+
+**Archetype 4 — Niche Vendor with Recompete Window**
+
+| Opportunity | Awardee | Value | Date | Recompete Est. | Action |
+|---|---|---|---|---|---|
+| BARC & USNA Scientific Converged IT Infrastructure | Millennium Enterprise Corp | $694,035 | Sept 30 2025 | 2028-2030 | P2 — monitor for ARS scientific computing recompete |
+| MTED Crops Branch Data Requirement | Fastmarkets Global Limited | $145,138 | Sept 25 2024 | 2027-2029 | P3 (watch) |
+| USDA-ERS Comprehensive Historical Data | Sitonia Consulting | $20,000 | Sept 19 2024 | 2027-2029 | P3 (watch) |
+| Aerial Film Scanning (5-vendor cluster) | HAS Images, Blue Skies, AeroTech, Aero-Graphics, Aerial Services | $5M each | Sept 24 2015 | 2025-2027 (likely already recompeted) | P3 (watch) |
+| Uniform Residential Loan Application Phase II | A F S LLC | $4,971,039 | Feb 15 2019 | 2024-2026 (likely already recompeted) | P3 (watch) |
+
+**Archetype 5 — Recently-Awarded Adjacent Work (Watch List)**
+
+| Opportunity | Awardee | Value | Date | Why Watch |
+|---|---|---:|---|---|
+| Behavior Analytics Packages for GrowSafes | Grow Safe Systems Limited | $58,300 | Sept 10 2025 | ARS livestock/agriculture data; suggests broader ARS data infrastructure budget |
+| Wildland-Urban Interface Risk Approaches | Geospatial Measurement Solutions | $380,732 | Aug 4 2025 | USFS data analytics; potential adjacency for forestry compute |
+| LBL Quota Hunt Application System | Recaccess LLC | $75,886 | Jan 22 2024 | USFS application; small but recent |
+
+### Solicitation-Stage Opportunities
+
+Of the 269 solicitations in the USDA NAICS 518210 corpus, 228 had no clear award. These divide between truly-unawarded (Archetype 11) and awarded-but-uncaptured-in-our-data (Archetype 12). Without further investigation, treat as a ~228-opportunity inventory for the Federal BD Report's "investigate further" pipeline.
+
+**High-priority spot-checks:**
+
+| Opportunity | Source/Agency | Date | Initial Assessment |
+|---|---|---|---|
+| Notice ID 1232SA24X (USDA Secure Enclave Services RFI) | USDA-NASS | Dec 2023 - Apr 2024 | Closed without direct award, but DID lead to ARS award (Coleridge). Sub-tribe shifted from NASS to ARS. |
+| EBT Gateway Access Redacted Sole Source | USDA OCFO | Sept 29 2023 | Sole-source intent. Fast-track procurement. Watch for follow-on. |
+| NOTICE OF INTENT TO ISSUE ON SOLE SOURCE BASIS (Rural Development) | Rural Development | Oct 17 2023 | Sole source; awardee not visible. Investigate. |
+
+### Market Research / RFI-Stage Opportunities
+
+**Archetype 11 — Closed RFI Without Solicitation, Unsolicited Proposal Targets**
+
+The 228 unawarded solicitations include an unknown number of RFIs that closed without follow-on procurement. **These are gold for the Federal BD Report.** Pattern of action:
+
+1. Filter the corpus to RFIs only (vs. RFPs and Sources Sought)
+2. For each RFI, check if a downstream solicitation was issued
+3. RFIs without follow-on = "agency knew what they wanted, didn't find a solution"
+4. Match Manifold's capability to the original SOW
+5. Prepare unsolicited proposal explicitly tied to the prior RFI
+
+**Estimated yield:** ~10-30 viable unsolicited proposal targets in the USDA corpus alone. At ~$200K-$2M each, the unsolicited proposal pipeline is potentially $5M-$30M in addressable opportunity.
+
+### Pursuit Pipeline Summary for USDA Tribe
+
+**Total in-scope opportunities classified:** 41 awards + 228 non-awards = 269
+
+**By archetype priority:**
+
+- **P0 (Immediate action):** 1 — Coleridge teaming positioning (already activatable via Steptoe)
+- **P1 (Near-term action):** ~5-7 — Cloud Pool 1 subs + selected unsolicited proposals
+- **P2 (Medium-term tracking):** ~15-25 — recompete preparation, investigation queue
+- **P3 (Watch list):** ~50+ — adjacent monitoring, low priority
+
+**Manifold's USDA tribe pipeline value estimate:**
+- Coleridge recompete (2027-2029): potential $7.5M+ direct or partnered
+- Cloud Pool 1 sub-pull-through: potential $1M-$5M annually starting 2026
+- Unsolicited proposal yield: potential $5M-$30M cumulative over 2-3 years
+- Adjacent ARS scientific computing: potential $500K-$2M per opportunity
+
+**Total addressable opportunity at USDA tribe alone: $15M-$50M over 3 years** — assuming Steptoe activation succeeds and Manifold gets vehicle access (GSA Schedule application or Alliant II teaming arrangement).
+
+This is substantial federal market access from a single tribe. **Across the cross-tribe map (Census, BLS, NIH, etc.) the multi-agency total likely runs $50M-$200M over 3-5 years.**
 
 ### Sequence of Investigation
 
