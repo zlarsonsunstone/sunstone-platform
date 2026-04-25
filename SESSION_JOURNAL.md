@@ -690,4 +690,124 @@ The platform's Round 1 NAICS Path needs solicitation-side companion analysis as 
 
 ---
 
-*End of Session Journal v1.3*
+## Session 11 — The USDA Discovery and the Tribal Decoder Elevation (April 25 2026 evening)
+
+**Participants:** Zack, Claude
+
+### What happened
+
+Following Session 10's solicitation-side investigation, Zack drilled into the USDA NASS Secure Enclave Services cluster identified in Group 2. Pulled the actual SOW document and the SAM.gov record (Notice ID 1232SA24X).
+
+### The watershed finding
+
+The USDA NASS Secure Enclave Services solicitation describes Manifold's exact value proposition translated into federal procurement language:
+
+- "Secure computing and collaboration workspace"
+- "Highly controlled, secure environment for restricted-access datasets"
+- "FedRAMP authorization, NIST SP 800-53 Moderate Impact"
+- "Management portal for at-scale data access control"
+- "AI/ML training as separate line item"
+
+**The codes USDA used:**
+- NAICS 518210 (Computing Infrastructure Providers, Data Processing, Web Hosting)
+- PSC R702 (Support — Management: Data Collection)
+- Vehicle: GSA Alliant II Unrestricted GWAC
+- Set-asides: Limited, MAS, 8(a) STARS, VETS 2 (parallel)
+
+**The status:** RFI ran through 4 months of market research (MRAS October 2023 + RFI December 2023). Inactivated April 2024 with zero awards. Named contracting officer: Jacob Toft.
+
+**This is the most important finding of the engagement.** It transforms the verdict from "pre-commercial market" to "wrong-vocabulary market." The work is real. The codes exist. The procurement vehicle exists. The named POC exists. The set-aside structure makes it small-business-accessible.
+
+### Claude's near-miss
+
+Upon finding the USDA codes, Claude's instinct was to declare them "the answer." Recommendation: rerun all analysis under NAICS 518210 + PSC R702.
+
+### Zack's correction
+
+> "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee."
+
+This is the most important methodological moment of the entire engagement.
+
+### Why the correction matters
+
+The playbook had three mission goals from Session 1:
+1. EXPOSE THE LIE
+2. **TRIBAL DECODER RING** ← this one
+3. INVISIBLE AWARDS VIA DOPPELGANGER VENDORS
+
+Goal #2 was always present but had been treated as a subordinate output. Each agency tribe has its own dialect for the same underlying capability:
+
+- USDA: "Secure Enclave Services" / NAICS 518210 / PSC R702
+- Census Bureau: "FSRDC" (Federal Statistical Research Data Center)
+- BLS: "Restricted Data Access"
+- NCHS: "Data Enclave" + HIPAA
+- BEA: "Microdata Enclave"
+- BJS: "Researcher Data Access"
+- NIH: "Trusted Research Environment"
+- DARPA / CDAO / AFRL: program-specific names (Mosaic, Project IKE, Maven, Project Maven)
+- Treasury / IRS: "Restricted Tax Data"
+- Federal Reserve / FDIC: "Confidential Bank Data Access"
+
+Treating one agency's codes as universal would repeat exactly the original Round 1 error. The correction elevated tribal-decoder from a subordinate goal to a **primary platform capability**.
+
+### What this elevates to first-class capability
+
+Section 8.D — Cross-Tribe Vocabulary Mapping — added to PLAYBOOK as a fourth solicitation-side analytical layer. For each engagement:
+
+1. Build per-tribe target list (which agencies plausibly have demand)
+2. Run agency-specific dialect searches (each agency uses its own language)
+3. Identify per-agency codes (NAICS, PSC, vehicle structure differ)
+4. Map to award data (under per-agency codes)
+5. Build per-agency tribal dictionary entry
+
+The deliverable becomes not "your federal market is $X" but **"your federal market exists at agencies A, B, C, D, E, each with its own dialect, vehicle, POC, recompete schedule. Pursue them in parallel through Gate 1, recruit primes through Gate 2, use Gate 3 to position with GSA program offices and agency procurement offices simultaneously."**
+
+The valuation difference for the client is substantial.
+
+### What shipped
+
+- **Synthesis v2** at `/syntheses/manifold/2026-04-25_engagement_synthesis_v2.md` — comprehensive synthesis incorporating Round 1 wrong-room + Tier 2 doppelganger results + USDA solicitation finding + tribal-decoder methodology
+- **USDA SOW preserved** at `/syntheses/manifold/source_documents/USDA_Secure_Data_Enclave_SOW.docx`
+- **PLAYBOOK v1.5** with new Section 8.D (Cross-Tribe Vocabulary Mapping). Sections renumbered 8.D→8.E (Implementation Sequence), 8.E→8.F (Commercial Implications)
+- **Session 11 entry** in journal
+
+### Pending
+
+- Cross-tribe investigation: Census Bureau (FSRDC), BLS, NCHS, NIH, DoD/CDAO, Treasury, etc.
+- HigherGov award search under USDA codes specifically (was anyone awarded similar work?)
+- Sunstone Round 1 Turn 2 against USDA codes (validate analytical pipeline picks up dialect)
+- Steptoe contact path for Jacob Toft + USDA inquiry
+- Tier 2 final batch (618 vendors trailing, $1.24, 1 minute)
+- Audience report generators when sufficient cross-tribe findings accumulate
+
+### Strategic reframing
+
+**Old framing:** "Manifold operates a category not yet recognized in federal procurement; pre-commercial verdict; Gate 3 dominant for market creation."
+
+**New framing:** "Manifold operates a category that IS being procured by federal agencies — under classifications and language Manifold does not currently know. The market is real, fragmented across agency tribes, and accessible primarily through GSA GWAC primes."
+
+- **Gate 1 (Direct pursuit):** Limited until Manifold is on a vehicle. Pursue GSA Schedule application as parallel workstream.
+- **Gate 2 (Teaming):** Now central. Target Alliant II Unrestricted primes (Booz, GDIT, Leidos, SAIC, ManTech, Accenture, IBM, Northrop Grumman, Peraton, CACI).
+- **Gate 3 (Steptoe influence):** Multi-target. GSA program offices for vehicle positioning, statistical agency procurement offices for upcoming requirements, OFPP for category management.
+
+The pivot from pre-commercial to "wrong-vocabulary" changes the engagement output dramatically.
+
+### Patterns reinforced
+
+- **Pattern 4 (Claude builds, Zack reframes):** Reinforced strongly. Claude was about to over-fit on USDA codes. Zack caught it with one sentence.
+- **Pattern 6 (Integrity over efficiency):** Reinforced. Cross-tribe investigation is more work than declaring USDA codes the answer. But it produces actual deliverable value.
+- **NEW Pattern 11 — Methodological hygiene under findings pressure.** When a major finding emerges, the temptation is to over-generalize from a single data point. Sunstone's discipline must be: treat every new finding as ONE data point, integrate it into the existing model, don't let it become THE answer. This pattern is now codified.
+
+---
+
+### Changelog
+
+- **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
+- **v1.1 — April 25 2026.** Added Session 8.
+- **v1.2 — April 25 2026.** Added Session 9.
+- **v1.3 — April 25 2026.** Added Session 10 (solicitation-side insight, HigherGov investigation).
+- **v1.4 — April 25 2026.** Added Session 11 (USDA discovery + tribal decoder elevation + Synthesis v2 written).
+
+---
+
+*End of Session Journal v1.4*

@@ -867,16 +867,49 @@ For every PIID:
 
 **Competitive moat:** Deltek, Bloomberg Government, and GovWin have historical opportunity data. None of them do predictive modeling on language + timing dimensions combined. This would be the first genuinely predictive federal capture platform.
 
-### 8.D — Implementation Sequence
+### 8.D — Analysis #4: Cross-Tribe Vocabulary Mapping
+
+**The insight:** Each federal agency tribe has its own dialect for the same underlying capability. USDA calls it "secure enclave services" and codes it under NAICS 518210 + PSC R702. Census Bureau calls the same thing "FSRDC" (Federal Statistical Research Data Center) and uses entirely different procurement structures. DoD uses "trusted execution environment" or "trusted compute" with classified-environment vehicles. NIH may call it "trusted research environment." Treasury and IRS have their own language for restricted-data computing.
+
+**No single NAICS/PSC combination represents the federal market for any given capability.** The market is fragmented across agency tribes, each with its own classification, vehicle, and procurement language.
+
+**The methodological correction this enforces:** The platform cannot treat one agency's codes as universal. Round 1 of every engagement must explicitly avoid the trap of "we found the right codes" — it must instead produce a per-tribe map showing how each agency procures the client's capability.
+
+**What the platform does:**
+
+For each engagement, after Round 1 / Vendor Path / Solicitation analysis surface initial findings:
+
+1. **Build the per-tribe target list.** Identify all agencies that plausibly have demand for the client's capability. For Manifold this includes USDA NASS/ERS/APHIS, Census Bureau, BLS, BEA, NCHS, BJS, NIH, DARPA, AFRL, CDAO, Treasury, IRS, Federal Reserve, FDIC, State Department, and others.
+
+2. **Run agency-specific dialect searches.** For each agency, search its solicitation history using vocabulary native to that agency. Census uses "FSRDC." NIH uses "trusted research environment." DoD uses "secure compartmented compute" or program-specific names (Mosaic, Project IKE, Maven). The dialect is empirical — discovered by looking at what the agency actually publishes.
+
+3. **Identify per-agency codes.** From matching solicitations, extract the NAICS, PSC, vehicle, and contracting structure each agency uses. These will be different per tribe.
+
+4. **Map to award data.** Pull award history under the per-agency codes. Identify who's winning the work, how much, when contracts recompete.
+
+5. **Build per-agency tribal dictionary.** Each agency gets its own row in the engagement's tribal dictionary: dialect terms, codes, vehicles, prime contractors, contracting officers, program managers, recompete schedules.
+
+**Deliverable:** Per-engagement cross-tribe map. A client like Manifold sees not "your federal market is $X" but "your federal market exists at agencies A, B, C, D, E, each with its own entry path, vehicle requirement, and POC. Pursue them in parallel through Gate 1, recruit primes A2, B2, C2 through Gate 2, and use Gate 3 to position with GSA program offices and the agency procurement offices simultaneously."
+
+**Why this is a Tier 5 (NOT Tier 4) capability:**
+
+The original Vendor Path was structured as Tier 0 (fence) → Tier 1 (name signal) → Tier 2 (capability scan) → Tier 3 (deep analysis on survivors) → Tier 4 (federal history reverse-lookup). This solicitation-side cross-tribe vocabulary mapping is a parallel analytical layer that informs ALL of those tiers — it's not part of the vendor pipeline at all. It runs alongside the Vendor Path and feeds back into NAICS Path Round 2/3 with corrected per-agency codes.
+
+**Trigger origin:** This capability was identified during the Manifold engagement when Zack asked "Just because the award descriptions don't say it doesn't mean it wasn't described correctly in the solicitations themselves, right?" That question led to HigherGov solicitation investigation, which surfaced the USDA Secure Enclave Services finding. The methodological correction came when Claude was about to treat USDA's codes (NAICS 518210 + PSC R702) as the answer for all agencies, and Zack said: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee."
+
+**Implementation status:** Defined here as platform capability. Manual execution underway for Manifold engagement (HigherGov searches per agency, codes extraction, vendor reverse-lookup). Automated execution requires Section 8.B (SOW extraction) plus an agency-targeting layer. Estimated: 3-4 sessions for v1 implementation.
+
+### 8.E — Implementation Sequence
 
 1. **Foundation** — complete current Round 1/2/3 pipeline, Vendor Path, confidence-layered scoring (v1.0 target: done by end of Manifold engagement)
 2. **Analysis #2 first** — SOW extraction pipeline. Becomes new foundation for all PIID analysis. Estimated: 3-4 dev sessions for V1.
 3. **Analysis #1 second** — posting venue intelligence. Layers on top of SOW pipeline because we need to know where to fetch SOWs from. Estimated: 2-3 dev sessions.
-4. **Analysis #3 third** — predictive modeling. Requires 6-12 months of SOW corpus accumulation across client engagements to train credibly. Estimated: 4-6 dev sessions + continuous tuning.
+4. **Analysis #4 third** — cross-tribe vocabulary mapping. Requires Analysis #2 (SOW corpus) plus agency-targeting layer. Estimated: 3-4 dev sessions for V1.
+5. **Analysis #3 fourth** — predictive modeling. Requires 6-12 months of SOW corpus accumulation across client engagements to train credibly. Estimated: 4-6 dev sessions + continuous tuning.
 
-### 8.E — Commercial Implications
+### 8.F — Commercial Implications
 
-These three analyses fundamentally change the commercial model. Today's engagements are $150K one-time + Steptoe retainer. With the predictive capability:
+These four analyses fundamentally change the commercial model. Today's engagements are $150K one-time + Steptoe retainer. With the predictive and cross-tribe capability:
 
 - **Continuous intelligence subscription** becomes viable at $25-50K/month for serious federal pursuers
 - **Per-opportunity forecasting reports** as ad-hoc deliverables ($5K-15K each)
@@ -946,6 +979,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.2 — April 2026.** Restructured Section 7 client report template to elevate "Strategic Narrative" as the core deliverable, supported by per-milestone "Synthesis Artifacts" written at the time of analysis. Methodology Report becomes the audit trail backing the narrative rather than the primary deliverable. This is the McKinsey-grade synthesis pattern — the analytical narrative IS the product, the methodology IS its backing. Triggered by Zack's recognition during Manifold Tier 2 scan: "This entire write-up - we can do this in the market research report, correct? This is McKinsey-style insights or better!" First synthesis artifact captured: syntheses/manifold/2026-04-25_tier_2_in_progress.md.
 - **v1.3 — April 2026.** Replaced single "Strategic Narrative" deliverable with three audience-tuned reports composed from the same source synthesis artifacts: The CEO Report (4-8 pages, strategic), The Federal BD Report (15-25 pages, operational), The Engineering Report (20-40 pages, technical with appendices). Each is a complete deliverable for its audience. View generator architecture: synthesis artifacts as source-of-truth, three composers produce the three reports, regeneration is cheap, new audiences (Steptoe Brief, Investor Update) plug in as new generators. Triggered by Zack's product instinct: "I want the CEO Report. I want the Procurement BD Report. I want the Geek/Engineer Report. Different frames for different audiences." Names finalized as descriptive rather than cute: "The CEO Report. The Federal BD Report. The Engineering Report. Simple. Not cute. Descriptive. Decisive."
 - **v1.4 — April 2026.** Established visual identity for the three audience reports. Three persona icons (suit/tie executive, blazer-with-insignia BD professional, glasses-with-gear engineer) sharing visual grammar — same gray silhouette base, same Sunstone-orange accent matching `var(--color-accent)`, same head-and-shoulders crop. Used on report covers, page headers, in-platform deliverable cards, and the future Methodology tab. Icons stored at `/public/report-icons/`. Source image plus three split icon files committed. Triggered by Zack uploading the source image mid-session: "Check THIS shit out for the report icons!!!"
+- **v1.5 — April 2026.** Added Section 8.D — Cross-Tribe Vocabulary Mapping as the fourth solicitation-side analytical layer. Captures the methodological insight that each federal agency tribe has its own dialect for the same underlying capability, and that no single NAICS/PSC combination represents a federal market. Sections renumbered (old 8.D → 8.E Implementation Sequence; old 8.E → 8.F Commercial Implications). Triggered by Zack's discovery during Manifold engagement that USDA Secure Enclave Services solicitations exist under NAICS 518210 + PSC R702 (entirely different from Round 1's 541511/541512/541519), AND by Zack's immediate methodological correction: "Don't fall in love with this NAICS and PSC combo - that's the USDA interpretation. Doesn't mean other tribes have the same teepee." This insight elevates tribal-decoder from a subordinate goal to a primary platform capability.
 
 ---
 
