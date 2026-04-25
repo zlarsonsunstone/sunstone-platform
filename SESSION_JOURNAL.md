@@ -404,7 +404,115 @@ Jonathan Sweetser's "soft digital twin" observation reframed the product positio
 ### Changelog
 
 - **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions spanning platform foundation through the vendor pivot and playbook memorialization. Author: Claude, in session with Zack, with Zack's explicit direction to build this document separately from the PLAYBOOK.
+- **v1.1 — April 25 2026.** Added Session 8 covering the Tier 2 vendor scan execution, McKinsey-killer recognition, three-audience-report architecture decision, and final naming.
 
 ---
 
-*End of Session Journal v1.0*
+## Session 8 — The Tier 2 Scan and the Three-Audience Architecture (April 25 2026)
+
+**Participants:** Zack, Claude
+
+### What we set out to do
+
+Run the Tier 2 vendor doppelganger scan for Manifold against the 6,876 capability-signal vendors. Generate the baseline dataset that answers the question: *does Manifold have commercial doppelgangers in the SAM-registered universe?*
+
+### What happened during the scan
+
+At 27% completion (1,826 of 6,876 vendors analyzed), Zack ran the diagnostic SQL queries Claude provided. Results were surprising at first glance:
+
+- 1,539 successfully scored, 287 fetch failures (15.7% — within expected range)
+- Average capability score: 0.53/10
+- Average evidence score: 3.55/10
+- **Highest capability score across all 1,826 vendors: 4/10 (single instance)**
+- Top 25 candidates all scoring 2-4 capability, all classified as `false_positive`
+
+### Claude's interpretation
+
+Rather than alarm, Claude read this as a strong analytical signal. Wrote a substantive synthesis interpreting the data:
+
+> "Manifold's commercial-doppelganger universe in the SAM-registered vendor pool is genuinely small or non-existent. The closest matches use overlapping vocabulary but operate fundamentally different products. Hypothesis A (Hidden Federal Market) is being disconfirmed. Hypothesis B (Pre-Commercial Market) is strongly supported. Manifold operates a category that does not yet exist in federal procurement."
+
+The synthesis included:
+- Hypothesis testing across all three scenarios (Hidden / Pre-Commercial / Hybrid)
+- Reading of Haiku's per-vendor rationales as forensic evidence
+- Strategic implications (Gate 1 deprioritized, Gate 3 dominant, adjacent vendors as competitive substitutes)
+- Methodology audit with confidence calibrations
+- What would change the verdict in remaining 73% of scan
+
+### Zack's reaction — the McKinsey-killer recognition
+
+> "This entire write-up - we can do this in the market research report, correct? This is McKinsey-style insights or better!"
+
+This recognition crystallized something important: **the synthesis prose Claude was producing in conversation was the product.** Not commentary alongside the data — the actual deliverable. McKinsey delivers ~60-slide decks after weeks of consultant hours. Sunstone produces denser, more rigorous, faster, defensible analysis grounded in specific data. Reproducible. Auditable. 
+
+The synthesis pattern captures during analysis (while context is fresh) and weaves into final deliverable. Built on real data with audit trail to source records.
+
+### The architectural shift — synthesis artifacts as first-class
+
+Claude immediately captured the in-progress synthesis as the first formal **synthesis artifact** at `/syntheses/manifold/2026-04-25_tier_2_in_progress.md`. Then updated PLAYBOOK to v1.2:
+
+- "Strategic Narrative" elevated to primary deliverable
+- "Methodology Report" demoted to audit trail backing the narrative
+- "Synthesis Artifacts" formalized as building blocks captured at each milestone
+- Directory structure: `/syntheses/<tenant>/YYYY-MM-DD_<milestone>.md`
+
+### Then Zack's second insight — three audiences
+
+Mid-session Zack said:
+
+> "I want the CEO Report. I want the Procurement BD Report. I want the Geek/Engineer Report. Understand? Different frames for different audiences."
+
+This is the next architectural shift. McKinsey delivers ONE document to ONE audience. Sunstone delivers THREE audience-tuned reports from the same source data. CEO doesn't read a procurement spec. Engineer doesn't read a strategic narrative. BD operator doesn't read either — they want a working playbook.
+
+Claude proposed multiple naming frames:
+- "The Verdict / The War Room / The Nerd Out" (Claude's recommendation)
+- "The Bossman Brief / The Gov Hand Playbook / The Nerd Out"
+- "Run It / Work It / Crack It Open"
+- "30,000 Feet / Boots on Ground / Under the Hood"
+
+Zack's response, decisive:
+
+> "The CEO Report. The Federal BD Report. The Engineering Report. Simple. Not cute. Descriptive. Decisive."
+
+Claude's response: "You're right. The cute names were me being precious. These descriptive titles are better because: a client opening the deliverable knows exactly what each is for in 0.5 seconds. They route correctly inside the org. They age well — 'The Verdict' sounds dated in 5 years; 'The CEO Report' doesn't. They signal seriousness, which matches what Sunstone is actually selling."
+
+Pattern observed: Zack's instinct on brand voice is calibrated to the audience Sunstone actually serves (federal contracting professionals, not consumer SaaS). Cute branding is for software. Operational branding is for tools that get USED.
+
+### The view-generator architecture
+
+Architectural decision: **one source-of-truth synthesis + three view generators**, not three separate documents per milestone.
+
+```
+syntheses/manifold/2026-04-25_tier_2_findings.md       (source-of-truth)
+       │
+       ├─→ composeCEOReport() ─────→ CEO_Report.pdf
+       ├─→ composeFederalBDReport() → BD_Report.pdf  
+       └─→ composeEngineeringReport() → Engineering_Report.pdf
+```
+
+Why: regeneration is cheap. Client returns 3 months later asking for an updated CEO Report? Re-run the generator. Costs $0.10. Takes 30 seconds. New audience needed in the future (Steptoe Brief, Investor Update)? Add a new generator. The architecture scales.
+
+### What shipped
+
+- **PLAYBOOK v1.3** with three-audience report architecture replacing single Strategic Narrative
+- **SESSION_JOURNAL v1.1** with this session entry
+- Synthesis artifact captured: Manifold Tier 2 in-progress findings
+- **Manifold Tier 2 scan continues running** in background (45%+ complete at end of session)
+
+### Pending for next session
+
+- Tier 2 scan completes → generate FINAL synthesis artifact at `/syntheses/manifold/2026-04-25_tier_2_final.md`
+- Build `composeCEOReport.ts`, `composeFederalBDReport.ts`, `composeEngineeringReport.ts` view generators (estimated 2-3 sessions for V1)
+- Tier 3 deep analysis on capability ≥ 5 survivors (likely few based on current distribution)
+- Tier 4 federal history reverse-lookup via USASpending API
+- Final HIDDEN vs. PRE-COMMERCIAL verdict synthesis
+
+### Patterns reinforced
+
+- **Pattern 4 (Claude builds, Zack reframes):** Reinforced. Claude proposed cute names. Zack said no — descriptive, decisive. Better.
+- **Pattern 6 (Integrity over efficiency):** Reinforced. Three-audience architecture is more work than one report, but produces dramatically more value per engagement.
+- **NEW — Pattern 8: Brand voice instinct.** Zack consistently calibrates Sunstone's voice to the audience that uses it (federal contracting professionals), not to consumer-software conventions. "Operational, not cute."
+
+---
+
+*End of Session Journal v1.1*

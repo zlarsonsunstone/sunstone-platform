@@ -690,53 +690,97 @@ Mixed or ambiguous signals: Default to continuing but adding investigative depth
 
 ### Client Report Structure Template
 
-Every engagement deliverable set follows this structure:
+Every engagement produces **three audience-tuned reports from the same source data**:
 
-**Executive Summary (2 pages max)**
-- What we found
-- What it means for the client
-- Top 3 recommended actions
+- **The CEO Report** — strategic narrative for executive decision-makers (4-8 pages)
+- **The Federal BD Report** — operational playbook for capture/BD operators (15-25 pages)
+- **The Engineering Report** — technical deep-dive with full data and methodology (20-40 pages with appendices)
 
-**The Strategic Narrative (15-30 pages)** — the McKinsey-grade synthesis that justifies the engagement price
-- Composed from synthesis artifacts written at each milestone (see below)
-- Walks the reader through what we found AT EACH STAGE, what hypotheses we were testing, how the data confirmed/disconfirmed them, what new questions emerged, and what we did about it
-- This is the core deliverable. Backed at every claim by data and audit trail.
+Each is a complete deliverable suited to its audience. The CEO doesn't read the Engineering Report. The engineer doesn't read the CEO Report. The BD operator doesn't read either — they want a working playbook with target lists, agency-specific intelligence, and 30/60/90 day actions.
 
-**Synthesis Artifacts (the building blocks of the Strategic Narrative)**
+The same source synthesis artifacts feed all three. View generators produce each audience-specific output from the shared source. Update findings once, regenerate all three. New audience needed in the future (Steptoe Brief, Investor Update)? Add a new generator. The architecture scales.
 
-Every major analytical milestone produces a written synthesis artifact at the time the analysis happens. These are not afterthoughts — they're captured while context is fresh, then woven into the final report. Examples per engagement:
+### The Source-of-Truth Layer: Synthesis Artifacts
 
-- *synthesis_round_1_diagnosis.md* — what Round 1 NAICS Path produced and what it told us
-- *synthesis_tier_2_findings.md* — what the Vendor Path Tier 2 scan produced (e.g., the Manifold "Pre-Commercial Market signal" synthesis)
+Every major analytical milestone produces a written synthesis artifact at the time the analysis happens. These are the raw source-of-truth documents — captured while context is fresh, before they get lost in chat history. The audience reports are composed from these.
+
+Examples per engagement:
+
+- *synthesis_round_1_diagnosis.md* — Round 1 NAICS Path findings (e.g., wrong-room diagnosis)
+- *synthesis_tier_2_findings.md* — Vendor Path Tier 2 scan results (e.g., the Manifold "Pre-Commercial Market signal")
 - *synthesis_tier_4_market_verdict.md* — Hidden vs. Pre-Commercial verdict from Tier 4 federal history reverse-lookup
 - *synthesis_round_2_targeted.md* — agency-specific deep findings
 - *synthesis_round_3_intelligence.md* — converged intelligence package
 - *synthesis_gate_3_lobbying_strategy.md* — Steptoe war-room targeting
 
-Each synthesis is 5-15 pages of substantive analytical prose. Each cites its source data (vendor counts, PIID identifiers, score distributions, etc.). The Methodology Report generator weaves them into the final document.
+Each synthesis is 5-15 pages of substantive analytical prose. Each cites its source data (vendor counts, PIID identifiers, score distributions, etc.). Stored at `/syntheses/<tenant>/YYYY-MM-DD_<milestone>.md`.
 
-**The Methodology Report (5-10 pages)** — the audit trail backing the narrative
-- How we did what we did (mechanically — pipelines, prompts, data sources)
-- Every major decision with its rationale (drawn from methodology log)
-- Data sources and their reliability ratings
-- Analytical techniques applied (plain-English explanation)
-- Acknowledgments of limitations and uncertainties
+### The CEO Report (4-8 pages)
 
-**The Intelligence Package (variable length)**
-- Federal market landscape for this client
-- NAICS/PSC tribal dictionary (when applicable to engagement)
-- Prime targets (ranked)
-- Teaming candidates (ranked)
-- Direct federal client recommendations (top 2-5)
-- Top-down POC map with relationship paths
-- SAM engagement method recommendations
+For: founders, CEOs, board members, investors. Decision-makers at the engagement budget level.
 
-**The Gate Activation Plan**
-- Gate 1: opportunity pipeline, pursuit priorities, go/no-go criteria
-- Gate 2: teaming target list, engagement cadence, value proposition per partner
-- Gate 3: primary/secondary/tertiary influence targets, activation plan, expected milestones
+Structure:
 
-**The Deliverable Suite**
+1. **One-page BLUF** — single paragraph + 3 bullet decisions
+2. **The Strategic Story** — 3-4 pages narrative of what we found and what it means
+3. **Capital Allocation Implications** — where to spend, where to cut, where to grow
+4. **The Asks** — specific commitments needed from leadership (budget, hires, board sign-off, advisor activation)
+5. **Risk and Confidence** — what could be wrong, how confident we are, what would change the verdict
+
+Tone: confident, narrative, decisive. Big claims backed by single-line proofs. Reads on a flight. Fits in a board packet.
+
+### The Federal BD Report (15-25 pages)
+
+For: VP BD, Federal Sales Lead, Capture Manager. Operators who run pursuit. Often former government employees. Read SAM.gov daily. Have won federal contracts.
+
+Structure:
+
+1. **The Pursuit Pipeline** — specific opportunities, ranked, with go/no-go signals
+2. **The Target Map** — agencies/offices/programs/COs with relationship paths
+3. **The Teaming Playbook** — specific primes, sub-letter templates, value-prop one-pagers
+4. **The Influence Plan** — Gate 3 targets for Steptoe with primary/secondary/tertiary tiers
+5. **The 30/60/90 Day Action Plan** — what to do this month, next month, next quarter
+6. **The Tribal Dictionary** — agency-specific language, code conventions, buying preferences
+7. **The Substitution Map** — which vendors currently get the work, how to displace or sub-to
+
+Tone: operational, specific, tactical. Tables of agencies/PIIDs/dollar volumes/expiring dates. Named contracting officers. Pre-drafted teaming letters and intro requests. A working document that gets marked up during pursuit reviews.
+
+### The Engineering Report (20-40 pages with appendices)
+
+For: CTO, Chief Architect, Lead Engineer, Technical Co-Founder. Built the actual product. Skeptical of marketing claims. Wants raw data and reasoning.
+
+Structure:
+
+1. **The Technical Landscape Map** — what competitors actually do, architectures, tech stacks, deltas
+2. **The Methodology Mechanics** — every analytical pipeline, every prompt, every data source
+3. **The Raw Findings Tables** — top-N rankings with full Haiku rationales, score distributions, fetch error rates, confidence calibrations
+4. **The Capability Mapping** — technical features → federal needs → existing solutions → client differentiation
+5. **The Federal Tribal Translation** — technical terms ↔ SOW language ↔ NAICS codes
+6. **Limitations and Honest Disclosures** — what the analysis can't tell us, where we're guessing, where confidence is high vs. low
+7. **Appendices** — full vendor tables, prompt texts, data source descriptions, schema documentation, audit log excerpts
+
+Tone: forensic, technical, transparent. Includes raw rationales. Shows the analytical pipeline. Discusses limitations honestly. Reference document, not bedtime reading.
+
+### View Generator Architecture
+
+Each milestone produces ONE source synthesis artifact. Each audience report is composed by a view generator that reads the source(s):
+
+```
+syntheses/manifold/2026-04-25_tier_2_findings.md       (source-of-truth)
+       │
+       ├─→ composeCEOReport(syntheses) ─────→ CEO_Report.pdf
+       ├─→ composeFederalBDReport(syntheses) → BD_Report.pdf  
+       └─→ composeEngineeringReport(syntheses) → Engineering_Report.pdf
+```
+
+Code lives at `src/lib/composeReport.ts` with audience as a parameter, or three separate files (`composeCEO.ts`, `composeBD.ts`, `composeEng.ts`) for clarity. Each takes the synthesis artifacts plus engagement metadata and produces the audience-specific deliverable.
+
+Regeneration is cheap. Client returns 3 months later asking for an updated CEO Report? Re-run the generator on existing synthesis artifacts. New synthesis from a Tier 4 follow-up? Generators consume the new artifact alongside existing ones and re-output all three reports.
+
+### The Deliverable Suite (separate from the three reports)
+
+In addition to the three reports, every engagement produces:
+
 - Capabilities statement (trifold + long-form)
 - SBA SBS Capabilities Narrative
 - Pitch deck
@@ -888,6 +932,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.0 — April 2026.** Initial authoring. Captures all platform thinking developed through the Manifold Labs engagement: dual-path architecture, PROACTIVE flag, trap phrase pattern, wrong-room diagnosis, capability × evidence matrix, full customer journey across five stages with three gates. Author: Claude, in session with Zack.
 - **v1.1 — April 2026.** Added Section 8 (Solicitation-Side Intelligence Roadmap) capturing the three-analysis vision: posting venue intelligence, SOW extraction and enrichment, predictive solicitation modeling. Commercial implications for subscription pricing and long-term revenue model included. Author: Claude, in session with Zack, following Zack's articulation of the three-analysis insight.
 - **v1.2 — April 2026.** Restructured Section 7 client report template to elevate "Strategic Narrative" as the core deliverable, supported by per-milestone "Synthesis Artifacts" written at the time of analysis. Methodology Report becomes the audit trail backing the narrative rather than the primary deliverable. This is the McKinsey-grade synthesis pattern — the analytical narrative IS the product, the methodology IS its backing. Triggered by Zack's recognition during Manifold Tier 2 scan: "This entire write-up - we can do this in the market research report, correct? This is McKinsey-style insights or better!" First synthesis artifact captured: syntheses/manifold/2026-04-25_tier_2_in_progress.md.
+- **v1.3 — April 2026.** Replaced single "Strategic Narrative" deliverable with three audience-tuned reports composed from the same source synthesis artifacts: The CEO Report (4-8 pages, strategic), The Federal BD Report (15-25 pages, operational), The Engineering Report (20-40 pages, technical with appendices). Each is a complete deliverable for its audience. View generator architecture: synthesis artifacts as source-of-truth, three composers produce the three reports, regeneration is cheap, new audiences (Steptoe Brief, Investor Update) plug in as new generators. Triggered by Zack's product instinct: "I want the CEO Report. I want the Procurement BD Report. I want the Geek/Engineer Report. Different frames for different audiences." Names finalized as descriptive rather than cute: "The CEO Report. The Federal BD Report. The Engineering Report. Simple. Not cute. Descriptive. Decisive."
 
 ---
 
