@@ -593,7 +593,101 @@ This document is the failsafe. As long as it stays updated, the platform can be 
 - **v1.0 — April 24 2026.** Initial authoring with retroactive reconstruction of 7 sessions.
 - **v1.1 — April 25 2026.** Added Session 8 (Tier 2 scan + McKinsey-killer recognition + three-audience architecture).
 - **v1.2 — April 25 2026.** Added Session 9 (visual identity, REALLY coming together moment, survival architecture). SURVIVAL_GUIDE.md created as separate failsafe document.
+- **v1.3 — April 25 2026.** Added Session 10 (solicitation-side analysis insight, Air Force CHIPS Act Secure Enclave RFI discovered, validation of award/solicitation vocabulary gap hypothesis).
 
 ---
 
-*End of Session Journal v1.2*
+## Session 10 — The Solicitation-Side Insight (April 25 2026, continuation)
+
+**Participants:** Zack, Claude
+
+### Zack's hypothesis
+
+Mid-session, while Tier 2 scan was running, Zack proposed a methodologically important question:
+
+> "Let's look back (same timeframe - beginning of 2025) and see if there were SOLICITATIONS with some of the key language. Just because the award descriptions don't say it doesn't mean it wasn't described correctly in the solicitations themselves, right?"
+
+### Why this was profound
+
+Round 1 Turn 1 NAICS Path analysis pulled **awards** data from USASpending. Award descriptions are 200-character agency shorthand summaries written AFTER the contract was awarded. They reflect what the agency CLASSIFIED the work as — often a generic code/category.
+
+But the **solicitation** that produced that award was written BEFORE. It contained the full SOW with the technical requirements in agency-authored language describing the actual problem.
+
+If a solicitation said "we need confidential computing for sensitive workloads" but the award description got coded as "541511 Custom Computer Programming Services," our award-side analysis would have **missed the real signal entirely.**
+
+This is a structural insight: **the platform's Round 1 award-side analysis is systematically incomplete** without solicitation-side analysis. Award descriptions launder the original demand language.
+
+### Zack's pragmatic approach
+
+> "I have HigherGov - just give me the boolean keyword search groups, one at a time."
+
+Rather than build solicitation-side analysis as a platform feature first, Zack pivoted to use the tool he already has access to. HigherGov has SAM solicitation history indexed and searchable. Walk through boolean searches manually, see what comes back, validate the hypothesis empirically before committing build resources.
+
+### Group 1 — High-specificity Manifold core
+
+```
+("decentralized GPU compute" OR "decentralized compute" OR "GPU marketplace" OR
+ "compute marketplace" OR "operator-supplied GPU")
+```
+
+**Result: 3 hits, all old, all false positives** (academic phrases, processor marketplace context, unrelated 2015 GSA work).
+
+Confirmed: nobody in federal procurement has asked for "Manifold's exact thing" in those words.
+
+### Group 2 — Confidential computing concepts
+
+```
+("confidential computing" OR "trusted execution environment" OR "secure enclave" OR
+ "confidential GPU" OR "trusted execution environments" OR "hardware-based isolation")
+```
+
+Initial attempt included bare "TEE" — got 585 hits, dominated by pipe fittings, golf tees, drug treatment programs. Tokenization disaster. Dropped bare TEE, expanded multi-word concepts.
+
+**Result: Multiple meaningful hits validating the hypothesis.**
+
+Strongest signals identified:
+
+1. **Air Force SAF/AQ Secure Enclave RFI (May 2025)** — strategic initiative funded through CHIPS and Science Act. "Secure Enclave creates a protected overlay in a commercial environment for manufacturing of state-of-the-art (SOTA) microelectronics chips." Mental model conceptually identical to Manifold's confidential compute layer, applied to different domain. Recent, active program. Industry RFI = engagement opportunity.
+
+2. **USDA-NASS Secure Enclave Services cluster (Oct 2023)** — four solicitations same week across MAS, 8(a) STARS, VETS 2 vehicles. "USDA is seeking to procure data enclave services to serve as a secure computing and collaboration workspace for its statistical agencies." Open federal demand for "secure computing services" as a category. Question worth answering: who won? If non-doppelgangers won, it's the laundering pattern.
+
+3. **NAVFAC B1319 Secure Enclave (2021)**, **CDC Secure Enclave (2010)**, **DARPA ACCORD VSE (2014)**, **MSC Intrusion Detection for Secure Enclave (2021)** — multi-decade pattern of federal "secure enclave" procurement under stable established vocabulary.
+
+### What this confirms
+
+**The hypothesis was correct.** The federal procurement system has been asking for "secure enclave / confidential computing" capability for years. The solicitation language is rich and explicit. But award descriptions launder it into generic codes, which is why the Round 1 award-side analysis missed it.
+
+This means:
+
+1. **The Round 1 PRE-COMMERCIAL verdict was incomplete.** Manifold's federal market may not be pre-commercial. It may be MISLABELED at the award classification stage.
+
+2. **Vendor Path Tier 2 results need re-interpretation.** Zero strong commercial doppelgangers might still be true. But adjacent vendors (Cirrascale, Oxide, Supermicro) may be winning "secure enclave" work that should architecturally suit Manifold better.
+
+3. **The Air Force CHIPS Act SE RFI is a Gate 3 entry point.** Steptoe-led engagement on a strategic initiative looking for industry input. This is the kind of thing the platform is built to find.
+
+### Architectural implication
+
+**This validates Section 8.B of the playbook (SOW Extraction) as urgent.** Section 8 was scoped as future roadmap. Zack's insight reveals it's not future — it's necessary for current engagement completeness.
+
+The platform's Round 1 NAICS Path needs solicitation-side companion analysis as a first-class capability, not a Phase 2 add-on. Until that's built, every Round 1 wrong-room diagnosis carries a confidence asterisk: "wrong room as far as awards say, but solicitations may say otherwise."
+
+### What ships next
+
+- Continue Group 3 search (AI/GPU compute infrastructure language)
+- Synthesize all three groups into supplementary finding for Manifold synthesis artifact
+- Update PLAYBOOK with the solicitation-side analysis insight
+- Reprioritize Section 8.B (SOW Extraction) — moving from roadmap to near-term build queue
+
+### Pattern reinforced
+
+**Pattern 3 (Zack's questions become architecture):** Reinforced powerfully. "Just because the award descriptions don't say it doesn't mean it wasn't described correctly in the solicitations themselves, right?" — that single question reframes a fundamental assumption about how the platform analyzes federal markets.
+
+**NEW Pattern 9 (verified, from Session 9): Anxiety-triggered hardening.** And now: Pattern 3 produces structural insights. Confirmed again.
+
+### Patterns observed but not yet codified
+
+**Possible Pattern 10 — Pragmatic tool-use over feature-build.** When Zack has access to a working tool that solves the immediate problem (HigherGov for solicitation search), he uses it instead of demanding the platform replicate it. This keeps engagement velocity high and reveals what features are actually needed before committing build resources.
+
+---
+
+*End of Session Journal v1.3*
