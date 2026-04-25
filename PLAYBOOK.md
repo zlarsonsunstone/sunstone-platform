@@ -715,6 +715,18 @@ Examples per engagement:
 
 Each synthesis is 5-15 pages of substantive analytical prose. Each cites its source data (vendor counts, PIID identifiers, score distributions, etc.). Stored at `/syntheses/<tenant>/YYYY-MM-DD_<milestone>.md`.
 
+### Visual Identity for the Three Reports
+
+Each report has a persona icon used on covers, page headers, in-platform deliverable cards, and the future Methodology tab. The three icons share a visual grammar — same gray silhouette base, same Sunstone-orange accent, same head-and-shoulders crop — so they read as a coherent set. The accent color matches `var(--color-accent)` in the platform UI, so icons feel native.
+
+Icons live at `/public/report-icons/`:
+- `ceo-icon.png` — suit and tie silhouette (executive/decision-maker)
+- `federal-bd-icon.png` — blazer with subtle insignia (procurement/government professional)
+- `engineering-icon.png` — glasses and gear-pin silhouette (technical lead)
+- `three-audiences-source.png` — original source image, all three together (used for marketing collateral, deliverable suite covers)
+
+Future enhancements: SVG vector versions for crisp PDF embedding at any size; size variants (icon-sm, icon-md, icon-lg) for different surfaces.
+
 ### The CEO Report (4-8 pages)
 
 For: founders, CEOs, board members, investors. Decision-makers at the engagement budget level.
@@ -933,6 +945,7 @@ This playbook is currently a markdown document in the repo root. Future state: t
 - **v1.1 — April 2026.** Added Section 8 (Solicitation-Side Intelligence Roadmap) capturing the three-analysis vision: posting venue intelligence, SOW extraction and enrichment, predictive solicitation modeling. Commercial implications for subscription pricing and long-term revenue model included. Author: Claude, in session with Zack, following Zack's articulation of the three-analysis insight.
 - **v1.2 — April 2026.** Restructured Section 7 client report template to elevate "Strategic Narrative" as the core deliverable, supported by per-milestone "Synthesis Artifacts" written at the time of analysis. Methodology Report becomes the audit trail backing the narrative rather than the primary deliverable. This is the McKinsey-grade synthesis pattern — the analytical narrative IS the product, the methodology IS its backing. Triggered by Zack's recognition during Manifold Tier 2 scan: "This entire write-up - we can do this in the market research report, correct? This is McKinsey-style insights or better!" First synthesis artifact captured: syntheses/manifold/2026-04-25_tier_2_in_progress.md.
 - **v1.3 — April 2026.** Replaced single "Strategic Narrative" deliverable with three audience-tuned reports composed from the same source synthesis artifacts: The CEO Report (4-8 pages, strategic), The Federal BD Report (15-25 pages, operational), The Engineering Report (20-40 pages, technical with appendices). Each is a complete deliverable for its audience. View generator architecture: synthesis artifacts as source-of-truth, three composers produce the three reports, regeneration is cheap, new audiences (Steptoe Brief, Investor Update) plug in as new generators. Triggered by Zack's product instinct: "I want the CEO Report. I want the Procurement BD Report. I want the Geek/Engineer Report. Different frames for different audiences." Names finalized as descriptive rather than cute: "The CEO Report. The Federal BD Report. The Engineering Report. Simple. Not cute. Descriptive. Decisive."
+- **v1.4 — April 2026.** Established visual identity for the three audience reports. Three persona icons (suit/tie executive, blazer-with-insignia BD professional, glasses-with-gear engineer) sharing visual grammar — same gray silhouette base, same Sunstone-orange accent matching `var(--color-accent)`, same head-and-shoulders crop. Used on report covers, page headers, in-platform deliverable cards, and the future Methodology tab. Icons stored at `/public/report-icons/`. Source image plus three split icon files committed. Triggered by Zack uploading the source image mid-session: "Check THIS shit out for the report icons!!!"
 
 ---
 
