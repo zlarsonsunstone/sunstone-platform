@@ -21,6 +21,9 @@ import type {
 import { AddSourceModal } from '@/components/onboard/AddSourceModal'
 import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEditor'
 import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
+import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
+import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
+import { loadReadiness, ReadinessState } from '@/lib/recon'
 
 export function OnboardTab() {
   const activeTenant = useStore((s) => s.activeTenant)
@@ -41,6 +44,9 @@ export function OnboardTab() {
     { mode: 'new' | 'edit'; profile?: StrategicProfile } | null
   >(null)
   const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
+  const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
+  const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
+  const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
   const [viewingProfile, setViewingProfile] = useState<{
     title: string
     text: string
@@ -53,6 +59,50 @@ export function OnboardTab() {
     if (!activeTenant) return
     loadSources()
   }, [activeTenant?.id])
+
+  // Load readiness state for every strategic profile.
+  // Refreshed when profiles change, when CBP completeness changes, and on demand
+  // (e.g., after a Frame is completed or a corpus entry is added).
+  useEffect(() => {
+    if (!activeTenant || strategicProfiles.length === 0) {
+      setReadinessMap({})
+      return
+    }
+    const cbpReady = !!(
+      commercialProfile?.synthesized_text &&
+      federalProfile?.synthesized_text
+    )
+    let cancelled = false
+    ;(async () => {
+      const entries = await Promise.all(
+        strategicProfiles.map(async (sp) => {
+          const r = await loadReadiness(sp.id, cbpReady)
+          return [sp.id, r] as const
+        }),
+      )
+      if (!cancelled) {
+        setReadinessMap(Object.fromEntries(entries))
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [
+    activeTenant?.id,
+    strategicProfiles.length,
+    strategicProfiles.map((sp) => sp.id).join('|'),
+    !!commercialProfile?.synthesized_text,
+    !!federalProfile?.synthesized_text,
+  ])
+
+  async function refreshReadinessFor(profileId: string) {
+    const cbpReady = !!(
+      commercialProfile?.synthesized_text &&
+      federalProfile?.synthesized_text
+    )
+    const r = await loadReadiness(profileId, cbpReady)
+    setReadinessMap((prev) => ({ ...prev, [profileId]: r }))
+  }
 
   async function loadSources() {
     if (!activeTenant) return
@@ -1073,8 +1123,11 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
               <StrategicProfileCard
                 key={sp.id}
                 profile={sp}
+                readiness={readinessMap[sp.id]}
                 onEdit={() => setStratEditor({ mode: 'edit', profile: sp })}
                 onDelete={() => deleteStrategicProfile(sp.id)}
+                onConfigureFrame={() => setFrameProfile(sp)}
+                onOpenResearch={() => setResearchProfile(sp)}
                 onConfigureStones={() => setStonesEditorProfile(sp)}
               />
             ))}
@@ -1119,9 +1172,40 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
             strategicProfileId={stonesEditorProfile.id}
             tenantId={activeTenant.id}
             profileName={stonesEditorProfile.name}
-            onClose={() => setStonesEditorProfile(null)}
+            onClose={() => {
+              const id = stonesEditorProfile.id
+              setStonesEditorProfile(null)
+              refreshReadinessFor(id)
+            }}
           />
         </Modal>
+      )}
+
+      {frameProfile && (
+        <FramingTheFrame
+          strategicProfileId={frameProfile.id}
+          tenantId={activeTenant.id}
+          profileName={frameProfile.name}
+          onClose={() => {
+            const id = frameProfile.id
+            setFrameProfile(null)
+            refreshReadinessFor(id)
+          }}
+          onCompleted={() => refreshReadinessFor(frameProfile.id)}
+        />
+      )}
+
+      {researchProfile && (
+        <SurfaceResearch
+          strategicProfileId={researchProfile.id}
+          tenantId={activeTenant.id}
+          profileName={researchProfile.name}
+          onClose={() => {
+            const id = researchProfile.id
+            setResearchProfile(null)
+            refreshReadinessFor(id)
+          }}
+        />
       )}
 
       {viewingProfile && (
@@ -2106,15 +2190,29 @@ function Section({
 
 function StrategicProfileCard({
   profile,
+  readiness,
   onEdit,
   onDelete,
+  onConfigureFrame,
+  onOpenResearch,
   onConfigureStones,
 }: {
   profile: StrategicProfile
+  readiness?: ReadinessState
   onEdit: () => void
   onDelete: () => void
+  onConfigureFrame: () => void
+  onOpenResearch: () => void
   onConfigureStones: () => void
 }) {
+  const r = readiness || {
+    cbp_ready: false,
+    frame_ready: false,
+    research_ready: false,
+    stones_ready: false,
+    generate_ready: false,
+  }
+
   return (
     <Card padding="standard">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
@@ -2158,39 +2256,208 @@ function StrategicProfileCard({
           <Badge key={n}>NAICS {n}</Badge>
         ))}
       </div>
-      <button
-        onClick={onConfigureStones}
+
+      {/* Recon Engine workflow */}
+      <div
         style={{
           marginTop: '14px',
-          width: '100%',
-          padding: '10px 14px',
-          background: 'transparent',
-          color: 'var(--color-accent)',
-          border: '1px solid var(--color-hairline)',
-          borderRadius: 'var(--radius-input)',
-          fontSize: '13px',
-          fontWeight: 500,
-          fontFamily: 'inherit',
-          cursor: 'pointer',
-          letterSpacing: '-0.003em',
-          transition: 'var(--transition-default)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          gap: '6px',
-        }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(240,167,66,0.06)'
-          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-accent)'
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
-          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-hairline)'
+          paddingTop: '14px',
+          borderTop: '1px solid var(--color-hairline)',
         }}
       >
-        ⊕ Configure Stones &amp; Generate Brief
-      </button>
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '8px',
+          }}
+        >
+          <div
+            style={{
+              fontSize: '10px',
+              fontWeight: 700,
+              letterSpacing: '0.14em',
+              color: 'var(--color-text-tertiary)',
+              textTransform: 'uppercase',
+            }}
+          >
+            Recon Engine
+          </div>
+          <ReadinessChips r={r} />
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <WorkflowButton
+            ready={r.frame_ready}
+            label="Framing the Frame"
+            onClick={onConfigureFrame}
+            number="01"
+          />
+          <WorkflowButton
+            ready={r.research_ready}
+            label="Surface Research"
+            onClick={onOpenResearch}
+            number="02"
+          />
+          <WorkflowButton
+            ready={r.stones_ready}
+            label="Configure Stones"
+            onClick={onConfigureStones}
+            number="03"
+          />
+          <GenerateBriefButton readiness={r} />
+        </div>
+      </div>
     </Card>
+  )
+}
+
+function ReadinessChips({ r }: { r: ReadinessState }) {
+  const dots = [
+    { ready: r.cbp_ready, label: 'CBP' },
+    { ready: r.frame_ready, label: 'Frame' },
+    { ready: r.research_ready, label: 'Research' },
+    { ready: r.stones_ready, label: 'Stones' },
+  ]
+  return (
+    <div style={{ display: 'flex', gap: '4px' }}>
+      {dots.map((d) => (
+        <span
+          key={d.label}
+          title={`${d.label}: ${d.ready ? 'ready' : 'incomplete'}`}
+          style={{
+            width: '8px',
+            height: '8px',
+            borderRadius: '50%',
+            background: d.ready ? '#2E6B3E' : 'var(--color-hairline)',
+          }}
+        />
+      ))}
+    </div>
+  )
+}
+
+function WorkflowButton({
+  ready, label, onClick, number,
+}: {
+  ready: boolean
+  label: string
+  onClick: () => void
+  number: string
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '10px',
+        width: '100%',
+        padding: '8px 12px',
+        background: ready ? 'rgba(46,107,62,0.05)' : 'transparent',
+        color: 'var(--color-text-primary)',
+        border: ready ? '1px solid rgba(46,107,62,0.30)' : '1px solid var(--color-hairline)',
+        borderRadius: 'var(--radius-input)',
+        fontSize: '12px',
+        fontWeight: 500,
+        fontFamily: 'inherit',
+        cursor: 'pointer',
+        textAlign: 'left',
+        transition: 'var(--transition-default)',
+      }}
+      onMouseEnter={(e) => {
+        if (!ready) {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-text-tertiary)'
+        }
+      }}
+      onMouseLeave={(e) => {
+        if (!ready) {
+          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-hairline)'
+        }
+      }}
+    >
+      <span
+        style={{
+          fontSize: '9px',
+          fontWeight: 700,
+          color: ready ? '#2E6B3E' : 'var(--color-text-tertiary)',
+          background: ready ? 'rgba(46,107,62,0.10)' : 'var(--color-bg-subtle)',
+          padding: '2px 5px',
+          borderRadius: '3px',
+          letterSpacing: '0.06em',
+        }}
+      >
+        {number}
+      </span>
+      <span style={{ flex: 1 }}>{label}</span>
+      <span
+        style={{
+          fontSize: '10px',
+          color: ready ? '#2E6B3E' : 'var(--color-text-tertiary)',
+          fontWeight: 600,
+        }}
+      >
+        {ready ? '✓ Ready' : 'Open'}
+      </span>
+    </button>
+  )
+}
+
+function GenerateBriefButton({ readiness }: { readiness: ReadinessState }) {
+  let label = 'Generate Recon Brief'
+  let disabled = false
+
+  if (!readiness.cbp_ready) {
+    label = 'Build CBP first'
+    disabled = true
+  } else if (!readiness.frame_ready) {
+    label = 'Frame the brief first'
+    disabled = true
+  } else if (!readiness.research_ready) {
+    label = 'Build Surface Research first'
+    disabled = true
+  } else if (!readiness.stones_ready) {
+    label = 'Configure Stones first'
+    disabled = true
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => {
+        // Brief generator wires up in gate 4b. For now, this button is a
+        // visual gate that becomes clickable when all four prerequisites
+        // are ready. Clicking it before gate 4b ships shows a placeholder.
+        if (!disabled) {
+          window.alert(
+            'Brief generation arrives in gate 4b. All four prerequisites are ready — the generator function will produce the paired Recon Brief + Options deck once shipped.',
+          )
+        }
+      }}
+      style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: '8px',
+        width: '100%',
+        padding: '10px 14px',
+        marginTop: '4px',
+        background: disabled ? 'var(--color-bg-subtle)' : '#F0A742',
+        color: disabled ? 'var(--color-text-tertiary)' : '#fff',
+        border: 'none',
+        borderRadius: 'var(--radius-input)',
+        fontSize: '13px',
+        fontWeight: 600,
+        fontFamily: 'inherit',
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        letterSpacing: '-0.003em',
+      }}
+    >
+      ⊕ {label}
+    </button>
   )
 }
 
