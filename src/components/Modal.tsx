@@ -1,12 +1,13 @@
 import { ReactNode, useEffect } from 'react'
 
-type Size = 'sm' | 'md' | 'lg' | 'xl'
+type Size = 'sm' | 'md' | 'lg' | 'xl' | 'full'
 
 const sizes: Record<Size, string> = {
   sm: '440px',
   md: '640px',
   lg: '840px',
   xl: '1040px',
+  full: '1400px',
 }
 
 export function Modal({
@@ -35,6 +36,8 @@ export function Modal({
 
   if (!open) return null
 
+  const isFull = size === 'full'
+
   return (
     <div
       role="dialog"
@@ -50,7 +53,7 @@ export function Modal({
         alignItems: 'flex-start',
         justifyContent: 'center',
         zIndex: 400,
-        padding: '48px 24px',
+        padding: isFull ? '16px' : '48px 24px',
         overflow: 'auto',
       }}
     >
@@ -64,7 +67,7 @@ export function Modal({
           maxWidth: sizes[size],
           display: 'flex',
           flexDirection: 'column',
-          maxHeight: 'calc(100vh - 96px)',
+          maxHeight: isFull ? 'calc(100vh - 32px)' : 'calc(100vh - 96px)',
         }}
       >
         <div
@@ -106,7 +109,7 @@ export function Modal({
         </div>
         <div
           style={{
-            padding: '24px 28px',
+            padding: isFull ? '0' : '24px 28px',
             flex: 1,
             overflowY: 'auto',
           }}
