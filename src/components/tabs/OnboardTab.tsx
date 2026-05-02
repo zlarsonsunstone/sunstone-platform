@@ -20,6 +20,7 @@ import type {
 } from '@/lib/types'
 import { AddSourceModal } from '@/components/onboard/AddSourceModal'
 import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEditor'
+import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
 
 export function OnboardTab() {
   const activeTenant = useStore((s) => s.activeTenant)
@@ -39,6 +40,7 @@ export function OnboardTab() {
   const [stratEditor, setStratEditor] = useState<
     { mode: 'new' | 'edit'; profile?: StrategicProfile } | null
   >(null)
+  const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
   const [viewingProfile, setViewingProfile] = useState<{
     title: string
     text: string
@@ -1073,6 +1075,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 profile={sp}
                 onEdit={() => setStratEditor({ mode: 'edit', profile: sp })}
                 onDelete={() => deleteStrategicProfile(sp.id)}
+                onConfigureStones={() => setStonesEditorProfile(sp)}
               />
             ))}
           </div>
@@ -1103,6 +1106,22 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
             if (activeTenant) loadProfileData(activeTenant.id)
           }}
         />
+      )}
+
+      {stonesEditorProfile && (
+        <Modal
+          open={true}
+          onClose={() => setStonesEditorProfile(null)}
+          title={`Configure Stones · ${stonesEditorProfile.name}`}
+          size="full"
+        >
+          <StonesMapEditor
+            strategicProfileId={stonesEditorProfile.id}
+            tenantId={activeTenant.id}
+            profileName={stonesEditorProfile.name}
+            onClose={() => setStonesEditorProfile(null)}
+          />
+        </Modal>
       )}
 
       {viewingProfile && (
@@ -2089,10 +2108,12 @@ function StrategicProfileCard({
   profile,
   onEdit,
   onDelete,
+  onConfigureStones,
 }: {
   profile: StrategicProfile
   onEdit: () => void
   onDelete: () => void
+  onConfigureStones: () => void
 }) {
   return (
     <Card padding="standard">
@@ -2137,6 +2158,38 @@ function StrategicProfileCard({
           <Badge key={n}>NAICS {n}</Badge>
         ))}
       </div>
+      <button
+        onClick={onConfigureStones}
+        style={{
+          marginTop: '14px',
+          width: '100%',
+          padding: '10px 14px',
+          background: 'transparent',
+          color: 'var(--color-accent)',
+          border: '1px solid var(--color-hairline)',
+          borderRadius: 'var(--radius-input)',
+          fontSize: '13px',
+          fontWeight: 500,
+          fontFamily: 'inherit',
+          cursor: 'pointer',
+          letterSpacing: '-0.003em',
+          transition: 'var(--transition-default)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '6px',
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'rgba(240,167,66,0.06)'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-accent)'
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLButtonElement).style.background = 'transparent'
+          ;(e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-hairline)'
+        }}
+      >
+        ⊕ Configure Stones &amp; Generate Brief
+      </button>
     </Card>
   )
 }
