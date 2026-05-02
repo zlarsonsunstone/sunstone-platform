@@ -1,3316 +1,907 @@
-import { useEffect, useState, CSSProperties } from 'react'
-import { useStore } from '@/store/useStore'
-import { supabase } from '@/lib/supabase'
-import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
-import { resetTenantDownstream } from '@/lib/tenantReset'
-import { logMethodology } from '@/lib/methodologyLog'
-import { fetchAllActivePscCodes, fetchAllNaicsCodes } from '@/lib/referenceData'
-import { TabPage } from '@/components/TabPage'
-import { Card } from '@/components/Card'
-import { Button } from '@/components/Button'
-import { Badge } from '@/components/Badge'
+/**
+ * Surface Research workspace — Recon Engine
+ *
+ * Iterative outcome-managed loop. Three things on the page:
+ *   1. CORPUS — running list of evidence entries the consultant adds
+ *   2. SCORE — live read of corpus against 6 sufficiency dimensions
+ *   3. GENERATE-BRIEF GATE — green when score crosses the bar; red otherwise
+ *
+ * The consultant adds entries freely (any kind, any order, any number) until
+ * the score reads "ready." No fixed sequence. No predefined sources.
+ *
+ * Gate 4a: heuristic scoring only. Manual paste-in / note / fact entry kinds.
+ * Gate 4b will add: HigherGov + USASpending API pulls, file uploads,
+ * LLM-judged commentary on what's thin and what would strengthen it.
+ */
+
+import { useEffect, useMemo, useState } from 'react'
 import { Modal } from '@/components/Modal'
-import type {
-  ProfileSource,
-  SourceType,
-  SourceBucket,
-  Reconciliation,
-  StrategicProfile,
-  SearchScope,
-} from '@/lib/types'
-import { AddSourceModal } from '@/components/onboard/AddSourceModal'
-import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEditor'
-import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
-import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
-import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
-import { loadReadiness, ReadinessState } from '@/lib/recon'
+import { Button } from '@/components/Button'
+import {
+  SurfaceEntry,
+  SurfaceEntryKind,
+  SignalDimension,
+  SufficiencyScore,
+  ReconFrame,
+  loadSurfaceEntries,
+  addSurfaceEntry,
+  deleteSurfaceEntry,
+  loadSufficiencyScore,
+  computeAndSaveSufficiency,
+  loadFrame,
+} from '@/lib/recon'
 
-export function OnboardTab() {
-  const activeTenant = useStore((s) => s.activeTenant)
-  const commercialProfile = useStore((s) => s.commercialProfile)
-  const federalProfile = useStore((s) => s.federalProfile)
-  const reconciliation = useStore((s) => s.reconciliation)
-  const strategicProfiles = useStore((s) => s.strategicProfiles)
-  const searchScopes = useStore((s) => s.searchScopes)
-  const loadProfileData = useStore((s) => s.loadProfileData)
+interface Props {
+  strategicProfileId: string
+  tenantId: string
+  profileName: string
+  onClose: () => void
+}
 
-  const [sources, setSources] = useState<ProfileSource[]>([])
-  const [addSourceOpen, setAddSourceOpen] = useState<{ bucket: SourceBucket } | null>(null)
-  const [building, setBuilding] = useState<'commercial' | 'federal' | 'reconcile' | null>(null)
-  const [digesting, setDigesting] = useState<'commercial' | 'federal' | null>(null)
-  const [buildError, setBuildError] = useState<string | null>(null)
-  const [buildProgress, setBuildProgress] = useState<string | null>(null)
-  const [stratEditor, setStratEditor] = useState<
-    { mode: 'new' | 'edit'; profile?: StrategicProfile } | null
-  >(null)
-  const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
-  const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
-  const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
-  const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
-  const [viewingProfile, setViewingProfile] = useState<{
-    title: string
-    text: string
-    structured: any
-    builtAt: string | null
-    sourceCount: number | null
-  } | null>(null)
+const DIMENSION_META: Record<SignalDimension, { label: string; hint: string }> = {
+  market_sizing:     { label: 'Market sizing',      hint: 'Total federal $ in the prospect\'s codes; addressable subset' },
+  peer_cohort:       { label: 'Peer cohort',        hint: 'Comparable firms (same NAICS, year, size); their outcomes' },
+  vehicle_landscape: { label: 'Vehicle landscape',  hint: 'Active IDIQs, schedules, set-asides; dollar flow per vehicle' },
+  agency_map:        { label: 'Agency map',         hint: 'Top buying agencies in the codes; their patterns' },
+  doppelganger:      { label: 'Doppelganger vendors', hint: 'Vendors that look like the prospect; what they\'ve won' },
+  trajectory:        { label: 'Trajectory',         hint: 'Public-record milestones for THIS prospect (entity, SAM, schedules, awards)' },
+}
 
+const ENTRY_KIND_META: Record<SurfaceEntryKind, { label: string; icon: string }> = {
+  highergov_pull:   { label: 'HigherGov pull',   icon: '⛁' },
+  usaspending_pull: { label: 'USASpending pull', icon: '$' },
+  paste_in:         { label: 'Paste-in',         icon: '✎' },
+  file_upload:      { label: 'File upload',      icon: '⊕' },
+  note:             { label: 'Note',             icon: '⌇' },
+  fact:             { label: 'Extracted fact',   icon: '✓' },
+}
+
+export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onClose }: Props) {
+  const [entries, setEntries] = useState<SurfaceEntry[]>([])
+  const [score, setScore] = useState<SufficiencyScore | null>(null)
+  const [frame, setFrame] = useState<ReconFrame | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [showAddEntry, setShowAddEntry] = useState(false)
+  const [computing, setComputing] = useState(false)
+
+  // ---------------------------------------------------------------------------
+  // INITIAL LOAD
+  // ---------------------------------------------------------------------------
   useEffect(() => {
-    if (!activeTenant) return
-    loadSources()
-  }, [activeTenant?.id])
-
-  // Load readiness state for every strategic profile.
-  // Refreshed when profiles change, when CBP completeness changes, and on demand
-  // (e.g., after a Frame is completed or a corpus entry is added).
-  useEffect(() => {
-    if (!activeTenant || strategicProfiles.length === 0) {
-      setReadinessMap({})
-      return
-    }
-    const cbpReady = !!(
-      commercialProfile?.synthesized_text &&
-      federalProfile?.synthesized_text
-    )
     let cancelled = false
     ;(async () => {
-      const entries = await Promise.all(
-        strategicProfiles.map(async (sp) => {
-          const r = await loadReadiness(sp.id, cbpReady)
-          return [sp.id, r] as const
-        }),
-      )
-      if (!cancelled) {
-        setReadinessMap(Object.fromEntries(entries))
-      }
+      const [e, s, f] = await Promise.all([
+        loadSurfaceEntries(strategicProfileId),
+        loadSufficiencyScore(strategicProfileId),
+        loadFrame(strategicProfileId),
+      ])
+      if (cancelled) return
+      setEntries(e)
+      setScore(s)
+      setFrame(f)
+      setLoaded(true)
     })()
     return () => {
       cancelled = true
     }
-  }, [
-    activeTenant?.id,
-    strategicProfiles.length,
-    strategicProfiles.map((sp) => sp.id).join('|'),
-    !!commercialProfile?.synthesized_text,
-    !!federalProfile?.synthesized_text,
-  ])
+  }, [strategicProfileId])
 
-  async function refreshReadinessFor(profileId: string) {
-    const cbpReady = !!(
-      commercialProfile?.synthesized_text &&
-      federalProfile?.synthesized_text
+  // ---------------------------------------------------------------------------
+  // RECOMPUTE SUFFICIENCY when corpus changes
+  // ---------------------------------------------------------------------------
+  async function recomputeSufficiency(currentEntries: SurfaceEntry[]) {
+    setComputing(true)
+    const newScore = await computeAndSaveSufficiency(
+      tenantId,
+      strategicProfileId,
+      frame,
+      currentEntries,
     )
-    const r = await loadReadiness(profileId, cbpReady)
-    setReadinessMap((prev) => ({ ...prev, [profileId]: r }))
+    if (newScore) setScore(newScore)
+    setComputing(false)
   }
 
-  async function loadSources() {
-    if (!activeTenant) return
-    const { data } = await supabase
-      .from('profile_sources')
-      .select('*')
-      .eq('tenant_id', activeTenant.id)
-      .order('created_at', { ascending: false })
-    setSources((data as ProfileSource[]) || [])
+  async function handleAddEntry(entry: {
+    kind: SurfaceEntryKind
+    title: string
+    sourceLabel?: string
+    sourceUrl?: string
+    rawText?: string
+    dimensions: SignalDimension[]
+  }) {
+    const created = await addSurfaceEntry(tenantId, strategicProfileId, {
+      title: entry.title,
+      entry_kind: entry.kind,
+      source_label: entry.sourceLabel,
+      source_url: entry.sourceUrl,
+      raw_payload: entry.rawText ? { text: entry.rawText } : {},
+      signal_dimensions: entry.dimensions,
+      extracted_facts: [],
+    })
+    if (!created) return
+    const next = [created, ...entries]
+    setEntries(next)
+    setShowAddEntry(false)
+    await recomputeSufficiency(next)
   }
 
-  async function deleteSource(id: string) {
-    if (!confirm('Delete this source? This cannot be undone.')) return
-    await supabase.from('profile_sources').delete().eq('id', id)
-    await loadSources()
+  async function handleDeleteEntry(id: string) {
+    if (!window.confirm('Delete this entry from the corpus?')) return
+    const ok = await deleteSurfaceEntry(id)
+    if (!ok) return
+    const next = entries.filter(e => e.id !== id)
+    setEntries(next)
+    await recomputeSufficiency(next)
   }
 
-  async function digestOne(sourceId: string) {
-    const src = sources.find((s) => s.id === sourceId)
-    if (!src || !activeTenant) return
-    setSources((prev) =>
-      prev.map((s) => (s.id === sourceId ? { ...s, digest_status: 'running', digest_error: null } : s))
+  // ---------------------------------------------------------------------------
+  // SUFFICIENCY DISPLAY
+  // ---------------------------------------------------------------------------
+  const dimensions: SignalDimension[] = useMemo(
+    () => ['market_sizing', 'peer_cohort', 'vehicle_landscape', 'agency_map', 'doppelganger', 'trajectory'],
+    [],
+  )
+
+  const dimensionScores: Record<SignalDimension, number> = score
+    ? {
+        market_sizing: score.market_sizing_score,
+        peer_cohort: score.peer_cohort_score,
+        vehicle_landscape: score.vehicle_landscape_score,
+        agency_map: score.agency_map_score,
+        doppelganger: score.doppelganger_score,
+        trajectory: score.trajectory_score,
+      }
+    : { market_sizing: 0, peer_cohort: 0, vehicle_landscape: 0, agency_map: 0, doppelganger: 0, trajectory: 0 }
+
+  const totalScore = score?.total_score || 0
+  const requiredScore = score?.required_score || 12
+  const isSufficient = score?.is_sufficient || false
+
+  // ---------------------------------------------------------------------------
+  // RENDER
+  // ---------------------------------------------------------------------------
+  if (!loaded) {
+    return (
+      <Modal open={true} onClose={onClose} title={`Surface Research · ${profileName}`} size="full">
+        <div style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+          Loading corpus…
+        </div>
+      </Modal>
     )
-    try {
-      const { data: variant } = await supabase
-        .from('prompt_variants')
-        .select('prompt_template')
-        .eq('id', 'source_digest_v1')
-        .single()
-      if (!variant) throw new Error('source_digest_v1 prompt not found — run migration 0004')
-
-      // Fill in the prompt template. PDF sources not yet supported via browser direct
-      // call (would need multimodal content blocks). For now, text digests only.
-      const meta = src.metadata as any
-      if (meta?.needs_extraction) {
-        throw new Error(
-          'PDF digesting via browser not yet supported. Paste the PDF text manually for now.'
-        )
-      }
-
-      const sourceContent = src.extracted_text || src.raw_content || ''
-      if (!sourceContent) throw new Error('Source has no content to digest')
-
-      const urlLine = src.url ? `SOURCE URL: ${src.url}` : ''
-      const prompt = variant.prompt_template
-        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
-        .replace(/\{\{source_type\}\}/g, src.source_type || 'unknown')
-        .replace(/\{\{source_label\}\}/g, src.label || 'unlabeled')
-        .replace(/\{\{#if source_url\}\}SOURCE URL: \{\{source_url\}\}\{\{\/if\}\}/g, urlLine)
-        .replace(/\{\{source_content\}\}/g, sourceContent)
-
-      const { text } = await callClaudeBrowser(prompt, {
-        model: 'claude-haiku-4-5',
-        maxTokens: 2048,
-      })
-
-      const structured = extractJsonBlock(text)
-      const digest = text.replace(/```json[\s\S]*?```/i, '').trim()
-
-      await supabase
-        .from('profile_sources')
-        .update({
-          digest_text: digest,
-          digest_structured: structured,
-          digest_status: 'ready',
-          digest_error: null,
-          digested_at: new Date().toISOString(),
-        })
-        .eq('id', sourceId)
-
-      await loadSources()
-    } catch (err: any) {
-      await supabase
-        .from('profile_sources')
-        .update({
-          digest_status: 'error',
-          digest_error: err.message || 'Digest failed',
-        })
-        .eq('id', sourceId)
-      await loadSources()
-    }
-  }
-
-  async function digestAllPending(bucket: SourceBucket) {
-    const pending = sources.filter(
-      (s) => s.bucket === bucket && (s.digest_status === 'pending' || s.digest_status === 'error')
-    )
-    if (pending.length === 0) return
-    setDigesting(bucket)
-    try {
-      // Run sequentially to be kind to the API. Could parallelize with p-limit later.
-      for (const src of pending) {
-        await digestOne(src.id)
-      }
-    } finally {
-      setDigesting(null)
-    }
-  }
-
-  async function skipDigest(sourceId: string) {
-    await supabase
-      .from('profile_sources')
-      .update({ digest_status: 'skipped' })
-      .eq('id', sourceId)
-    await loadSources()
-  }
-
-  async function buildProfile(bucket: SourceBucket) {
-    if (!activeTenant) return
-    const kind = bucket === 'commercial' ? 'commercial' : 'federal'
-    setBuilding(kind)
-    setBuildError(null)
-    try {
-      const variantId = bucket === 'commercial' ? 'commercial_profile_v1' : 'federal_profile_v1'
-      const { data: variant } = await supabase
-        .from('prompt_variants')
-        .select('prompt_template')
-        .eq('id', variantId)
-        .single()
-      if (!variant) throw new Error(`Prompt variant ${variantId} not found — run migration 0002`)
-
-      const bucketSources = sources.filter((s) => s.bucket === bucket)
-      if (bucketSources.length === 0) throw new Error('Add at least one source first')
-
-      const usableSources = bucketSources.filter((s) => {
-        if (s.digest_status === 'ready') return true
-        if (s.digest_status === 'skipped' && (s.extracted_text || s.raw_content)) return true
-        return false
-      })
-      const unusable = bucketSources.filter((s) => !usableSources.includes(s))
-      if (usableSources.length === 0) {
-        throw new Error(
-          'No sources are ready to build from. Click "Digest all" first to process your sources.'
-        )
-      }
-      if (unusable.length > 0) {
-        const proceed = confirm(
-          `${unusable.length} source(s) are not yet digested and will be skipped. ` +
-            `Build profile from the ${usableSources.length} ready source(s)?`
-        )
-        if (!proceed) {
-          setBuilding(null)
-          return
-        }
-      }
-
-      setBuildProgress(`Synthesizing profile from ${usableSources.length} sources…`)
-
-      // Build the sources blob from digests
-      const sourcesBlob = usableSources
-        .map((s, i) => {
-          const content =
-            s.digest_text ||
-            s.extracted_text ||
-            (s.raw_content ? s.raw_content.slice(0, 2000) : '(no content)')
-          return `### Source ${i + 1}: ${s.label} (${s.source_type})\n${content}`
-        })
-        .join('\n\n---\n\n')
-
-      const placeholderKey = bucket === 'federal' ? 'federal_sources' : 'commercial_sources'
-      const web = bucketSources.find((s) => s.source_type === 'website' && s.url)
-
-      let prompt = variant.prompt_template
-        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
-        .replace(new RegExp(`\\{\\{${placeholderKey}\\}\\}`, 'g'), sourcesBlob)
-      if (bucket === 'commercial') {
-        prompt = prompt.replace(/\{\{tenant_website\}\}/g, web?.url || '(not provided)')
-      }
-
-      // Call Claude directly from the browser — no Netlify function proxy, no timeout
-      const { text } = await callClaudeBrowser(prompt, {
-        model: 'claude-sonnet-4-5',
-        maxTokens: 8192,
-      })
-
-      const structured = extractJsonBlock(text)
-      const narrative = text.replace(/```json[\s\S]*?```/i, '').trim()
-
-      if (bucket === 'commercial') {
-        await supabase.from('commercial_profile').upsert(
-          {
-            tenant_id: activeTenant.id,
-            synthesized_text: narrative,
-            structured_data: structured,
-            source_count: usableSources.length,
-            last_built_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'tenant_id' }
-        )
-      } else {
-        const s = structured || {}
-        await supabase.from('federal_profile').upsert(
-          {
-            tenant_id: activeTenant.id,
-            synthesized_text: narrative,
-            structured_data: structured,
-            naics_codes: s.naics_codes || null,
-            certifications: s.certifications || null,
-            psc_codes: s.psc_codes || null,
-            uei: s.uei || null,
-            cage: s.cage || null,
-            source_count: usableSources.length,
-            last_built_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-          },
-          { onConflict: 'tenant_id' }
-        )
-      }
-
-      setBuildProgress(null)
-      await loadProfileData(activeTenant.id)
-
-      // === METHODOLOGY LOG: profile built ===
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: bucket === 'commercial' ? 'commercial_profile_built' : 'federal_profile_built',
-        actor: 'claude-sonnet-4-5',
-        summary: `${bucket === 'commercial' ? 'Commercial' : 'Federal'} profile synthesized from ${usableSources.length} source${usableSources.length === 1 ? '' : 's'} (${narrative.length} chars)`,
-        details: {
-          bucket,
-          variant_id: variantId,
-          model: 'claude-sonnet-4-5',
-          max_tokens: 8192,
-          source_count: usableSources.length,
-          narrative_length_chars: narrative.length,
-          sources_used: usableSources.map((s) => ({
-            id: s.id,
-            label: s.label,
-            source_type: s.source_type,
-            digest_status: s.digest_status,
-          })),
-          sources_skipped: unusable.map((s) => ({
-            id: s.id,
-            label: s.label,
-            reason: s.digest_status === 'pending' ? 'not digested' : `status: ${s.digest_status}`,
-          })),
-          has_structured_output: !!structured,
-        },
-      })
-    } catch (err: any) {
-      if (activeTenant) {
-        await logMethodology({
-          tenantId: activeTenant.id,
-          eventType: `${bucket}_profile_build_failed`,
-          actor: 'system',
-          summary: `${bucket} profile build failed: ${err?.message || 'unknown error'}`,
-          details: { error: err?.message, bucket },
-        })
-      }
-      setBuildError(err.message || 'Build failed')
-      setBuildProgress(null)
-    } finally {
-      setBuilding(null)
-    }
-  }
-
-  async function runReconciliation() {
-    if (!activeTenant) return
-    setBuilding('reconcile')
-    setBuildError(null)
-    setBuildProgress('Loading PSC + NAICS reference data…')
-    try {
-      const isFramework = activeTenant.federal_posture === 'no_federal'
-      const variantId = isFramework ? 'federal_entry_framework_v1' : 'reconciliation_v1'
-
-      const { data: variant } = await supabase
-        .from('prompt_variants')
-        .select('prompt_template')
-        .eq('id', variantId)
-        .single()
-      if (!variant)
-        throw new Error(
-          `Prompt variant ${variantId} not found — run migration ${isFramework ? '0003' : '0002'}`
-        )
-
-      // === Load PSC + NAICS reference data (authoritative, not hallucinated) ===
-      // Same pattern as generateSearchScopes — ground Claude in real taxonomy.
-      let pscReference = ''
-      let naicsReference = ''
-      let pscCount = 0
-      let naicsCount = 0
-
-      if (variant.prompt_template.includes('{{psc_reference}}') || variant.prompt_template.includes('{{naics_reference}}')) {
-        const pscCodes = await fetchAllActivePscCodes()
-        const naicsCodes = await fetchAllNaicsCodes()
-
-        if (!pscCodes || pscCodes.length === 0) {
-          throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
-        }
-        if (!naicsCodes || naicsCodes.length === 0) {
-          throw new Error('NAICS reference table is empty. Run migration 0015 + seed SQL in Supabase.')
-        }
-
-        pscCount = pscCodes.length
-        naicsCount = naicsCodes.length
-
-        // Build PSC reference organized by Level 1 category
-        const pscByL1 = new Map<string, any[]>()
-        for (const p of pscCodes) {
-          const l1 = p.level_1_name || 'Uncategorized'
-          if (!pscByL1.has(l1)) pscByL1.set(l1, [])
-          pscByL1.get(l1)!.push(p)
-        }
-        pscReference = Array.from(pscByL1.entries())
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([l1, codes]) => {
-            const lines = codes.slice(0, 100).map((c: any) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
-            return `### ${l1}\n${lines.join('\n')}`
-          })
-          .join('\n\n')
-
-        // NAICS grouped by 2-digit sector
-        const naicsBySector = new Map<string, any[]>()
-        for (const n of naicsCodes) {
-          const sector = n.code.substring(0, 2)
-          if (!naicsBySector.has(sector)) naicsBySector.set(sector, [])
-          naicsBySector.get(sector)!.push(n)
-        }
-        naicsReference = Array.from(naicsBySector.entries())
-          .sort(([a], [b]) => a.localeCompare(b))
-          .map(([sector, codes]) => {
-            const lines = codes.map((c: any) => `  ${c.code} — ${c.title}`)
-            return `### Sector ${sector}\n${lines.join('\n')}`
-          })
-          .join('\n\n')
-      }
-
-      setBuildProgress(
-        isFramework
-          ? `Generating Federal Entry Framework grounded in ${pscCount} PSC + ${naicsCount} NAICS codes…`
-          : 'Running reconciliation…'
-      )
-
-      const prompt = variant.prompt_template
-        .replace(/\{\{tenant_name\}\}/g, activeTenant.name)
-        .replace(/\{\{commercial_profile\}\}/g, commercialProfile?.synthesized_text || '(no commercial profile built yet)')
-        .replace(/\{\{federal_profile\}\}/g, federalProfile?.synthesized_text || '(no federal profile built yet)')
-        .replace(/\{\{psc_reference\}\}/g, pscReference)
-        .replace(/\{\{naics_reference\}\}/g, naicsReference)
-
-      const { text } = await callClaudeBrowser(prompt, {
-        model: 'claude-sonnet-4-5',
-        maxTokens: 8000,
-      })
-
-      const structured = extractJsonBlock(text)
-      const cleaned = text.replace(/```json[\s\S]*?```/i, '').trim()
-
-      // Split into alignment / divergence / suggestions sections
-      const sections = splitReconciliationSections(cleaned)
-
-      // Load the prompt template version so we can tell if a reconciliation/
-      // framework was generated with an outdated prompt (e.g., pre-PSC-reference).
-      const { data: variantMeta } = await supabase
-        .from('prompt_variants')
-        .select('version')
-        .eq('id', variantId)
-        .single()
-      const promptVersion = variantMeta?.version || 1
-
-      const nextVersion = (reconciliation?.version || 0) + 1
-
-      await supabase.from('reconciliation').insert({
-        tenant_id: activeTenant.id,
-        mode: isFramework ? 'framework' : 'reconcile',
-        alignment: isFramework ? null : sections.alignment || null,
-        divergence: isFramework ? null : sections.divergence || null,
-        suggestions: isFramework ? cleaned : sections.suggestions || null,
-        structured_data: structured,
-        version: nextVersion,
-        prompt_template_version: promptVersion,
-        last_built_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-
-      setBuildProgress(null)
-      await loadProfileData(activeTenant.id)
-
-      // === METHODOLOGY LOG: reconciliation complete ===
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: 'reconciliation_built',
-        actor: 'claude-sonnet-4-5',
-        summary: `${isFramework ? 'Federal entry framework' : 'Reconciliation'} v${nextVersion} generated (${cleaned.length} chars) using prompt template v${promptVersion}`,
-        details: {
-          mode: isFramework ? 'framework' : 'reconcile',
-          variant_id: variantId,
-          prompt_template_version: promptVersion,
-          model: 'claude-sonnet-4-5',
-          version: nextVersion,
-          narrative_length: cleaned.length,
-          has_alignment: !!sections.alignment,
-          has_divergence: !!sections.divergence,
-          has_suggestions: !!sections.suggestions || isFramework,
-          has_structured_output: !!structured,
-          psc_reference_count: pscCount,
-          naics_reference_count: naicsCount,
-          psc_source: pscCount > 0 ? 'GSA PSC Manual April 2025 (v2.psc_codes)' : null,
-          naics_source: naicsCount > 0 ? 'Census Bureau 2022 NAICS revision (v2.naics_codes)' : null,
-        },
-      })
-    } catch (err: any) {
-      if (activeTenant) {
-        await logMethodology({
-          tenantId: activeTenant.id,
-          eventType: 'reconciliation_failed',
-          actor: 'system',
-          summary: `Reconciliation failed: ${err?.message || 'unknown error'}`,
-          details: { error: err?.message },
-        })
-      }
-      setBuildError(err.message || 'Reconciliation failed')
-      setBuildProgress(null)
-    } finally {
-      setBuilding(null)
-    }
-  }
-
-  function splitReconciliationSections(text: string) {
-    const out = { alignment: '', divergence: '', suggestions: '' }
-    const lines = text.split('\n')
-    let current: 'alignment' | 'divergence' | 'suggestions' | null = null
-    for (const line of lines) {
-      const lower = line.toLowerCase().trim()
-      if (/^#+\s*alignment/.test(lower)) { current = 'alignment'; continue }
-      if (/^#+\s*divergence/.test(lower)) { current = 'divergence'; continue }
-      if (/^#+\s*suggestions?/.test(lower)) { current = 'suggestions'; continue }
-      if (current) out[current] += line + '\n'
-    }
-    out.alignment = out.alignment.trim()
-    out.divergence = out.divergence.trim()
-    out.suggestions = out.suggestions.trim()
-    return out
-  }
-
-  async function generateSearchScopes() {
-    if (!activeTenant) return
-    if (!commercialProfile?.synthesized_text) {
-      setBuildError('Build the commercial profile first.')
-      return
-    }
-    setBuilding('reconcile')
-    setBuildError(null)
-    setBuildProgress('Loading PSC + NAICS reference data…')
-    const startedAt = new Date()
-    try {
-      // === STEP 1: Pull canonical PSC + NAICS reference data ===
-      // We pass Claude the REAL active codes as authoritative input rather than
-      // letting it hallucinate stale codes from training data.
-      const pscCodes = await fetchAllActivePscCodes()
-      const naicsCodes = await fetchAllNaicsCodes()
-
-      if (!pscCodes || pscCodes.length === 0) {
-        throw new Error('PSC reference table is empty. Run migration 0015 + seed SQL in Supabase.')
-      }
-      if (!naicsCodes || naicsCodes.length === 0) {
-        throw new Error('NAICS reference table is empty. Run migration 0015 + seed SQL in Supabase.')
-      }
-
-      // Build compact PSC reference organized by Level 1 category.
-      // For each PSC we show: code | name | parent_name. Level 1 groups organize the list.
-      const pscByL1 = new Map<string, any[]>()
-      for (const p of pscCodes) {
-        const l1 = p.level_1_name || 'Uncategorized'
-        if (!pscByL1.has(l1)) pscByL1.set(l1, [])
-        pscByL1.get(l1)!.push(p)
-      }
-
-      const pscReference = Array.from(pscByL1.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([l1, codes]) => {
-          const lines = codes.slice(0, 100).map((c) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
-          return `### ${l1}\n${lines.join('\n')}`
-        })
-        .join('\n\n')
-
-      // NAICS is simpler — flat list organized by 2-digit sector
-      const naicsBySector = new Map<string, any[]>()
-      for (const n of naicsCodes) {
-        const sector = n.code.substring(0, 2)
-        if (!naicsBySector.has(sector)) naicsBySector.set(sector, [])
-        naicsBySector.get(sector)!.push(n)
-      }
-
-      const naicsReference = Array.from(naicsBySector.entries())
-        .sort(([a], [b]) => a.localeCompare(b))
-        .map(([sector, codes]) => {
-          const lines = codes.map((c) => `  ${c.code} — ${c.title}`)
-          return `### Sector ${sector}\n${lines.join('\n')}`
-        })
-        .join('\n\n')
-
-      setBuildProgress(`Generating Round 1 search scopes from ${pscCodes.length} PSC + ${naicsCodes.length} NAICS codes…`)
-
-      const prompt = `You are generating Round 1 federal search scopes for ${activeTenant.name} based on their commercial company profile.
-
-A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement — the same NAICS code can have very different markets depending on which PSC prefix the work falls under.
-
-COMMERCIAL PROFILE:
-${commercialProfile.synthesized_text}
-
-## AUTHORITATIVE PSC REFERENCE (April 2025 GSA Manual — currently active codes only)
-You MUST pick PSC codes from this list. Do NOT use codes outside this list. Do NOT use deprecated codes like D3xx, 7030, 7045 — those have been retired and replaced by the DA/DB/DC/DD/DE/DF/DG/DH/DJ service codes and 7A/7B/7C/7D/7E/7F/7G/7H/7J product codes.
-
-${pscReference}
-
-## AUTHORITATIVE NAICS REFERENCE (2022 revision — 6-digit codes)
-You MUST pick NAICS codes from this list.
-
-${naicsReference}
-
-## TASK
-
-Generate 6-10 search scopes that together cover the company's realistic federal pursuit surface.
-
-RULES — NON-NEGOTIABLE:
-- Use ONLY PSC codes and NAICS codes from the authoritative reference lists above. Do not invent codes.
-- Each scope MUST combine NAICS + PSC — never NAICS alone, never PSC alone.
-- For PSC prefixes, use either full codes (e.g. "DB01", "7B22") OR 2-character prefixes (e.g. "DA", "7B") when you want to match a whole category. NEVER use retired formats like "D3" or "R-".
-- Prefer BROAD scopes that will actually return hits (hundreds to thousands of opportunities per year in federal contracting) over narrow scopes that perfectly describe the company's tech stack but return zero results.
-- Each scope should have a clear strategic rationale.
-- Include at least one EXPLORATORY scope — adjacent/unexpected where the company's core capability could credibly apply.
-
-FOR EACH SCOPE PROVIDE:
-- name: short memorable label (3-5 words)
-- scope_tag: lowercase snake_case slug
-- tier: "primary" | "secondary" | "exploratory"
-- naics_codes: array of 1-4 NAICS codes (6 digits each) FROM THE REFERENCE LIST
-- psc_prefixes: array of 1-4 PSC codes or 2-char prefixes FROM THE REFERENCE LIST
-- rationale: 1-2 sentences on why this scope fits
-- correlation_score: integer 1-10 — how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match.
-- correlation_rationale: 1 sentence explaining the score
-- estimated_annual_awards: rough integer estimate for this NAICS+PSC combo across all agencies
-- estimated_annual_dollars: rough integer dollar volume per year
-- estimated_size_label: "large" | "medium" | "small" | "niche"
-- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) — real SOW language
-- strategic_angle: 1 sentence — "displace incumbent X", "subcontract under primes", "capture emerging Z demand"
-
-Don't inflate correlation scores. A score below 5 is a signal that the scope is a stretch.
-
-Return ONLY valid JSON in a \`\`\`json block, no other text:
-
-\`\`\`json
-{
-  "scopes": [
-    {
-      "name": "...",
-      "scope_tag": "...",
-      "tier": "primary",
-      "naics_codes": ["541511"],
-      "psc_prefixes": ["DA01", "DB"],
-      "rationale": "...",
-      "correlation_score": 9,
-      "correlation_rationale": "...",
-      "estimated_annual_awards": 2500,
-      "estimated_annual_dollars": 8000000000,
-      "estimated_size_label": "large",
-      "keyword_layers": ["cloud services", "IT professional services"],
-      "strategic_angle": "..."
-    }
-  ]
-}
-\`\`\``
-
-      // === METHODOLOGY LOG: scope generation start ===
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: 'scope_generation_start',
-        actor: 'claude-sonnet-4-5',
-        summary: `Generating Round 1 search scopes grounded in ${pscCodes.length} active PSC codes + ${naicsCodes.length} NAICS codes`,
-        details: {
-          model: 'claude-sonnet-4-5',
-          max_tokens: 8000,
-          profile_length: commercialProfile.synthesized_text.length,
-          psc_reference_count: pscCodes.length,
-          naics_reference_count: naicsCodes.length,
-          psc_source: 'GSA PSC Manual April 2025 (v2.psc_codes)',
-          naics_source: 'Census Bureau 2022 NAICS revision (v2.naics_codes)',
-          started_at: startedAt.toISOString(),
-          prompt_length_chars: prompt.length,
-        },
-      })
-
-      const { text } = await callClaudeBrowser(prompt, {
-        model: 'claude-sonnet-4-5',
-        maxTokens: 8000,
-      })
-
-      const parsed = extractJsonBlock(text)
-      if (!parsed?.scopes || !Array.isArray(parsed.scopes)) {
-        throw new Error('No scopes returned from Claude — try again')
-      }
-
-      // Clear prior NON-PINNED scopes for this tenant before inserting new ones
-      await supabase
-        .from('search_scopes')
-        .delete()
-        .eq('tenant_id', activeTenant.id)
-        .eq('pinned', false)
-
-      const inserts = parsed.scopes.map((s: any) => ({
-        tenant_id: activeTenant.id,
-        scope_tag: s.scope_tag || slugify(s.name || 'scope'),
-        name: s.name || 'Untitled scope',
-        tier: (['primary', 'secondary', 'exploratory'].includes(s.tier) ? s.tier : 'secondary') as
-          | 'primary'
-          | 'secondary'
-          | 'exploratory',
-        rationale: s.rationale || null,
-        naics_codes: Array.isArray(s.naics_codes) ? s.naics_codes.slice(0, 10) : [],
-        psc_prefixes: Array.isArray(s.psc_prefixes) ? s.psc_prefixes.slice(0, 10) : [],
-        keyword_layers: Array.isArray(s.keyword_layers) ? s.keyword_layers.slice(0, 10) : null,
-        correlation_score:
-          typeof s.correlation_score === 'number'
-            ? Math.max(1, Math.min(10, Math.round(s.correlation_score)))
-            : null,
-        correlation_rationale: s.correlation_rationale || null,
-        estimated_annual_awards:
-          typeof s.estimated_annual_awards === 'number' ? s.estimated_annual_awards : null,
-        estimated_annual_dollars:
-          typeof s.estimated_annual_dollars === 'number' ? s.estimated_annual_dollars : null,
-        estimated_size_label: s.estimated_size_label || null,
-        strategic_angle: s.strategic_angle || null,
-        generated_by: 'claude_sonnet_4_5',
-      }))
-
-      if (inserts.length > 0) {
-        const { error: insertError } = await supabase.from('search_scopes').insert(inserts)
-        if (insertError) throw new Error(`Failed to save scopes: ${insertError.message}`)
-      }
-
-      // === METHODOLOGY LOG: scope generation complete ===
-      const runtimeMs = Date.now() - startedAt.getTime()
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: 'scope_generation_complete',
-        actor: 'claude-sonnet-4-5',
-        summary: `Generated ${inserts.length} Round 1 search scopes in ${(runtimeMs / 1000).toFixed(1)}s. Total estimated annual market: $${inserts.reduce((sum: number, s: any) => sum + (s.estimated_annual_dollars || 0), 0).toLocaleString()}.`,
-        details: {
-          runtime_ms: runtimeMs,
-          runtime_seconds: runtimeMs / 1000,
-          scope_count: inserts.length,
-          scopes: inserts.map((s: any) => ({
-            name: s.name,
-            scope_tag: s.scope_tag,
-            tier: s.tier,
-            naics_codes: s.naics_codes,
-            psc_prefixes: s.psc_prefixes,
-            correlation_score: s.correlation_score,
-            correlation_rationale: s.correlation_rationale,
-            rationale: s.rationale,
-            strategic_angle: s.strategic_angle,
-            estimated_annual_awards: s.estimated_annual_awards,
-            estimated_annual_dollars: s.estimated_annual_dollars,
-            estimated_size_label: s.estimated_size_label,
-            keyword_layers: s.keyword_layers,
-          })),
-          tier_breakdown: {
-            primary: inserts.filter((s: any) => s.tier === 'primary').length,
-            secondary: inserts.filter((s: any) => s.tier === 'secondary').length,
-            exploratory: inserts.filter((s: any) => s.tier === 'exploratory').length,
-          },
-          correlation_distribution: {
-            '9-10': inserts.filter((s: any) => (s.correlation_score || 0) >= 9).length,
-            '7-8': inserts.filter((s: any) => (s.correlation_score || 0) >= 7 && (s.correlation_score || 0) < 9).length,
-            '5-6': inserts.filter((s: any) => (s.correlation_score || 0) >= 5 && (s.correlation_score || 0) < 7).length,
-            '<5': inserts.filter((s: any) => (s.correlation_score || 0) < 5).length,
-          },
-        },
-      })
-
-      setBuildProgress(null)
-      await loadProfileData(activeTenant.id)
-    } catch (err: any) {
-      // === METHODOLOGY LOG: scope generation failed ===
-      if (activeTenant) {
-        await logMethodology({
-          tenantId: activeTenant.id,
-          eventType: 'scope_generation_failed',
-          actor: 'system',
-          summary: `Scope generation failed: ${err?.message || 'unknown error'}`,
-          details: { error: err?.message, stack: err?.stack?.slice(0, 2000) },
-        })
-      }
-      setBuildError(err.message || 'Scope generation failed')
-      setBuildProgress(null)
-    } finally {
-      setBuilding(null)
-    }
-  }
-
-  function slugify(s: string): string {
-    return s
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, '_')
-      .replace(/^_+|_+$/g, '')
-      .slice(0, 50)
-  }
-
-  async function deleteScope(scopeId: string) {
-    if (!confirm('Delete this search scope?')) return
-    const scope = searchScopes.find((s) => s.id === scopeId)
-    await supabase.from('search_scopes').delete().eq('id', scopeId)
-    if (activeTenant && scope) {
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: 'scope_deleted',
-        actor: 'user',
-        summary: `User deleted scope "${scope.name}" (#${scope.scope_tag}) — correlation ${scope.correlation_score}/10`,
-        details: {
-          scope_id: scopeId,
-          name: scope.name,
-          scope_tag: scope.scope_tag,
-          correlation_score: scope.correlation_score,
-          tier: scope.tier,
-          naics_codes: scope.naics_codes,
-          psc_prefixes: scope.psc_prefixes,
-          estimated_annual_dollars: scope.estimated_annual_dollars,
-        },
-      })
-    }
-    if (activeTenant) await loadProfileData(activeTenant.id)
-  }
-
-  async function togglePinScope(scopeId: string, nextPinned: boolean) {
-    const scope = searchScopes.find((s) => s.id === scopeId)
-    await supabase.from('search_scopes').update({ pinned: nextPinned }).eq('id', scopeId)
-    if (activeTenant && scope) {
-      await logMethodology({
-        tenantId: activeTenant.id,
-        eventType: nextPinned ? 'scope_pinned' : 'scope_unpinned',
-        actor: 'user',
-        summary: `User ${nextPinned ? 'pinned' : 'unpinned'} scope "${scope.name}" (#${scope.scope_tag})`,
-        details: {
-          scope_id: scopeId,
-          name: scope.name,
-          scope_tag: scope.scope_tag,
-          correlation_score: scope.correlation_score,
-        },
-      })
-    }
-    if (activeTenant) await loadProfileData(activeTenant.id)
-  }
-
-  async function setFederalPosture(posture: 'unknown' | 'has_federal' | 'no_federal') {
-    if (!activeTenant) return
-    await supabase.from('tenants').update({ federal_posture: posture }).eq('id', activeTenant.id)
-    // Trigger tenant re-fetch so the UI reflects the new posture
-    await useStore.getState().setActiveTenant(activeTenant.id)
-  }
-
-  async function deleteStrategicProfile(id: string) {
-    if (!confirm('Delete this strategic profile?')) return
-    await supabase
-      .from('strategic_profiles')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', id)
-    if (activeTenant) await loadProfileData(activeTenant.id)
-  }
-
-  if (!activeTenant) return null
-
-  const commercialSources = sources.filter((s) => s.bucket === 'commercial')
-  const federalSources = sources.filter((s) => s.bucket === 'federal')
-
-  return (
-    <TabPage
-      eyebrow="Onboard"
-      title="Intelligence profile"
-      description={`Building ${activeTenant.name}'s commercial and federal profiles, then reconciling them.`}
-      actions={
-        <Button
-          variant="secondary"
-          size="small"
-          onClick={async () => {
-            if (!activeTenant) return
-            const confirmed = confirm(
-              `Reset ${activeTenant.name}'s downstream analysis data?\n\n` +
-                `KEEPS: profile documents, commercial/federal profiles, strategic profiles, branding.\n` +
-                `DELETES: search scopes, enrichment sessions + records, keyword bank, methodology log.\n\n` +
-                `This starts a fresh audit trail from Round 1 with full logging.`
-            )
-            if (!confirmed) return
-            const result = await resetTenantDownstream(activeTenant.id)
-            if (result.ok) {
-              alert(
-                `Reset complete.\n\n` +
-                  `Deleted:\n` +
-                  `  • ${result.summary.search_scopes || 0} search scopes\n` +
-                  `  • ${result.summary.enrichment_sessions || 0} sessions\n` +
-                  `  • ${result.summary.enrichment_records || 0} contract records\n` +
-                  `  • ${result.summary.round_1_keywords || 0} saved keywords\n` +
-                  `  • ${result.summary.methodology_log_cleared || 0} prior log entries\n\n` +
-                  `Profile evidence preserved. Methodology log restarted with Step 1 summary.`
-              )
-              // Reload everything
-              await loadProfileData(activeTenant.id)
-              window.location.reload()
-            } else {
-              alert(`Reset failed: ${result.error}`)
-            }
-          }}
-        >
-          Reset downstream data
-        </Button>
-      }
-    >
-      {buildError && (
-        <div
-          style={{
-            marginBottom: '24px',
-            padding: '12px 16px',
-            borderRadius: 'var(--radius-input)',
-            background: 'rgba(255, 59, 48, 0.1)',
-            border: '1px solid rgba(255, 59, 48, 0.3)',
-            color: 'var(--color-danger)',
-            fontSize: '14px',
-          }}
-        >
-          {buildError}
-        </div>
-      )}
-
-      {buildProgress && (
-        <div
-          style={{
-            marginBottom: '24px',
-            padding: '12px 16px',
-            borderRadius: 'var(--radius-input)',
-            background: 'rgba(0, 122, 255, 0.08)',
-            border: '1px solid rgba(0, 122, 255, 0.2)',
-            color: 'var(--color-accent)',
-            fontSize: '14px',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-          }}
-        >
-          <span style={{ display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }}>●</span>
-          {buildProgress}
-        </div>
-      )}
-
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-          gap: '24px',
-        }}
-      >
-        <ProfileColumn
-          title="Commercial"
-          subtitle="What the company looks like to non-federal buyers"
-          sources={commercialSources}
-          onAdd={() => setAddSourceOpen({ bucket: 'commercial' })}
-          onDelete={deleteSource}
-          onBuild={() => buildProfile('commercial')}
-          onDigestOne={digestOne}
-          onDigestAll={() => digestAllPending('commercial')}
-          onSkipDigest={skipDigest}
-          onViewProfile={() =>
-            setViewingProfile({
-              title: 'Commercial profile — ' + activeTenant.name,
-              text: commercialProfile?.synthesized_text || '',
-              structured: commercialProfile?.structured_data,
-              builtAt: commercialProfile?.last_built_at || null,
-              sourceCount: commercialProfile?.source_count || null,
-            })
-          }
-          building={building === 'commercial'}
-          digesting={digesting === 'commercial'}
-          profileBuilt={!!commercialProfile?.synthesized_text}
-          lastBuiltAt={commercialProfile?.last_built_at || null}
-          profileText={commercialProfile?.synthesized_text || null}
-          buildLabel="Build commercial profile"
-        />
-
-        <FederalColumnWithPosture
-          posture={activeTenant.federal_posture || 'unknown'}
-          onSetPosture={setFederalPosture}
-          sources={federalSources}
-          onAdd={() => setAddSourceOpen({ bucket: 'federal' })}
-          onDelete={deleteSource}
-          onBuild={() => buildProfile('federal')}
-          onDigestOne={digestOne}
-          onDigestAll={() => digestAllPending('federal')}
-          onSkipDigest={skipDigest}
-          onViewProfile={() =>
-            setViewingProfile({
-              title: 'Federal profile — ' + activeTenant.name,
-              text: federalProfile?.synthesized_text || '',
-              structured: federalProfile?.structured_data,
-              builtAt: federalProfile?.last_built_at || null,
-              sourceCount: federalProfile?.source_count || null,
-            })
-          }
-          building={building === 'federal'}
-          digesting={digesting === 'federal'}
-          profileBuilt={!!federalProfile?.synthesized_text}
-          lastBuiltAt={federalProfile?.last_built_at || null}
-          profileText={federalProfile?.synthesized_text || null}
-        />
-
-        <ReconciliationColumn
-          mode={activeTenant.federal_posture === 'no_federal' ? 'framework' : 'reconcile'}
-          commercialReady={!!commercialProfile?.synthesized_text}
-          federalReady={!!federalProfile?.synthesized_text}
-          reconciliation={reconciliation}
-          onBuild={runReconciliation}
-          building={building === 'reconcile'}
-          onCreateStrategicFromFramework={() => {
-            // Pre-fill strategic profile editor with framework suggestions
-            const s = reconciliation?.structured_data as any
-            if (!s) {
-              setStratEditor({ mode: 'new' })
-              return
-            }
-            setStratEditor({
-              mode: 'new',
-              profile: {
-                id: '',
-                tenant_id: activeTenant.id,
-                name: 'Federal entry — ' + (s.wedge_capability || 'Framework'),
-                description: s.narrative_summary || null,
-                positioning: s.narrative_summary || null,
-                target_agencies: s.target_agencies || null,
-                target_naics: (s.all_naics || []).map((n: any) => n.code).filter(Boolean).slice(0, 10),
-                target_psc: (s.psc_codes || []).map((p: any) => p.code).filter(Boolean).slice(0, 10),
-                is_default: false,
-                created_at: '',
-                updated_at: '',
-                created_by: null,
-                deleted_at: null,
-              },
-            })
-          }}
-        />
-      </div>
-
-      {/* Round 1 Search Scopes */}
-      {commercialProfile?.synthesized_text && (
-        <SearchScopesCard
-          scopes={searchScopes}
-          onGenerate={generateSearchScopes}
-          onDelete={deleteScope}
-          onTogglePin={togglePinScope}
-          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search scopes…'}
-        />
-      )}
-
-      {/* Strategic Profiles */}
-      <div
-        style={{
-          marginTop: '64px',
-          paddingTop: '32px',
-          borderTop: '1px solid var(--color-hairline)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'flex-end',
-            justifyContent: 'space-between',
-            gap: '24px',
-            marginBottom: '20px',
-          }}
-        >
-          <div>
-            <h2
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '24px',
-                fontWeight: 600,
-                letterSpacing: '-0.015em',
-                margin: 0,
-              }}
-            >
-              Strategic Profiles
-            </h2>
-            <p
-              style={{
-                fontSize: '14px',
-                color: 'var(--color-text-secondary)',
-                margin: '6px 0 0',
-                maxWidth: '560px',
-              }}
-            >
-              Different hunts, different lanes. Each profile represents a distinct federal
-              pursuit strategy. Create as many as make sense — one per lane you want to work.
-            </p>
-          </div>
-          <Button onClick={() => setStratEditor({ mode: 'new' })}>+ New strategic profile</Button>
-        </div>
-
-        {strategicProfiles.length === 0 ? (
-          <Card>
-            <div
-              style={{
-                textAlign: 'center',
-                padding: '32px 0',
-                color: 'var(--color-text-secondary)',
-                fontSize: '14px',
-              }}
-            >
-              No strategic profiles yet. Create one to lock in a specific federal pursuit lane.
-            </div>
-          </Card>
-        ) : (
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
-              gap: '16px',
-            }}
-          >
-            {strategicProfiles.map((sp) => (
-              <StrategicProfileCard
-                key={sp.id}
-                profile={sp}
-                readiness={readinessMap[sp.id]}
-                onEdit={() => setStratEditor({ mode: 'edit', profile: sp })}
-                onDelete={() => deleteStrategicProfile(sp.id)}
-                onConfigureFrame={() => setFrameProfile(sp)}
-                onOpenResearch={() => setResearchProfile(sp)}
-                onConfigureStones={() => setStonesEditorProfile(sp)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-
-      {addSourceOpen && (
-        <AddSourceModal
-          bucket={addSourceOpen.bucket}
-          tenantId={activeTenant.id}
-          tenantName={activeTenant.name}
-          onClose={() => setAddSourceOpen(null)}
-          onAdded={() => {
-            setAddSourceOpen(null)
-            loadSources()
-          }}
-        />
-      )}
-
-      {stratEditor && (
-        <StrategicProfileEditor
-          mode={stratEditor.mode}
-          profile={stratEditor.profile}
-          tenantId={activeTenant.id}
-          onClose={() => setStratEditor(null)}
-          onSaved={() => {
-            setStratEditor(null)
-            if (activeTenant) loadProfileData(activeTenant.id)
-          }}
-        />
-      )}
-
-      {stonesEditorProfile && (
-        <Modal
-          open={true}
-          onClose={() => setStonesEditorProfile(null)}
-          title={`Configure Stones · ${stonesEditorProfile.name}`}
-          size="full"
-        >
-          <StonesMapEditor
-            strategicProfileId={stonesEditorProfile.id}
-            tenantId={activeTenant.id}
-            profileName={stonesEditorProfile.name}
-            onClose={() => {
-              const id = stonesEditorProfile.id
-              setStonesEditorProfile(null)
-              refreshReadinessFor(id)
-            }}
-          />
-        </Modal>
-      )}
-
-      {frameProfile && (
-        <FramingTheFrame
-          strategicProfileId={frameProfile.id}
-          tenantId={activeTenant.id}
-          profileName={frameProfile.name}
-          onClose={() => {
-            const id = frameProfile.id
-            setFrameProfile(null)
-            refreshReadinessFor(id)
-          }}
-          onCompleted={() => refreshReadinessFor(frameProfile.id)}
-        />
-      )}
-
-      {researchProfile && (
-        <SurfaceResearch
-          strategicProfileId={researchProfile.id}
-          tenantId={activeTenant.id}
-          profileName={researchProfile.name}
-          onClose={() => {
-            const id = researchProfile.id
-            setResearchProfile(null)
-            refreshReadinessFor(id)
-          }}
-        />
-      )}
-
-      {viewingProfile && (
-        <ProfileViewModal
-          title={viewingProfile.title}
-          text={viewingProfile.text}
-          structured={viewingProfile.structured}
-          builtAt={viewingProfile.builtAt}
-          sourceCount={viewingProfile.sourceCount}
-          onClose={() => setViewingProfile(null)}
-        />
-      )}
-    </TabPage>
-  )
-}
-
-/* ========================================================================== */
-/* Profile column                                                             */
-/* ========================================================================== */
-
-function ProfileColumn({
-  title,
-  subtitle,
-  sources,
-  onAdd,
-  onDelete,
-  onBuild,
-  onDigestOne,
-  onDigestAll,
-  onSkipDigest,
-  onViewProfile,
-  building,
-  digesting,
-  profileBuilt,
-  lastBuiltAt,
-  profileText,
-  buildLabel,
-}: {
-  title: string
-  subtitle: string
-  sources: ProfileSource[]
-  onAdd: () => void
-  onDelete: (id: string) => void
-  onBuild: () => void
-  onDigestOne: (id: string) => void
-  onDigestAll: () => void
-  onSkipDigest: (id: string) => void
-  onViewProfile: () => void
-  building: boolean
-  digesting: boolean
-  profileBuilt: boolean
-  lastBuiltAt: string | null
-  profileText: string | null
-  buildLabel: string
-}) {
-  const ready = sources.filter((s) => s.digest_status === 'ready').length
-  const pending = sources.filter(
-    (s) => s.digest_status === 'pending' || s.digest_status === 'error'
-  ).length
-  const running = sources.filter((s) => s.digest_status === 'running').length
-  const hasPending = pending > 0 || running > 0
-  const buildReady = sources.length > 0 && ready > 0
-
-  return (
-    <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, letterSpacing: '-0.011em', margin: 0 }}>
-          {title}
-        </h3>
-        <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-          {sources.length} source{sources.length !== 1 ? 's' : ''}
-        </span>
-      </div>
-      <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 12px' }}>{subtitle}</p>
-
-      {/* Digest progress bar */}
-      {sources.length > 0 && (
-        <div
-          style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px',
-            padding: '6px 10px',
-            background: 'var(--color-bg-subtle)',
-            borderRadius: 'var(--radius-input)',
-            marginBottom: '12px',
-            fontSize: '11px',
-            color: 'var(--color-text-secondary)',
-          }}
-        >
-          <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
-          {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
-          {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
-        </div>
-      )}
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-        {sources.length === 0 ? (
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '20px 0',
-              fontSize: '12px',
-              color: 'var(--color-text-tertiary)',
-              border: '1px dashed var(--color-hairline)',
-              borderRadius: 'var(--radius-input)',
-            }}
-          >
-            No sources yet
-          </div>
-        ) : (
-          sources.map((s) => (
-            <SourceRow
-              key={s.id}
-              source={s}
-              onDelete={() => onDelete(s.id)}
-              onDigest={() => onDigestOne(s.id)}
-              onSkip={() => onSkipDigest(s.id)}
-            />
-          ))
-        )}
-      </div>
-
-      <Button variant="secondary" size="small" onClick={onAdd} style={{ width: '100%', marginBottom: '8px' }}>
-        + Add source
-      </Button>
-
-      {hasPending && (
-        <Button
-          variant="secondary"
-          size="small"
-          onClick={onDigestAll}
-          disabled={digesting}
-          style={{ width: '100%', marginBottom: '8px' }}
-        >
-          {digesting ? `Digesting…` : `Digest all (${pending + running})`}
-        </Button>
-      )}
-
-      <Button
-        size="small"
-        onClick={onBuild}
-        disabled={!buildReady || building}
-        style={{ width: '100%' }}
-      >
-        {building ? 'Building…' : buildLabel}
-      </Button>
-
-      {profileBuilt && (
-        <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--color-hairline)' }}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '11px',
-              color: 'var(--color-text-tertiary)',
-              marginBottom: '8px',
-            }}
-          >
-            <span style={{ color: 'var(--color-success)' }}>●</span>
-            Built {lastBuiltAt ? new Date(lastBuiltAt).toLocaleString() : ''}
-          </div>
-          <div
-            style={{
-              fontSize: '12px',
-              color: 'var(--color-text-secondary)',
-              maxHeight: '160px',
-              overflowY: 'auto',
-              whiteSpace: 'pre-wrap',
-              lineHeight: 1.5,
-            }}
-          >
-            {profileText?.slice(0, 500)}
-            {(profileText?.length || 0) > 500 ? '…' : ''}
-          </div>
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={onViewProfile}
-            style={{ width: '100%', marginTop: '12px' }}
-          >
-            View full profile
-          </Button>
-        </div>
-      )}
-    </Card>
-  )
-}
-
-function SourceRow({
-  source,
-  onDelete,
-  onDigest,
-  onSkip,
-}: {
-  source: ProfileSource
-  onDelete: () => void
-  onDigest: () => void
-  onSkip: () => void
-}) {
-  const hasContent = !!(source.extracted_text || source.raw_content || (source.metadata as any)?.needs_extraction)
-  const status = source.digest_status
-
-  const statusTone: Record<string, 'neutral' | 'success' | 'warning' | 'danger' | 'info'> = {
-    pending: 'warning',
-    running: 'info',
-    ready: 'success',
-    error: 'danger',
-    skipped: 'neutral',
-  }
-  const statusLabel: Record<string, string> = {
-    pending: 'Not digested',
-    running: 'Digesting…',
-    ready: 'Ready',
-    error: 'Error',
-    skipped: 'Skipped',
   }
 
   return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        gap: '6px',
-        padding: '8px 10px',
-        borderRadius: 'var(--radius-input)',
-        border: '1px solid var(--color-hairline)',
-        fontSize: '13px',
-      }}
-    >
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontWeight: 500,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-          >
-            {source.label}
-          </div>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px',
-              fontSize: '11px',
-              color: 'var(--color-text-tertiary)',
-              marginTop: '2px',
-              flexWrap: 'wrap',
-            }}
-          >
-            <span>{sourceTypeLabel(source.source_type)}</span>
-            <Badge tone={statusTone[status] || 'neutral'} style={{ fontSize: '10px' }}>
-              {statusLabel[status] || status}
-            </Badge>
-            {!hasContent && status === 'pending' && (
-              <Badge tone="warning" style={{ fontSize: '10px' }}>Empty</Badge>
-            )}
-          </div>
-        </div>
-        <button
-          onClick={onDelete}
-          aria-label="Delete source"
-          style={{
-            background: 'transparent',
-            border: 'none',
-            color: 'var(--color-text-tertiary)',
-            cursor: 'pointer',
-            padding: '2px 4px',
-            fontSize: '16px',
-            fontFamily: 'inherit',
-            lineHeight: 1,
-          }}
-        >
-          ×
-        </button>
-      </div>
-
-      {/* Action buttons based on digest state */}
-      {(status === 'pending' || status === 'error') && hasContent && (
-        <div style={{ display: 'flex', gap: '6px' }}>
-          <button
-            onClick={onDigest}
-            style={{
-              flex: 1,
-              padding: '4px 8px',
-              fontSize: '11px',
-              fontFamily: 'inherit',
-              color: 'var(--color-accent)',
-              background: 'transparent',
-              border: '1px solid var(--color-hairline)',
-              borderRadius: 'var(--radius-input)',
-              cursor: 'pointer',
-            }}
-          >
-            {status === 'error' ? 'Retry digest' : 'Digest'}
-          </button>
-          <button
-            onClick={onSkip}
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              fontFamily: 'inherit',
-              color: 'var(--color-text-tertiary)',
-              background: 'transparent',
-              border: '1px solid var(--color-hairline)',
-              borderRadius: 'var(--radius-input)',
-              cursor: 'pointer',
-            }}
-          >
-            Skip
-          </button>
-        </div>
-      )}
-
-      {status === 'error' && source.digest_error && (
-        <div style={{ fontSize: '10px', color: 'var(--color-danger)' }}>{source.digest_error}</div>
-      )}
-
-      {status === 'ready' && source.digest_text && (
-        <details>
-          <summary
-            style={{
-              fontSize: '10px',
-              color: 'var(--color-text-tertiary)',
-              cursor: 'pointer',
-              userSelect: 'none',
-            }}
-          >
-            View digest ({source.digest_text.length.toLocaleString()} chars)
-          </summary>
-          <div
-            style={{
-              fontSize: '11px',
-              color: 'var(--color-text-secondary)',
-              padding: '6px',
-              marginTop: '4px',
-              background: 'var(--color-bg-subtle)',
-              borderRadius: 'var(--radius-input)',
-              maxHeight: '120px',
-              overflowY: 'auto',
-              whiteSpace: 'pre-wrap',
-              lineHeight: 1.4,
-            }}
-          >
-            {source.digest_text}
-          </div>
-        </details>
-      )}
-    </div>
-  )
-}
-
-function sourceTypeLabel(type: SourceType): string {
-  const map: Record<SourceType, string> = {
-    website: 'Website',
-    linkedin: 'LinkedIn',
-    press_release: 'Press',
-    uploaded_doc: 'Document',
-    free_text: 'Notes',
-    highergov: 'HigherGov',
-    sam_gov: 'SAM.gov',
-    sba_dsbs: 'SBA DSBS',
-    usaspending: 'USASpending',
-    gsa_elibrary: 'GSA eLibrary',
-    cape_statement: 'Cape statement',
-  }
-  return map[type] || type
-}
-
-/* ========================================================================== */
-/* Reconciliation column                                                      */
-/* ========================================================================== */
-
-function ReconciliationColumn({
-  mode,
-  commercialReady,
-  federalReady,
-  reconciliation,
-  onBuild,
-  building,
-  onCreateStrategicFromFramework,
-}: {
-  mode: 'reconcile' | 'framework'
-  commercialReady: boolean
-  federalReady: boolean
-  reconciliation: Reconciliation | null
-  onBuild: () => void
-  building: boolean
-  onCreateStrategicFromFramework: () => void
-}) {
-  const isFramework = mode === 'framework'
-  const canBuild = isFramework ? commercialReady : commercialReady || federalReady
-
-  const title = isFramework ? 'Federal Entry Framework' : 'Reconciliation'
-  const subtitle = isFramework
-    ? 'Recommended federal entry plan (built from commercial profile)'
-    : 'Alignment, divergence, and strategic suggestions'
-
-  const buildLabel = isFramework
-    ? reconciliation
-      ? 'Re-run framework'
-      : 'Build entry framework'
-    : reconciliation
-    ? 'Re-run reconciliation'
-    : 'Run reconciliation'
-
-  // Has this reconciliation row actually been rendered for this mode?
-  // If posture flipped between runs, we might have a reconcile row but be in framework mode.
-  const recMatchesMode = reconciliation && reconciliation.mode === mode
-
-  // Is the framework/reconciliation up-to-date with the current prompt template?
-  // v1 = pre-PSC-reference (stale D3xx/7030 codes)
-  // v2+ = grounded in GSA April 2025 + NAICS 2022 reference tables
-  // Must bump this when migrations update prompt_variants.version further.
-  const CURRENT_PROMPT_VERSION = 2
-  const promptIsCurrent =
-    (reconciliation?.prompt_template_version ?? 1) >= CURRENT_PROMPT_VERSION
-
-  return (
-    <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, letterSpacing: '-0.011em', margin: 0 }}>
-          {title}
-        </h3>
-        {isFramework && <Badge tone="info">Framework mode</Badge>}
-      </div>
-      <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 16px' }}>
-        {subtitle}
-      </p>
-
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '10px' }}>
-        <PrerequisiteRow label="Commercial profile" ready={commercialReady} />
-        {!isFramework && <PrerequisiteRow label="Federal profile" ready={federalReady} />}
-
-        {isFramework && (
-          <div
-            style={{
-              fontSize: '12px',
-              color: 'var(--color-text-secondary)',
-              padding: '10px 12px',
-              background: 'var(--color-bg-subtle)',
-              borderRadius: 'var(--radius-input)',
-              lineHeight: 1.5,
-            }}
-          >
-            This tenant has <strong>no existing federal presence</strong>. The framework will
-            propose NAICS, PSC codes, certifications to pursue, keywords, and a narrative for
-            federal market entry — built purely from the commercial profile.
-          </div>
-        )}
-
-        {!isFramework && !federalReady && commercialReady && (
-          <div
-            style={{
-              fontSize: '12px',
-              color: 'var(--color-text-secondary)',
-              padding: '10px 12px',
-              background: 'var(--color-bg-subtle)',
-              borderRadius: 'var(--radius-input)',
-              lineHeight: 1.5,
-            }}
-          >
-            No federal profile yet → reconciliation operates in <strong>suggestions mode</strong>,
-            proposing what the federal profile <em>should</em> look like.
-          </div>
-        )}
-
-        {recMatchesMode && reconciliation && (
-          <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-            <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-              v{reconciliation.version}
-              {reconciliation.last_built_at &&
-                ' · ' + new Date(reconciliation.last_built_at).toLocaleString()}
-            </div>
-
-            {isFramework ? (
-              <>
-                {reconciliation.suggestions && (
-                  <Section title="Framework" tone="info" text={reconciliation.suggestions} />
-                )}
-                {reconciliation.structured_data && (
-                  <FrameworkStructuredPreview data={reconciliation.structured_data} />
-                )}
-              </>
-            ) : (
-              <>
-                {reconciliation.alignment && <Section title="Alignment" tone="success" text={reconciliation.alignment} />}
-                {reconciliation.divergence && <Section title="Divergence" tone="warning" text={reconciliation.divergence} />}
-                {reconciliation.suggestions && <Section title="Suggestions" tone="info" text={reconciliation.suggestions} />}
-              </>
-            )}
-          </div>
-        )}
-
-        {!recMatchesMode && reconciliation && (
-          <div
-            style={{
-              fontSize: '12px',
-              color: 'var(--color-text-tertiary)',
-              padding: '10px 12px',
-              background: 'var(--color-bg-subtle)',
-              borderRadius: 'var(--radius-input)',
-              fontStyle: 'italic',
-            }}
-          >
-            Previous output was built in {reconciliation.mode} mode. Re-run to refresh for the
-            current posture.
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
-        <Button size="small" onClick={onBuild} disabled={!canBuild || building} style={{ width: '100%' }}>
-          {building ? 'Running…' : buildLabel}
-        </Button>
-        {isFramework && recMatchesMode && reconciliation?.structured_data && (
-          <>
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={onCreateStrategicFromFramework}
-              disabled={!promptIsCurrent}
-              style={{ width: '100%' }}
-            >
-              Create strategic profile from these suggestions
-            </Button>
-            {!promptIsCurrent && (
-              <div
-                style={{
-                  fontSize: '11px',
-                  color: 'var(--color-warning)',
-                  padding: '8px 10px',
-                  background: 'rgba(212, 146, 10, 0.08)',
-                  border: '1px solid rgba(212, 146, 10, 0.2)',
-                  borderRadius: 'var(--radius-input)',
-                  lineHeight: 1.4,
-                }}
-              >
-                This framework (v{reconciliation.prompt_template_version || 1}) was built with an outdated PSC taxonomy (retired D3xx/7030 codes).
-                Re-run the framework to refresh with current GSA April 2025 codes before creating a strategic profile.
-              </div>
-            )}
-          </>
-        )}
-      </div>
-    </Card>
-  )
-}
-
-function FrameworkStructuredPreview({ data }: { data: any }) {
-  if (!data) return null
-  const primary = data.primary_naics || []
-  const allNaics = data.all_naics || []
-  const psc = data.psc_codes || []
-  const certs = data.certifications || []
-  const agencies = data.target_agencies || []
-  const keywords = data.keywords || []
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-      {data.wedge_capability && (
-        <MiniSection label="Wedge capability">
-          <div style={{ fontSize: '12px', color: 'var(--color-text-primary)' }}>
-            {data.wedge_capability}
-          </div>
-        </MiniSection>
-      )}
-      {primary.length > 0 && (
-        <MiniSection label="Primary NAICS">
-          <ChipRow items={primary.map((c: string) => `NAICS ${c}`)} />
-        </MiniSection>
-      )}
-      {allNaics.length > primary.length && (
-        <MiniSection label={`All NAICS (${allNaics.length})`}>
-          <ChipRow
-            items={allNaics.slice(0, 12).map((n: any) =>
-              typeof n === 'string' ? n : `${n.code}${n.priority ? ` (${n.priority})` : ''}`
-            )}
-          />
-        </MiniSection>
-      )}
-      {psc.length > 0 && (
-        <MiniSection label={`PSC codes (${psc.length})`}>
-          <ChipRow items={psc.slice(0, 10).map((p: any) => (typeof p === 'string' ? p : p.code))} />
-        </MiniSection>
-      )}
-      {certs.length > 0 && (
-        <MiniSection label="Certifications">
-          <ChipRow
-            items={certs
-              .filter((c: any) => c.recommendation !== 'SKIP')
-              .slice(0, 8)
-              .map((c: any) =>
-                typeof c === 'string' ? c : `${c.name}${c.recommendation ? ` · ${c.recommendation}` : ''}`
-              )}
-          />
-        </MiniSection>
-      )}
-      {agencies.length > 0 && (
-        <MiniSection label="Target agencies">
-          <ChipRow items={agencies.slice(0, 10)} />
-        </MiniSection>
-      )}
-      {keywords.length > 0 && (
-        <MiniSection label={`SAM keywords (${keywords.length})`}>
-          <ChipRow items={keywords.slice(0, 15)} />
-        </MiniSection>
-      )}
-    </div>
-  )
-}
-
-function MiniSection({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <div
-        style={{
-          fontSize: '10px',
-          fontWeight: 500,
-          letterSpacing: '0.02em',
-          textTransform: 'uppercase',
-          color: 'var(--color-text-tertiary)',
-          marginBottom: '4px',
-        }}
-      >
-        {label}
-      </div>
-      {children}
-    </div>
-  )
-}
-
-function ChipRow({ items }: { items: string[] }) {
-  return (
-    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-      {items.map((s, i) => (
-        <Badge key={i}>{s}</Badge>
-      ))}
-    </div>
-  )
-}
-
-/* ========================================================================== */
-/* Federal column with posture selector                                       */
-/* ========================================================================== */
-
-function FederalColumnWithPosture({
-  posture,
-  onSetPosture,
-  sources,
-  onAdd,
-  onDelete,
-  onBuild,
-  onDigestOne,
-  onDigestAll,
-  onSkipDigest,
-  onViewProfile,
-  building,
-  digesting,
-  profileBuilt,
-  lastBuiltAt,
-  profileText,
-}: {
-  posture: 'unknown' | 'has_federal' | 'no_federal'
-  onSetPosture: (p: 'unknown' | 'has_federal' | 'no_federal') => void
-  sources: ProfileSource[]
-  onAdd: () => void
-  onDelete: (id: string) => void
-  onBuild: () => void
-  onDigestOne: (id: string) => void
-  onDigestAll: () => void
-  onSkipDigest: (id: string) => void
-  onViewProfile: () => void
-  building: boolean
-  digesting: boolean
-  profileBuilt: boolean
-  lastBuiltAt: string | null
-  profileText: string | null
-}) {
-  const [showPostureInfo] = useState(posture === 'unknown')
-
-  const ready = sources.filter((s) => s.digest_status === 'ready').length
-  const pending = sources.filter(
-    (s) => s.digest_status === 'pending' || s.digest_status === 'error'
-  ).length
-  const running = sources.filter((s) => s.digest_status === 'running').length
-  const hasPending = pending > 0 || running > 0
-  const buildReady = sources.length > 0 && ready > 0
-
-  return (
-    <Card padding="standard" style={{ display: 'flex', flexDirection: 'column', minHeight: '480px' }}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', marginBottom: '4px' }}>
-        <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '18px', fontWeight: 600, letterSpacing: '-0.011em', margin: 0 }}>
-          Federal
-        </h3>
-        <span style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
-          {sources.length} source{sources.length !== 1 ? 's' : ''}
-        </span>
-      </div>
-      <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 12px' }}>
-        What exists in federal systems of record
-      </p>
-
-      {/* Posture selector */}
-      <div style={{ marginBottom: '16px' }}>
-        <div
-          style={{
-            fontSize: '10px',
-            fontWeight: 500,
-            letterSpacing: '0.02em',
-            textTransform: 'uppercase',
-            color: 'var(--color-text-tertiary)',
-            marginBottom: '6px',
-          }}
-        >
-          Federal posture
-        </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <PostureButton active={posture === 'has_federal'} onClick={() => onSetPosture('has_federal')}>
-            Has federal
-          </PostureButton>
-          <PostureButton active={posture === 'no_federal'} onClick={() => onSetPosture('no_federal')}>
-            No federal yet
-          </PostureButton>
-          <PostureButton active={posture === 'unknown'} onClick={() => onSetPosture('unknown')}>
-            Not sure
-          </PostureButton>
-        </div>
-        {showPostureInfo && posture === 'unknown' && (
-          <div
-            style={{
-              fontSize: '11px',
-              color: 'var(--color-text-secondary)',
-              padding: '8px 10px',
-              background: 'var(--color-bg-subtle)',
-              borderRadius: 'var(--radius-input)',
-              marginTop: '8px',
-              lineHeight: 1.5,
-            }}
-          >
-            Pick <strong>Has federal</strong> if the company has a SAM.gov entity, federal awards,
-            or a capability statement. Pick <strong>No federal yet</strong> if they're a purely
-            commercial company — the Reconciliation column will build a federal entry framework
-            instead.
-          </div>
-        )}
-      </div>
-
-      {/* If no_federal, hide source adder and show a different empty state */}
-      {posture === 'no_federal' ? (
-        <div
-          style={{
-            flex: 1,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            textAlign: 'center',
-            padding: '24px 16px',
-            border: '1px dashed var(--color-hairline)',
-            borderRadius: 'var(--radius-input)',
-            color: 'var(--color-text-secondary)',
-            fontSize: '13px',
-            lineHeight: 1.5,
-          }}
-        >
-          <div style={{ marginBottom: '8px', color: 'var(--color-text-primary)', fontWeight: 500 }}>
-            Federal profile skipped
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>
-            The Reconciliation column on the right will build a Federal Entry Framework from the
-            commercial profile.
-          </div>
-        </div>
-      ) : (
+    <Modal
+      open={true}
+      onClose={onClose}
+      title={`Surface Research · ${profileName}`}
+      size="full"
+      footer={
         <>
-          {/* Digest progress */}
-          {sources.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '6px 10px',
-                background: 'var(--color-bg-subtle)',
-                borderRadius: 'var(--radius-input)',
-                marginBottom: '12px',
-                fontSize: '11px',
-                color: 'var(--color-text-secondary)',
-              }}
-            >
-              <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
-              {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
-              {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
-            </div>
-          )}
-
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '16px' }}>
-            {sources.length === 0 ? (
-              <div
-                style={{
-                  textAlign: 'center',
-                  padding: '20px 0',
-                  fontSize: '12px',
-                  color: 'var(--color-text-tertiary)',
-                  border: '1px dashed var(--color-hairline)',
-                  borderRadius: 'var(--radius-input)',
-                }}
-              >
-                No sources yet
-              </div>
-            ) : (
-              sources.map((s) => (
-                <SourceRow
-                  key={s.id}
-                  source={s}
-                  onDelete={() => onDelete(s.id)}
-                  onDigest={() => onDigestOne(s.id)}
-                  onSkip={() => onSkipDigest(s.id)}
-                />
-              ))
-            )}
+          <div style={{ flex: 1, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+            {entries.length === 0
+              ? 'Add evidence to the corpus until the platform reports it can support a compelling brief.'
+              : computing
+                ? 'Recomputing sufficiency…'
+                : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} in the corpus`}
           </div>
-
-          <Button variant="secondary" size="small" onClick={onAdd} style={{ width: '100%', marginBottom: '8px' }}>
-            + Add source
-          </Button>
-          {hasPending && (
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={onDigestAll}
-              disabled={digesting}
-              style={{ width: '100%', marginBottom: '8px' }}
-            >
-              {digesting ? 'Digesting…' : `Digest all (${pending + running})`}
-            </Button>
-          )}
-          <Button
-            size="small"
-            onClick={onBuild}
-            disabled={!buildReady || building}
-            style={{ width: '100%' }}
-          >
-            {building ? 'Building…' : 'Build federal profile'}
-          </Button>
-
-          {profileBuilt && (
-            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--color-hairline)' }}>
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '11px',
-                  color: 'var(--color-text-tertiary)',
-                  marginBottom: '8px',
-                }}
-              >
-                <span style={{ color: 'var(--color-success)' }}>●</span>
-                Built {lastBuiltAt ? new Date(lastBuiltAt).toLocaleString() : ''}
-              </div>
-              <div
-                style={{
-                  fontSize: '12px',
-                  color: 'var(--color-text-secondary)',
-                  maxHeight: '160px',
-                  overflowY: 'auto',
-                  whiteSpace: 'pre-wrap',
-                  lineHeight: 1.5,
-                }}
-              >
-                {profileText?.slice(0, 500)}
-                {(profileText?.length || 0) > 500 ? '…' : ''}
-              </div>
-              <Button
-                variant="secondary"
-                size="small"
-                onClick={onViewProfile}
-                style={{ width: '100%', marginTop: '12px' }}
-              >
-                View full profile
-              </Button>
-            </div>
-          )}
+          <Button variant="secondary" onClick={onClose}>Close</Button>
         </>
-      )}
-    </Card>
-  )
-}
-
-function PostureButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        flex: 1,
-        padding: '6px 10px',
-        fontSize: '12px',
-        fontFamily: 'inherit',
-        color: active ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-        background: active ? 'var(--color-bg-subtle)' : 'transparent',
-        border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-hairline)'}`,
-        borderRadius: 'var(--radius-input)',
-        cursor: 'pointer',
-        fontWeight: active ? 500 : 400,
-      }}
+      }
     >
-      {children}
-    </button>
-  )
-}
+      <style>{STYLES}</style>
 
-function PrerequisiteRow({ label, ready }: { label: string; ready: boolean }) {
-  return (
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        fontSize: '13px',
-        color: ready ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-      }}
-    >
-      <span
-        style={{
-          display: 'inline-block',
-          width: '8px',
-          height: '8px',
-          borderRadius: '50%',
-          background: ready ? 'var(--color-success)' : 'var(--color-hairline)',
-        }}
-      />
-      {label}
-    </div>
-  )
-}
+      <div className="sr-shell">
+        {/* INTRO */}
+        <div className="sr-intro">
+          <strong>Add evidence freely.</strong> Any source, any order, any number of entries.
+          The platform reports when the corpus can support a compelling brief for the chosen Frame.
+          You decide when to stop iterating.
+        </div>
 
-function Section({
-  title,
-  tone,
-  text,
-}: {
-  title: string
-  tone: 'success' | 'warning' | 'info'
-  text: string
-}) {
-  return (
-    <div>
-      <div style={{ marginBottom: '6px' }}>
-        <Badge tone={tone}>{title}</Badge>
-      </div>
-      <div
-        style={{
-          fontSize: '12px',
-          color: 'var(--color-text-secondary)',
-          whiteSpace: 'pre-wrap',
-          lineHeight: 1.5,
-        }}
-      >
-        {text}
-      </div>
-    </div>
-  )
-}
-
-/* ========================================================================== */
-/* Strategic profile card                                                     */
-/* ========================================================================== */
-
-function StrategicProfileCard({
-  profile,
-  readiness,
-  onEdit,
-  onDelete,
-  onConfigureFrame,
-  onOpenResearch,
-  onConfigureStones,
-}: {
-  profile: StrategicProfile
-  readiness?: ReadinessState
-  onEdit: () => void
-  onDelete: () => void
-  onConfigureFrame: () => void
-  onOpenResearch: () => void
-  onConfigureStones: () => void
-}) {
-  const r = readiness || {
-    cbp_ready: false,
-    frame_ready: false,
-    research_ready: false,
-    stones_ready: false,
-    generate_ready: false,
-  }
-
-  return (
-    <Card padding="standard">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '6px' }}>
-        <div style={{ flex: 1 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-            <h4 style={{ fontSize: '16px', fontWeight: 600, margin: 0 }}>{profile.name}</h4>
-            {profile.is_default && <Badge tone="info">Default</Badge>}
+        {/* SCORE PANEL */}
+        <div className={`sr-score-card${isSufficient ? ' ready' : ''}`}>
+          <div className="sr-score-head">
+            <div>
+              <div className="sr-score-eyebrow">SUFFICIENCY READ</div>
+              <div className="sr-score-headline">
+                {totalScore} of {requiredScore}
+                {isSufficient && <span className="sr-score-ready-tag">Ready</span>}
+              </div>
+              <div className="sr-score-sub">
+                {isSufficient
+                  ? 'The corpus can support a compelling brief. Proceed to Stones, then generate.'
+                  : `Need ${requiredScore - totalScore} more dimension points before generating the brief.`}
+              </div>
+            </div>
+            <div className="sr-score-progress-wrap">
+              <div
+                className="sr-score-progress-bar"
+                style={{ width: `${Math.min(100, (totalScore / requiredScore) * 100)}%` }}
+              />
+            </div>
           </div>
-          {profile.description && (
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: 0 }}>
-              {profile.description}
-            </p>
+
+          <div className="sr-dim-grid">
+            {dimensions.map((dim) => {
+              const d = dimensionScores[dim]
+              const meta = DIMENSION_META[dim]
+              return (
+                <div key={dim} className="sr-dim">
+                  <div className="sr-dim-head">
+                    <span className="sr-dim-label">{meta.label}</span>
+                    <span className={`sr-dim-score score-${d}`}>{d}/3</span>
+                  </div>
+                  <div className="sr-dim-pips">
+                    {[1, 2, 3].map((n) => (
+                      <span key={n} className={`sr-dim-pip${d >= n ? ' filled' : ''}`} />
+                    ))}
+                  </div>
+                  <div className="sr-dim-hint">{meta.hint}</div>
+                </div>
+              )
+            })}
+          </div>
+
+          {!frame?.is_complete && (
+            <div className="sr-frame-warn">
+              Framing the Frame is incomplete. The brief needs all four blocks answered before generation,
+              and sufficiency reads against the chosen Frame.
+            </div>
           )}
         </div>
-        <div style={{ display: 'flex', gap: '4px' }}>
-          <ActionIcon onClick={onEdit} label="Edit">✎</ActionIcon>
-          <ActionIcon onClick={onDelete} label="Delete" danger>×</ActionIcon>
-        </div>
-      </div>
-      {profile.positioning && (
-        <p
-          style={{
-            fontSize: '12px',
-            color: 'var(--color-text-tertiary)',
-            margin: '8px 0 0',
-            display: '-webkit-box',
-            WebkitLineClamp: 3,
-            WebkitBoxOrient: 'vertical',
-            overflow: 'hidden',
-            lineHeight: 1.5,
-          }}
-        >
-          {profile.positioning}
-        </p>
-      )}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px', marginTop: '12px' }}>
-        {(profile.target_agencies || []).slice(0, 3).map((a) => (
-          <Badge key={a}>{a}</Badge>
-        ))}
-        {(profile.target_naics || []).slice(0, 3).map((n) => (
-          <Badge key={n}>NAICS {n}</Badge>
-        ))}
-      </div>
 
-      {/* Recon Engine workflow */}
-      <div
-        style={{
-          marginTop: '14px',
-          paddingTop: '14px',
-          borderTop: '1px solid var(--color-hairline)',
-        }}
-      >
-        <div
-          style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '8px',
-          }}
-        >
-          <div
-            style={{
-              fontSize: '10px',
-              fontWeight: 700,
-              letterSpacing: '0.14em',
-              color: 'var(--color-text-tertiary)',
-              textTransform: 'uppercase',
-            }}
-          >
-            Recon Engine
+        {/* CORPUS */}
+        <div className="sr-corpus">
+          <div className="sr-corpus-head">
+            <h3>Corpus</h3>
+            <button
+              type="button"
+              className="sr-add-btn"
+              onClick={() => setShowAddEntry(true)}
+            >
+              + Add entry
+            </button>
           </div>
-          <ReadinessChips r={r} />
-        </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          <WorkflowButton
-            ready={r.frame_ready}
-            label="Framing the Frame"
-            onClick={onConfigureFrame}
-            number="01"
-          />
-          <WorkflowButton
-            ready={r.research_ready}
-            label="Surface Research"
-            onClick={onOpenResearch}
-            number="02"
-          />
-          <WorkflowButton
-            ready={r.stones_ready}
-            label="Configure Stones"
-            onClick={onConfigureStones}
-            number="03"
-          />
-          <GenerateBriefButton readiness={r} />
+          {entries.length === 0 ? (
+            <div className="sr-empty">
+              <div className="sr-empty-title">No entries yet.</div>
+              <div className="sr-empty-sub">
+                Click <strong>+ Add entry</strong> to drop in a HigherGov pull, USASpending query result,
+                paste-in from a market report, or your own observation note.
+              </div>
+            </div>
+          ) : (
+            <ul className="sr-entries">
+              {entries.map((e) => (
+                <li key={e.id} className="sr-entry">
+                  <div className="sr-entry-icon">{ENTRY_KIND_META[e.entry_kind].icon}</div>
+                  <div className="sr-entry-body">
+                    <div className="sr-entry-title">{e.title}</div>
+                    <div className="sr-entry-meta">
+                      <span className="sr-entry-kind">{ENTRY_KIND_META[e.entry_kind].label}</span>
+                      {e.source_label && <span className="sr-entry-source">· {e.source_label}</span>}
+                      <span className="sr-entry-date">
+                        · {new Date(e.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                    {e.signal_dimensions.length > 0 && (
+                      <div className="sr-entry-dims">
+                        {e.signal_dimensions.map((d) => (
+                          <span key={d} className="sr-entry-dim">
+                            {DIMENSION_META[d].label}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="sr-entry-delete"
+                    onClick={() => handleDeleteEntry(e.id)}
+                    aria-label="Delete entry"
+                  >
+                    ×
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
-    </Card>
-  )
-}
 
-function ReadinessChips({ r }: { r: ReadinessState }) {
-  const dots = [
-    { ready: r.cbp_ready, label: 'CBP' },
-    { ready: r.frame_ready, label: 'Frame' },
-    { ready: r.research_ready, label: 'Research' },
-    { ready: r.stones_ready, label: 'Stones' },
-  ]
-  return (
-    <div style={{ display: 'flex', gap: '4px' }}>
-      {dots.map((d) => (
-        <span
-          key={d.label}
-          title={`${d.label}: ${d.ready ? 'ready' : 'incomplete'}`}
-          style={{
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            background: d.ready ? '#2E6B3E' : 'var(--color-hairline)',
-          }}
+      {showAddEntry && (
+        <AddEntryDialog
+          onCancel={() => setShowAddEntry(false)}
+          onSubmit={handleAddEntry}
         />
-      ))}
-    </div>
-  )
-}
-
-function WorkflowButton({
-  ready, label, onClick, number,
-}: {
-  ready: boolean
-  label: string
-  onClick: () => void
-  number: string
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        gap: '10px',
-        width: '100%',
-        padding: '8px 12px',
-        background: ready ? 'rgba(46,107,62,0.05)' : 'transparent',
-        color: 'var(--color-text-primary)',
-        border: ready ? '1px solid rgba(46,107,62,0.30)' : '1px solid var(--color-hairline)',
-        borderRadius: 'var(--radius-input)',
-        fontSize: '12px',
-        fontWeight: 500,
-        fontFamily: 'inherit',
-        cursor: 'pointer',
-        textAlign: 'left',
-        transition: 'var(--transition-default)',
-      }}
-      onMouseEnter={(e) => {
-        if (!ready) {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-text-tertiary)'
-        }
-      }}
-      onMouseLeave={(e) => {
-        if (!ready) {
-          (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--color-hairline)'
-        }
-      }}
-    >
-      <span
-        style={{
-          fontSize: '9px',
-          fontWeight: 700,
-          color: ready ? '#2E6B3E' : 'var(--color-text-tertiary)',
-          background: ready ? 'rgba(46,107,62,0.10)' : 'var(--color-bg-subtle)',
-          padding: '2px 5px',
-          borderRadius: '3px',
-          letterSpacing: '0.06em',
-        }}
-      >
-        {number}
-      </span>
-      <span style={{ flex: 1 }}>{label}</span>
-      <span
-        style={{
-          fontSize: '10px',
-          color: ready ? '#2E6B3E' : 'var(--color-text-tertiary)',
-          fontWeight: 600,
-        }}
-      >
-        {ready ? '✓ Ready' : 'Open'}
-      </span>
-    </button>
-  )
-}
-
-function GenerateBriefButton({ readiness }: { readiness: ReadinessState }) {
-  let label = 'Generate Recon Brief'
-  let disabled = false
-
-  if (!readiness.cbp_ready) {
-    label = 'Build CBP first'
-    disabled = true
-  } else if (!readiness.frame_ready) {
-    label = 'Frame the brief first'
-    disabled = true
-  } else if (!readiness.research_ready) {
-    label = 'Build Surface Research first'
-    disabled = true
-  } else if (!readiness.stones_ready) {
-    label = 'Configure Stones first'
-    disabled = true
-  }
-
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => {
-        // Brief generator wires up in gate 4b. For now, this button is a
-        // visual gate that becomes clickable when all four prerequisites
-        // are ready. Clicking it before gate 4b ships shows a placeholder.
-        if (!disabled) {
-          window.alert(
-            'Brief generation arrives in gate 4b. All four prerequisites are ready — the generator function will produce the paired Recon Brief + Options deck once shipped.',
-          )
-        }
-      }}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        width: '100%',
-        padding: '10px 14px',
-        marginTop: '4px',
-        background: disabled ? 'var(--color-bg-subtle)' : '#F0A742',
-        color: disabled ? 'var(--color-text-tertiary)' : '#fff',
-        border: 'none',
-        borderRadius: 'var(--radius-input)',
-        fontSize: '13px',
-        fontWeight: 600,
-        fontFamily: 'inherit',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        letterSpacing: '-0.003em',
-      }}
-    >
-      ⊕ {label}
-    </button>
-  )
-}
-
-function ActionIcon({
-  onClick,
-  label,
-  danger,
-  children,
-}: {
-  onClick: () => void
-  label: string
-  danger?: boolean
-  children: React.ReactNode
-}) {
-  const style: CSSProperties = {
-    background: 'transparent',
-    border: 'none',
-    color: danger ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
-    cursor: 'pointer',
-    padding: '4px 8px',
-    fontSize: '14px',
-    fontFamily: 'inherit',
-    lineHeight: 1,
-    borderRadius: 'var(--radius-input)',
-  }
-  return (
-    <button onClick={onClick} aria-label={label} style={style}>
-      {children}
-    </button>
-  )
-}
-
-
-/* ========================================================================== */
-/* Profile view modal                                                         */
-/* ========================================================================== */
-
-function ProfileViewModal({
-  title,
-  text,
-  structured,
-  builtAt,
-  sourceCount,
-  onClose,
-}: {
-  title: string
-  text: string
-  structured: any
-  builtAt: string | null
-  sourceCount: number | null
-  onClose: () => void
-}) {
-  const [tab, setTab] = useState<'narrative' | 'structured' | 'raw'>('narrative')
-
-  async function copyToClipboard(content: string) {
-    try {
-      await navigator.clipboard.writeText(content)
-    } catch {
-      // no-op
-    }
-  }
-
-  const rawJson = structured ? JSON.stringify(structured, null, 2) : '(no structured data)'
-
-  return (
-    <Modal open={true} onClose={onClose} title={title} size="xl">
-      {/* Meta row */}
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          fontSize: '12px',
-          color: 'var(--color-text-tertiary)',
-          marginBottom: '16px',
-          paddingBottom: '12px',
-          borderBottom: '1px solid var(--color-hairline)',
-        }}
-      >
-        {sourceCount !== null && (
-          <span>
-            Built from <strong>{sourceCount}</strong> source{sourceCount !== 1 ? 's' : ''}
-          </span>
-        )}
-        {builtAt && <span>·</span>}
-        {builtAt && <span>{new Date(builtAt).toLocaleString()}</span>}
-      </div>
-
-      {/* Tab switcher */}
-      <div
-        style={{
-          display: 'flex',
-          gap: '4px',
-          marginBottom: '16px',
-          borderBottom: '1px solid var(--color-hairline)',
-        }}
-      >
-        <TabButton active={tab === 'narrative'} onClick={() => setTab('narrative')}>
-          Narrative
-        </TabButton>
-        {structured && (
-          <TabButton active={tab === 'structured'} onClick={() => setTab('structured')}>
-            Structured
-          </TabButton>
-        )}
-        <TabButton active={tab === 'raw'} onClick={() => setTab('raw')}>
-          Raw JSON
-        </TabButton>
-      </div>
-
-      {/* Tab content */}
-      <div
-        style={{
-          maxHeight: '60vh',
-          overflowY: 'auto',
-          padding: '4px 0',
-        }}
-      >
-        {tab === 'narrative' && (
-          <div
-            style={{
-              fontSize: '14px',
-              lineHeight: 1.6,
-              color: 'var(--color-text-primary)',
-              whiteSpace: 'pre-wrap',
-              fontFamily: 'var(--font-text)',
-            }}
-          >
-            {text || '(empty)'}
-          </div>
-        )}
-
-        {tab === 'structured' && structured && (
-          <StructuredPretty data={structured} />
-        )}
-
-        {tab === 'raw' && (
-          <pre
-            style={{
-              fontSize: '12px',
-              lineHeight: 1.5,
-              fontFamily: 'var(--font-mono)',
-              background: 'var(--color-bg-subtle)',
-              padding: '12px',
-              borderRadius: 'var(--radius-input)',
-              overflowX: 'auto',
-              color: 'var(--color-text-primary)',
-              margin: 0,
-            }}
-          >
-            {rawJson}
-          </pre>
-        )}
-      </div>
-
-      {/* Footer */}
-      <div
-        style={{
-          marginTop: '16px',
-          paddingTop: '12px',
-          borderTop: '1px solid var(--color-hairline)',
-          display: 'flex',
-          justifyContent: 'flex-end',
-          gap: '8px',
-        }}
-      >
-        <Button
-          variant="secondary"
-          size="small"
-          onClick={() => copyToClipboard(tab === 'raw' ? rawJson : text)}
-        >
-          Copy {tab === 'raw' ? 'JSON' : 'text'}
-        </Button>
-        <Button size="small" onClick={onClose}>
-          Close
-        </Button>
-      </div>
+      )}
     </Modal>
   )
 }
 
-function TabButton({
-  active,
-  onClick,
-  children,
+// =============================================================================
+// ADD ENTRY DIALOG
+// =============================================================================
+function AddEntryDialog({
+  onCancel, onSubmit,
 }: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
+  onCancel: () => void
+  onSubmit: (entry: {
+    kind: SurfaceEntryKind
+    title: string
+    sourceLabel?: string
+    sourceUrl?: string
+    rawText?: string
+    dimensions: SignalDimension[]
+  }) => void
 }) {
+  const [kind, setKind] = useState<SurfaceEntryKind>('paste_in')
+  const [title, setTitle] = useState('')
+  const [sourceLabel, setSourceLabel] = useState('')
+  const [sourceUrl, setSourceUrl] = useState('')
+  const [rawText, setRawText] = useState('')
+  const [selectedDims, setSelectedDims] = useState<Set<SignalDimension>>(new Set())
+
+  const dimensions: SignalDimension[] = [
+    'market_sizing', 'peer_cohort', 'vehicle_landscape', 'agency_map', 'doppelganger', 'trajectory',
+  ]
+
+  function toggleDim(d: SignalDimension) {
+    setSelectedDims((prev) => {
+      const next = new Set(prev)
+      if (next.has(d)) next.delete(d)
+      else next.add(d)
+      return next
+    })
+  }
+
+  function handleSubmit() {
+    if (!title.trim()) return
+    onSubmit({
+      kind,
+      title: title.trim(),
+      sourceLabel: sourceLabel.trim() || undefined,
+      sourceUrl: sourceUrl.trim() || undefined,
+      rawText: rawText.trim() || undefined,
+      dimensions: Array.from(selectedDims),
+    })
+  }
+
+  // The pull kinds are stubbed for gate 4a — they'll be wired to actual API
+  // calls in gate 4b. For now, the consultant pastes results manually.
+  const isPullKind = kind === 'highergov_pull' || kind === 'usaspending_pull'
+
   return (
-    <button
-      onClick={onClick}
-      style={{
-        padding: '8px 14px',
-        fontSize: '13px',
-        fontFamily: 'inherit',
-        color: active ? 'var(--color-text-primary)' : 'var(--color-text-tertiary)',
-        background: 'transparent',
-        border: 'none',
-        borderBottom: `2px solid ${active ? 'var(--color-accent)' : 'transparent'}`,
-        cursor: 'pointer',
-        fontWeight: active ? 500 : 400,
-        marginBottom: '-1px',
-      }}
-    >
-      {children}
-    </button>
-  )
-}
+    <div className="sr-dialog-backdrop" onClick={onCancel}>
+      <div className="sr-dialog" onClick={(e) => e.stopPropagation()}>
+        <h3 className="sr-dialog-title">Add corpus entry</h3>
 
-function StructuredPretty({ data }: { data: any }) {
-  if (!data || typeof data !== 'object') {
-    return <div style={{ color: 'var(--color-text-tertiary)' }}>(no structured data)</div>
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-      {Object.entries(data).map(([key, value]) => (
-        <StructuredField key={key} label={key} value={value} />
-      ))}
-    </div>
-  )
-}
-
-function StructuredField({ label, value }: { label: string; value: any }) {
-  const prettyLabel = label
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (c) => c.toUpperCase())
-
-  const labelStyle: CSSProperties = {
-    fontSize: '11px',
-    fontWeight: 500,
-    textTransform: 'uppercase',
-    letterSpacing: '0.04em',
-    color: 'var(--color-text-tertiary)',
-    marginBottom: '4px',
-  }
-
-  // Null / undefined / empty
-  if (value === null || value === undefined || value === '') {
-    return (
-      <div>
-        <div style={labelStyle}>{prettyLabel}</div>
-        <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>—</div>
-      </div>
-    )
-  }
-
-  // Array of strings
-  if (Array.isArray(value) && value.every((v) => typeof v === 'string' || typeof v === 'number')) {
-    return (
-      <div>
-        <div style={labelStyle}>{prettyLabel}</div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-          {value.map((v, i) => (
-            <Badge key={i}>{String(v)}</Badge>
-          ))}
+        <div className="sr-dialog-row">
+          <label>Entry kind</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value as SurfaceEntryKind)}>
+            <option value="paste_in">Paste-in (text from a market report, search result, etc.)</option>
+            <option value="note">Note (your own observation or synthesis)</option>
+            <option value="fact">Extracted fact (a single specific claim with a value)</option>
+            <option value="highergov_pull">HigherGov pull (stub — API integration in gate 4b)</option>
+            <option value="usaspending_pull">USASpending pull (stub — API integration in gate 4b)</option>
+          </select>
         </div>
-      </div>
-    )
-  }
 
-  // Array of objects
-  if (Array.isArray(value)) {
-    return (
-      <div>
-        <div style={labelStyle}>{prettyLabel} ({value.length})</div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {value.map((item, i) => (
-            <div
-              key={i}
-              style={{
-                fontSize: '12px',
-                padding: '6px 10px',
-                background: 'var(--color-bg-subtle)',
-                borderRadius: 'var(--radius-input)',
-                fontFamily: 'var(--font-mono)',
-              }}
-            >
-              {typeof item === 'object' ? JSON.stringify(item) : String(item)}
-            </div>
-          ))}
-        </div>
-      </div>
-    )
-  }
-
-  // Nested object
-  if (typeof value === 'object') {
-    return (
-      <div>
-        <div style={labelStyle}>{prettyLabel}</div>
-        <pre
-          style={{
-            fontSize: '11px',
-            lineHeight: 1.5,
-            fontFamily: 'var(--font-mono)',
-            background: 'var(--color-bg-subtle)',
-            padding: '8px',
-            borderRadius: 'var(--radius-input)',
-            overflowX: 'auto',
-            margin: 0,
-          }}
-        >
-          {JSON.stringify(value, null, 2)}
-        </pre>
-      </div>
-    )
-  }
-
-  // Scalar string/number/bool
-  return (
-    <div>
-      <div style={labelStyle}>{prettyLabel}</div>
-      <div style={{ fontSize: '13px', color: 'var(--color-text-primary)', whiteSpace: 'pre-wrap' }}>
-        {String(value)}
-      </div>
-    </div>
-  )
-}
-
-/* ========================================================================== */
-/* Search Scopes card (Round 1 NAICS + PSC)                                   */
-/* ========================================================================== */
-
-type ScopeSortKey = 'correlation' | 'dollars' | 'awards' | 'tier' | 'name'
-
-function SearchScopesCard({
-  scopes,
-  onGenerate,
-  onDelete,
-  onTogglePin,
-  generating,
-}: {
-  scopes: SearchScope[]
-  onGenerate: () => void
-  onDelete: (id: string) => void
-  onTogglePin: (id: string, nextPinned: boolean) => void
-  generating: boolean
-}) {
-  const [sortKey, setSortKey] = useState<ScopeSortKey>('correlation')
-  const [hideLowCorrelation, setHideLowCorrelation] = useState(false)
-
-  const activeScopes = scopes.filter((s) => !s.archived)
-  const visibleScopes = hideLowCorrelation
-    ? activeScopes.filter((s) => (s.correlation_score ?? 0) >= 5)
-    : activeScopes
-
-  const tierRank: Record<string, number> = { primary: 0, secondary: 1, exploratory: 2 }
-
-  const sorted = [...visibleScopes].sort((a, b) => {
-    // Pinned always on top
-    if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
-    switch (sortKey) {
-      case 'correlation':
-        return (b.correlation_score ?? 0) - (a.correlation_score ?? 0)
-      case 'dollars':
-        return (b.estimated_annual_dollars ?? 0) - (a.estimated_annual_dollars ?? 0)
-      case 'awards':
-        return (b.estimated_annual_awards ?? 0) - (a.estimated_annual_awards ?? 0)
-      case 'tier':
-        return (tierRank[a.tier] ?? 99) - (tierRank[b.tier] ?? 99)
-      case 'name':
-        return a.name.localeCompare(b.name)
-      default:
-        return 0
-    }
-  })
-
-  const anyScopes = activeScopes.length > 0
-
-  return (
-    <div
-      style={{
-        marginTop: '40px',
-        paddingTop: '32px',
-        borderTop: '1px solid var(--color-hairline)',
-      }}
-    >
-      <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-end',
-          justifyContent: 'space-between',
-          gap: '24px',
-          marginBottom: '16px',
-        }}
-      >
-        <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <h2
-              style={{
-                fontFamily: 'var(--font-display)',
-                fontSize: '24px',
-                fontWeight: 600,
-                letterSpacing: '-0.015em',
-                margin: 0,
-              }}
-            >
-              Round 1 Search Scopes
-            </h2>
-            <Badge tone="info">Starting point</Badge>
+        {isPullKind && (
+          <div className="sr-dialog-warn">
+            API integration for {ENTRY_KIND_META[kind].label} arrives in gate 4b. For now, run the
+            query manually and paste the result into the text field below.
           </div>
-          <p
-            style={{
-              fontSize: '14px',
-              color: 'var(--color-text-secondary)',
-              margin: '6px 0 0',
-              maxWidth: '720px',
-            }}
-          >
-            Real federal taxonomy — NAICS codes cross-pollinated with PSC prefixes. Each scope
-            carries a correlation score (1–10) and a market-size estimate. Search the highest
-            correlation × dollar-volume first; stop when marginal return falls off.
-          </p>
-        </div>
-        {anyScopes && (
-          <Button size="small" onClick={onGenerate} disabled={generating}>
-            {generating ? 'Regenerating…' : 'Regenerate'}
-          </Button>
         )}
-      </div>
 
-      {!anyScopes ? (
-        <Card padding="standard">
-          <div
-            style={{
-              textAlign: 'center',
-              padding: '20px 0',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              gap: '12px',
-            }}
-          >
-            <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)', maxWidth: '560px' }}>
-              No scopes generated yet. Click below and the system will propose 6–10 NAICS+PSC
-              combinations scored by correlation to the company and sized by estimated market.
-            </div>
-            <Button onClick={onGenerate} disabled={generating}>
-              {generating ? 'Generating…' : 'Generate Round 1 scopes'}
-            </Button>
-          </div>
-        </Card>
-      ) : (
-        <>
-          {/* Controls */}
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '16px',
-              marginBottom: '12px',
-              flexWrap: 'wrap',
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-                Sort by
-              </span>
-              <SortPill active={sortKey === 'correlation'} onClick={() => setSortKey('correlation')}>
-                Correlation
-              </SortPill>
-              <SortPill active={sortKey === 'dollars'} onClick={() => setSortKey('dollars')}>
-                Est. $ volume
-              </SortPill>
-              <SortPill active={sortKey === 'awards'} onClick={() => setSortKey('awards')}>
-                Est. awards
-              </SortPill>
-              <SortPill active={sortKey === 'tier'} onClick={() => setSortKey('tier')}>
-                Tier
-              </SortPill>
-              <SortPill active={sortKey === 'name'} onClick={() => setSortKey('name')}>
-                Name
-              </SortPill>
-            </div>
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px',
-                fontSize: '12px',
-                color: 'var(--color-text-secondary)',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={hideLowCorrelation}
-                onChange={(e) => setHideLowCorrelation(e.target.checked)}
-              />
-              Hide correlation &lt; 5
-            </label>
-          </div>
+        <div className="sr-dialog-row">
+          <label>Title</label>
+          <input
+            type="text"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Short summary of what this entry contains"
+          />
+        </div>
 
-          {/* Scope list */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            {sorted.length === 0 ? (
-              <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '20px', textAlign: 'center' }}>
-                No scopes match the current filter.
-              </div>
-            ) : (
-              sorted.map((scope) => (
-                <ScopeRow
-                  key={scope.id}
-                  scope={scope}
-                  onDelete={() => onDelete(scope.id)}
-                  onTogglePin={() => onTogglePin(scope.id, !scope.pinned)}
+        <div className="sr-dialog-row">
+          <label>Source label (optional)</label>
+          <input
+            type="text"
+            value={sourceLabel}
+            onChange={(e) => setSourceLabel(e.target.value)}
+            placeholder='e.g. "USASpending FY24-26 NAICS 541512" or "Gartner 2024 report"'
+          />
+        </div>
+
+        <div className="sr-dialog-row">
+          <label>Source URL (optional)</label>
+          <input
+            type="url"
+            value={sourceUrl}
+            onChange={(e) => setSourceUrl(e.target.value)}
+            placeholder="https://..."
+          />
+        </div>
+
+        <div className="sr-dialog-row">
+          <label>Content (optional)</label>
+          <textarea
+            value={rawText}
+            onChange={(e) => setRawText(e.target.value)}
+            placeholder="Paste the data, extract, or full text here. The brief generator will pull from this in gate 4b."
+            rows={5}
+          />
+        </div>
+
+        <div className="sr-dialog-row">
+          <label>Which dimensions does this contribute to?</label>
+          <div className="sr-dim-checks">
+            {dimensions.map((d) => (
+              <label key={d} className={`sr-dim-check${selectedDims.has(d) ? ' checked' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={selectedDims.has(d)}
+                  onChange={() => toggleDim(d)}
                 />
-              ))
-            )}
-          </div>
-        </>
-      )}
-    </div>
-  )
-}
-
-function SortPill({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      style={{
-        fontSize: '12px',
-        padding: '4px 10px',
-        border: `1px solid ${active ? 'var(--color-accent)' : 'var(--color-hairline)'}`,
-        borderRadius: 'var(--radius-input)',
-        background: active ? 'var(--color-accent)' : 'transparent',
-        color: active ? 'white' : 'var(--color-text-secondary)',
-        cursor: 'pointer',
-        fontFamily: 'inherit',
-        fontWeight: active ? 500 : 400,
-      }}
-    >
-      {children}
-    </button>
-  )
-}
-
-function ScopeRow({
-  scope,
-  onDelete,
-  onTogglePin,
-}: {
-  scope: SearchScope
-  onDelete: () => void
-  onTogglePin: () => void
-}) {
-  const naicsParam = scope.naics_codes.join(',')
-  const pscParam = scope.psc_prefixes.join(',')
-  const higherGovUrl = `https://www.highergov.com/search/?naics=${encodeURIComponent(naicsParam)}&psc=${encodeURIComponent(pscParam)}`
-
-  const lowCorrelation =
-    scope.correlation_score !== null && scope.correlation_score !== undefined && scope.correlation_score < 5
-
-  const hasActual = scope.actual_award_count !== null && scope.actual_award_count !== undefined
-
-  return (
-    <Card padding="standard">
-      {lowCorrelation && (
-        <div
-          style={{
-            marginBottom: '10px',
-            padding: '6px 10px',
-            background: 'rgba(212, 146, 10, 0.08)',
-            color: 'var(--color-warning)',
-            borderRadius: 'var(--radius-input)',
-            fontSize: '12px',
-            border: '1px solid rgba(212, 146, 10, 0.2)',
-          }}
-        >
-          ⚠ Low correlation ({scope.correlation_score}/10) — consider before searching.
-        </div>
-      )}
-
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px', marginBottom: '10px' }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '4px', flexWrap: 'wrap' }}>
-            <h4 style={{ fontSize: '15px', fontWeight: 600, margin: 0, color: 'var(--color-text-primary)' }}>
-              {scope.name}
-            </h4>
-            {scope.pinned && <Badge tone="warning">Pinned</Badge>}
-            <TierBadge tier={scope.tier} />
-            <code
-              style={{
-                fontSize: '10px',
-                fontFamily: 'var(--font-mono)',
-                color: 'var(--color-text-tertiary)',
-                background: 'var(--color-bg-subtle)',
-                padding: '2px 6px',
-                borderRadius: '4px',
-              }}
-            >
-              #{scope.scope_tag}
-            </code>
-          </div>
-          {scope.rationale && (
-            <p style={{ fontSize: '13px', color: 'var(--color-text-secondary)', margin: '0 0 8px', lineHeight: 1.5 }}>
-              {scope.rationale}
-            </p>
-          )}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-          <CorrelationBadge score={scope.correlation_score} />
-          <IconBtn onClick={onTogglePin} title={scope.pinned ? 'Unpin' : 'Pin'}>
-            {scope.pinned ? '★' : '☆'}
-          </IconBtn>
-          <IconBtn onClick={onDelete} title="Delete" danger>
-            ×
-          </IconBtn>
-        </div>
-      </div>
-
-      {scope.correlation_rationale && (
-        <div style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', marginBottom: '10px', fontStyle: 'italic' }}>
-          {scope.correlation_rationale}
-        </div>
-      )}
-
-      {/* Metrics row */}
-      <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', flexWrap: 'wrap', padding: '8px 10px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
-        <Metric
-          label={hasActual ? 'Actual awards' : 'Est. awards/yr'}
-          value={
-            hasActual
-              ? formatInt(scope.actual_award_count)
-              : formatInt(scope.estimated_annual_awards)
-          }
-          tone={hasActual ? 'success' : 'default'}
-        />
-        <Metric
-          label={hasActual ? 'Actual $ volume' : 'Est. $ volume/yr'}
-          value={
-            hasActual
-              ? formatDollars(scope.actual_dollar_volume)
-              : formatDollars(scope.estimated_annual_dollars)
-          }
-          tone={hasActual ? 'success' : 'default'}
-        />
-        {scope.estimated_size_label && (
-          <Metric label="Size" value={scope.estimated_size_label} />
-        )}
-        {hasActual && scope.last_imported_at && (
-          <Metric label="Imported" value={new Date(scope.last_imported_at).toLocaleDateString()} />
-        )}
-      </div>
-
-      {/* NAICS + PSC chips */}
-      <div style={{ display: 'flex', gap: '16px', marginBottom: '10px', flexWrap: 'wrap' }}>
-        <div>
-          <div style={miniLabelStyle}>NAICS</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {scope.naics_codes.length === 0 ? (
-              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
-            ) : (
-              scope.naics_codes.map((code) => <Badge key={code}>{code}</Badge>)
-            )}
-          </div>
-        </div>
-        <div>
-          <div style={miniLabelStyle}>PSC</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {scope.psc_prefixes.length === 0 ? (
-              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
-            ) : (
-              scope.psc_prefixes.map((p) => <Badge key={p}>{p}</Badge>)
-            )}
-          </div>
-        </div>
-      </div>
-
-      {scope.keyword_layers && scope.keyword_layers.length > 0 && (
-        <div style={{ marginBottom: '10px' }}>
-          <div style={miniLabelStyle}>Optional keyword layers</div>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-            {scope.keyword_layers.map((k, i) => (
-              <Badge key={i} tone="neutral">{k}</Badge>
+                {DIMENSION_META[d].label}
+              </label>
             ))}
           </div>
-        </div>
-      )}
-
-      {scope.strategic_angle && (
-        <div style={{ marginBottom: '10px', padding: '8px 10px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
-          <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', fontWeight: 500, marginBottom: '2px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>
-            Strategic angle
-          </div>
-          <div style={{ fontSize: '13px', color: 'var(--color-text-primary)' }}>
-            {scope.strategic_angle}
+          <div className="sr-dim-hint-row">
+            Selecting dimensions tells the sufficiency scorer which gaps this entry fills.
           </div>
         </div>
-      )}
 
-      <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
-        <a href={higherGovUrl} target="_blank" rel="noopener noreferrer" style={extLinkStyle}>
-          Search on HigherGov →
-        </a>
-      </div>
-    </Card>
-  )
-}
-
-function TierBadge({ tier }: { tier: string }) {
-  const map: Record<string, { tone: 'success' | 'info' | 'neutral'; label: string }> = {
-    primary: { tone: 'success', label: 'Primary' },
-    secondary: { tone: 'info', label: 'Secondary' },
-    exploratory: { tone: 'neutral', label: 'Exploratory' },
-  }
-  const m = map[tier] || { tone: 'neutral' as const, label: tier }
-  return <Badge tone={m.tone}>{m.label}</Badge>
-}
-
-function CorrelationBadge({ score }: { score: number | null }) {
-  if (score === null || score === undefined) {
-    return (
-      <div
-        style={{
-          fontSize: '11px',
-          color: 'var(--color-text-tertiary)',
-          fontFamily: 'var(--font-mono)',
-          minWidth: '48px',
-          textAlign: 'center',
-          padding: '4px 8px',
-          background: 'var(--color-bg-subtle)',
-          borderRadius: 'var(--radius-input)',
-        }}
-      >
-        —
-      </div>
-    )
-  }
-  const color = score >= 8 ? '#34C759' : score >= 6 ? '#007AFF' : score >= 4 ? '#D4920A' : '#FF3B30'
-  const bg = score >= 8 ? 'rgba(52,199,89,0.12)' : score >= 6 ? 'rgba(0,122,255,0.12)' : score >= 4 ? 'rgba(212,146,10,0.12)' : 'rgba(255,59,48,0.12)'
-  return (
-    <div
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        padding: '4px 10px',
-        background: bg,
-        border: `1px solid ${color}40`,
-        borderRadius: 'var(--radius-input)',
-        minWidth: '56px',
-      }}
-      title={`Correlation score: ${score}/10`}
-    >
-      <div style={{ fontSize: '15px', fontFamily: 'var(--font-mono)', fontWeight: 600, color, lineHeight: 1 }}>
-        {score}
-      </div>
-      <div style={{ fontSize: '9px', color, fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.04em', marginTop: '2px' }}>
-        /10
+        <div className="sr-dialog-actions">
+          <button type="button" className="sr-dialog-cancel" onClick={onCancel}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="sr-dialog-save"
+            disabled={!title.trim()}
+            onClick={handleSubmit}
+          >
+            Add to corpus
+          </button>
+        </div>
       </div>
     </div>
   )
 }
 
-function Metric({
-  label,
-  value,
-  tone = 'default',
-}: {
-  label: string
-  value: string
-  tone?: 'default' | 'success'
-}) {
-  return (
-    <div>
-      <div style={miniLabelStyle}>{label}</div>
-      <div
-        style={{
-          fontSize: '13px',
-          fontFamily: 'var(--font-mono)',
-          fontWeight: 500,
-          color: tone === 'success' ? 'var(--color-success)' : 'var(--color-text-primary)',
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  )
+// =============================================================================
+// STYLES
+// =============================================================================
+const STYLES = `
+.sr-shell {
+  font-family: var(--font-text);
+  color: var(--color-text-primary);
+  padding: 24px 28px 32px;
 }
 
-function IconBtn({
-  onClick,
-  title,
-  danger,
-  children,
-}: {
-  onClick: () => void
-  title: string
-  danger?: boolean
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      onClick={onClick}
-      title={title}
-      style={{
-        background: 'transparent',
-        border: 'none',
-        color: danger ? 'var(--color-danger)' : 'var(--color-text-tertiary)',
-        cursor: 'pointer',
-        padding: '4px 8px',
-        fontSize: '14px',
-        fontFamily: 'inherit',
-        lineHeight: 1,
-        borderRadius: 'var(--radius-input)',
-      }}
-    >
-      {children}
-    </button>
-  )
+.sr-intro {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background: var(--color-bg-subtle);
+  border-radius: 8px;
+  border-left: 3px solid #F0A742;
 }
 
-function formatInt(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  return n.toLocaleString()
+/* SCORE CARD */
+.sr-score-card {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: 12px;
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+.sr-score-card.ready {
+  border-color: rgba(46,107,62,0.4);
+  background: rgba(46,107,62,0.02);
 }
 
-function formatDollars(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
-  if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
-  return `$${n}`
+.sr-score-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--color-hairline);
 }
 
-const miniLabelStyle: CSSProperties = {
-  fontSize: '10px',
-  fontWeight: 500,
-  textTransform: 'uppercase',
-  letterSpacing: '0.04em',
-  color: 'var(--color-text-tertiary)',
-  marginBottom: '4px',
+.sr-score-eyebrow {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  color: var(--color-text-tertiary);
+  text-transform: uppercase;
+  margin-bottom: 6px;
 }
 
-const extLinkStyle: CSSProperties = {
-  fontSize: '12px',
-  padding: '5px 12px',
-  border: '1px solid var(--color-hairline)',
-  borderRadius: 'var(--radius-input)',
-  color: 'var(--color-text-secondary)',
-  textDecoration: 'none',
-  background: 'transparent',
-  whiteSpace: 'nowrap',
+.sr-score-headline {
+  font-size: 32px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
+
+.sr-score-ready-tag {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #fff;
+  background: #2E6B3E;
+  padding: 4px 10px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.sr-score-sub {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+  margin-top: 4px;
+}
+
+.sr-score-progress-wrap {
+  flex: 0 0 240px;
+  height: 8px;
+  background: var(--color-bg-subtle);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 28px;
+}
+
+.sr-score-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #F0A742, #2E6B3E);
+  transition: width .3s ease;
+}
+
+.sr-dim-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+}
+
+.sr-dim {
+  padding: 12px 14px;
+  background: var(--color-bg-subtle);
+  border-radius: 8px;
+}
+
+.sr-dim-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  margin-bottom: 6px;
+}
+
+.sr-dim-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.sr-dim-score {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+.sr-dim-score.score-0 { color: var(--color-text-tertiary); background: transparent; }
+.sr-dim-score.score-1 { color: #C77A0F; background: rgba(240,167,66,0.10); }
+.sr-dim-score.score-2 { color: #C77A0F; background: rgba(240,167,66,0.18); }
+.sr-dim-score.score-3 { color: #2E6B3E; background: rgba(46,107,62,0.14); }
+
+.sr-dim-pips {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.sr-dim-pip {
+  flex: 1;
+  height: 4px;
+  background: var(--color-hairline);
+  border-radius: 2px;
+}
+.sr-dim-pip.filled { background: #F0A742; }
+.sr-dim-pip.filled:nth-last-child(-n+1) { background: #2E6B3E; }
+
+.sr-dim-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  line-height: 1.4;
+}
+
+.sr-frame-warn {
+  margin-top: 16px;
+  padding: 10px 14px;
+  background: rgba(240,167,66,0.08);
+  border: 1px solid rgba(240,167,66,0.30);
+  border-radius: 8px;
+  font-size: 12px;
+  color: #8C5208;
+}
+
+/* CORPUS */
+.sr-corpus {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-hairline);
+  border-radius: 12px;
+  padding: 20px 24px;
+}
+
+.sr-corpus-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.sr-corpus-head h3 {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0;
+}
+
+.sr-add-btn {
+  background: #F0A742;
+  color: #fff;
+  border: none;
+  padding: 8px 14px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sr-add-btn:hover { background: #C77A0F; }
+
+.sr-empty {
+  padding: 48px 16px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+.sr-empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--color-text-secondary);
+}
+.sr-empty-sub {
+  font-size: 12px;
+  max-width: 480px;
+  margin: 0 auto;
+  line-height: 1.5;
+}
+
+.sr-entries {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sr-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 0;
+  border-top: 1px solid var(--color-hairline);
+}
+.sr-entry:first-child { border-top: none; padding-top: 0; }
+
+.sr-entry-icon {
+  flex: 0 0 28px;
+  width: 28px;
+  height: 28px;
+  background: var(--color-bg-subtle);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--color-text-secondary);
+}
+
+.sr-entry-body { flex: 1; min-width: 0; }
+
+.sr-entry-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  margin-bottom: 3px;
+}
+
+.sr-entry-meta {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-bottom: 6px;
+}
+
+.sr-entry-kind {
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.sr-entry-dims {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.sr-entry-dim {
+  font-size: 10px;
+  font-weight: 500;
+  padding: 2px 8px;
+  background: rgba(240,167,66,0.10);
+  color: #C77A0F;
+  border-radius: 10px;
+}
+
+.sr-entry-delete {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  border-radius: 4px;
+}
+.sr-entry-delete:hover {
+  color: var(--color-danger);
+  background: rgba(139,42,31,0.06);
+}
+
+/* ADD-ENTRY DIALOG */
+.sr-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.5);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  z-index: 500;
+  padding: 48px 16px;
+  overflow: auto;
+}
+
+.sr-dialog {
+  background: var(--color-bg-elevated);
+  border-radius: 12px;
+  padding: 24px 28px;
+  width: 100%;
+  max-width: 640px;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+}
+
+.sr-dialog-title {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 18px;
+  letter-spacing: -0.011em;
+}
+
+.sr-dialog-row {
+  margin-bottom: 14px;
+}
+
+.sr-dialog-row label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-tertiary);
+  margin-bottom: 4px;
+}
+
+.sr-dialog-row input,
+.sr-dialog-row select,
+.sr-dialog-row textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-sizing: border-box;
+}
+.sr-dialog-row input:focus,
+.sr-dialog-row select:focus,
+.sr-dialog-row textarea:focus {
+  outline: 1px solid #F0A742;
+  border-color: #F0A742;
+}
+
+.sr-dialog-warn {
+  padding: 10px 12px;
+  background: rgba(240,167,66,0.08);
+  border: 1px solid rgba(240,167,66,0.30);
+  border-radius: 6px;
+  font-size: 12px;
+  color: #8C5208;
+  margin-bottom: 14px;
+}
+
+.sr-dim-checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 6px;
+}
+
+.sr-dim-check {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+  background: var(--color-bg-elevated);
+}
+.sr-dim-check.checked {
+  border-color: #F0A742;
+  background: rgba(240,167,66,0.06);
+}
+.sr-dim-check input { margin: 0; cursor: pointer; }
+
+.sr-dim-hint-row {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 6px;
+}
+
+.sr-dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--color-hairline);
+}
+
+.sr-dialog-cancel {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+}
+.sr-dialog-save {
+  padding: 8px 14px;
+  background: #F0A742;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  color: #fff;
+}
+.sr-dialog-save:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+`
