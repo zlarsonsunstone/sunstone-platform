@@ -19,18 +19,27 @@
 // In gate 4b we ship text content only. Gate 4c (next phase) wires the SVG
 // composers (Trajectory, Peer Cohort, per-Stone) and the HTML→PDF render.
 //
-// Conventions match build-commercial-profile-background.mjs:
-//   - Reads ANTHROPIC_API_KEY from env
-//   - Uses _supabase-admin.mjs service-role client
-//   - Idempotent on retry (checks brief_job status before re-running)
-//   - All log lines prefixed [recon-engine] for grep-ability
+// Self-contained: creates its own service-role Supabase client inline.
+// No dependency on shared helpers.
 
-import { getSupabaseAdmin } from './_supabase-admin.mjs'
+import { createClient } from '@supabase/supabase-js'
 
 const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY
 const ANTHROPIC_MODEL_DEFAULT = 'claude-sonnet-4-20250514'
 const ANTHROPIC_MODEL_FRAME   = 'claude-opus-4-7'   // For non-default frames per memory entry 24
 const ANTHROPIC_VERSION       = '2023-06-01'
+
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
+const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+function getSupabaseAdmin() {
+  if (!SUPABASE_URL) throw new Error('SUPABASE_URL or VITE_SUPABASE_URL not configured')
+  if (!SUPABASE_SERVICE_ROLE_KEY) throw new Error('SUPABASE_SERVICE_ROLE_KEY not configured')
+  return createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
+    db: { schema: 'v2' },
+    auth: { persistSession: false },
+  })
+}
 
 // =============================================================================
 // ENTRY POINT
