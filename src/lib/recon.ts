@@ -139,8 +139,7 @@ export interface ReadinessState {
   frame_ready: boolean
   research_ready: boolean
   stones_ready: boolean
-  all_ready: boolean
-  next_step_label: string
+  generate_ready: boolean
 }
 
 // =============================================================================
@@ -382,24 +381,13 @@ export async function loadReadiness(
   const research_ready = !!score?.is_sufficient
   const stones_ready = !!stonesConfig.data
 
-  const all_ready = cbp_ready && frame_ready && research_ready && stones_ready
-
-  let next_step_label = 'Generate Recon Brief'
-  if (!cbp_ready)        next_step_label = 'Build CBP first'
-  else if (!frame_ready) next_step_label = 'Compose Framing the Frame first'
-  else if (!research_ready) {
-    const have = score?.total_score || 0
-    const need = score?.required_score || 12
-    next_step_label = `Surface Research not yet sufficient (${have}/${need})`
-  }
-  else if (!stones_ready) next_step_label = 'Configure Stones first'
+  const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
 
   return {
     cbp_ready,
     frame_ready,
     research_ready,
     stones_ready,
-    all_ready,
-    next_step_label,
+    generate_ready,
   }
 }
