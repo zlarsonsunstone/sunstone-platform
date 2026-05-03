@@ -1,19 +1,20 @@
 /**
  * Framing the Frame — Recon Engine intake Q&A
  *
- * Captures the four blocks that frame the editorial angle the brief renders
- * against:
- *   1. Purpose — what is this brief for?
- *   2. Sizing & receptivity — what scale of evidence will land?
- *   3. Engagement openness — Sun-only vs. Sun+Step
- *   4. Persona — selectable from library, expandable
+ * Gate 4a: 4-block Q&A intake (Purpose / Sizing / Engagement Openness / Persona)
+ * Gate 4b: Adds Block 5 (Persona + approach — free-text "Zack's call") and
+ *          Block 6 (Market State selector). These are the v1 axis-classification
+ *          inputs. Per the architecture pivot locked yesterday: Zack is the classifier
+ *          for v1; calibration after 20-25 prospects determines whether to automate.
  *
- * Auto-saves to v2.recon_frames with 1.5s debounce after each change.
- * Persists across modal close/reopen. is_complete computes server-side
- * from all four required fields being present.
+ * The new fields are NOT required for is_complete — the brief generator can
+ * render with reduced specificity if they are absent. But populated, they drive
+ * conditional profile lookup and persona-specific brief content.
+ *
+ * Autosave: 1.5s debounce on every answer change. Save indicator at top right.
  */
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Modal } from '@/components/Modal'
 import { Button } from '@/components/Button'
 import {
@@ -21,6 +22,7 @@ import {
   FramePurpose,
   FrameCompanySize,
   FrameEngagementOpenness,
+  MarketState,
   loadFrame,
   upsertFrame,
   loadPersonas,
@@ -32,35 +34,71 @@ interface Props {
   tenantId: string
   profileName: string
   onClose: () => void
-  onCompleted?: () => void  // called when frame transitions to complete
+  onCompleted?: () => void
 }
 
-export function FramingTheFrame({
-  strategicProfileId,
-  tenantId,
-  profileName,
-  onClose,
-  onCompleted,
-}: Props) {
-  const [personas, setPersonas] = useState<ReconPersona[]>([])
+const PURPOSE_OPTIONS: { value: FramePurpose; label: string; hint: string }[] = [
+  { value: 'educate',           label: 'Educate',                 hint: 'They need to understand federal mechanics before they can decide.' },
+  { value: 'convince',          label: 'Convince / persuade',     hint: 'They have skepticism. Brief should overcome a specific objection or pattern.' },
+  { value: 'show_market_demand',label: 'Show evidence of market demand', hint: 'They doubt the market exists at scale. Brief sizes it.' },
+  { value: 'show_market_state', label: 'Show evidence of market state',  hint: 'They believe market is one way; brief reframes what it actually is.' },
+]
+
+const SIZE_OPTIONS: { value: FrameCompanySize; label: string; hint: string }[] = [
+  { value: 'micro',      label: 'Micro',       hint: 'Under $1M revenue. Cost-sensitive. Modest absolute upside lands.' },
+  { value: 'small',      label: 'Small',       hint: '$1M – $10M. Step-function growth needed. Mid-six-figure upside compelling.' },
+  { value: 'midmarket',  label: 'Mid-market',  hint: '$10M – $100M. Multi-million upside required. Strategic decisions involve a board.' },
+  { value: 'enterprise', label: 'Enterprise',  hint: '$100M+. Eight-figure addressable upside. Multiple stakeholder buy-in needed.' },
+]
+
+const ENGAGEMENT_OPTIONS: { value: FrameEngagementOpenness; label: string; hint: string }[] = [
+  { value: 'sun_only',       label: 'Sunstone only (start lean)',           hint: 'Stones 1-2. No Steptoe. Lower commitment, slower path.' },
+  { value: 'sun_then_step',  label: 'Sunstone now, Steptoe when proven',    hint: 'Ladder up. Start with Sun, expand to full ecosystem on Stone outcomes.' },
+  { value: 'full_ecosystem', label: 'Full Sun + Step ecosystem from day one', hint: 'Stones 1-4. Steptoe activated immediately.' },
+]
+
+const MARKET_STATE_OPTIONS: { value: MarketState; label: string; hint: string }[] = [
+  { value: 'mature_defined',      label: 'Mature & Defined',     hint: 'Established market, clear vehicles, vocabulary stable. Competition shapes wins.' },
+  { value: 'mature_diffuse',      label: 'Mature & Diffuse',     hint: 'Real demand, scattered vocabulary. Bedsheet pursuits sat here. Reconstruction work.' },
+  { value: 'emerging',            label: 'Emerging',             hint: 'Vocabulary lags 3-5 years behind technology. Architect plays land.' },
+  { value: 'recently_legislated', label: 'Recently Legislated',  hint: 'Calendar/statute window. Fresh appropriations or new mandates driving spend.' },
+  { value: 'novel',               label: 'Novel',                hint: 'Pre-vocabulary. No federal buy pattern yet. Education before procurement.' },
+]
+
+export function FramingTheFrame({ strategicProfileId, tenantId, profileName, onClose, onCompleted }: Props) {
   const [loaded, setLoaded] = useState(false)
-  const [saveState, setSaveState] = useState<'idle' | 'dirty' | 'saving' | 'saved' | 'error'>('idle')
+  const [personas, setPersonas] = useState<ReconPersona[]>([])
+
+  // Block 1 — Purpose
+  const [purpose, setPurpose] = useState<FramePurpose>('unset')
+  const [purposeNotes, setPurposeNotes] = useState('')
+
+  // Block 2 — Sizing & receptivity
+  const [companySize, setCompanySize] = useState<FrameCompanySize>('unset')
+  const [receptivityNotes, setReceptivityNotes] = useState('')
+
+  // Block 3 — Engagement openness
+  const [engagementOpenness, setEngagementOpenness] = useState<FrameEngagementOpenness>('unset')
+  const [engagementNotes, setEngagementNotes] = useState('')
+
+  // Block 4 — Persona (selectable)
+  const [personaId, setPersonaId] = useState<string | null>(null)
   const [showAddPersona, setShowAddPersona] = useState(false)
   const [newPersonaName, setNewPersonaName] = useState('')
   const [newPersonaDesc, setNewPersonaDesc] = useState('')
-  const previouslyComplete = useRef<boolean>(false)
 
-  // Local state mirror of frame fields for snappy UI; debounced save flushes.
-  const [purpose, setPurpose] = useState<FramePurpose | null>(null)
-  const [purposeNotes, setPurposeNotes] = useState('')
-  const [companySize, setCompanySize] = useState<FrameCompanySize | null>(null)
-  const [receptivityNotes, setReceptivityNotes] = useState('')
-  const [engagementOpenness, setEngagementOpenness] = useState<FrameEngagementOpenness | null>(null)
-  const [engagementNotes, setEngagementNotes] = useState('')
-  const [personaId, setPersonaId] = useState<string | null>(null)
+  // Block 5 (gate 4b) — Persona + approach (Zack's call) free-text
+  const [humanClassification, setHumanClassification] = useState('')
+
+  // Block 6 (gate 4b) — Market state classification
+  const [marketState, setMarketState] = useState<MarketState | null>(null)
+
+  const [saveState, setSaveState] = useState<'idle' | 'editing' | 'saving' | 'saved' | 'error'>('idle')
+  const debounceTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const previouslyComplete = useRef(false)
 
   // ---------------------------------------------------------------------------
-  // LOAD on mount
+  // INITIAL LOAD
   // ---------------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false
@@ -76,6 +114,8 @@ export function FramingTheFrame({
         setEngagementOpenness(f.engagement_openness)
         setEngagementNotes(f.engagement_notes || '')
         setPersonaId(f.persona_id)
+        setHumanClassification(f.human_classification || '')
+        setMarketState(f.market_state || null)
         previouslyComplete.current = f.is_complete
       }
       setLoaded(true)
@@ -86,21 +126,25 @@ export function FramingTheFrame({
   }, [strategicProfileId])
 
   // ---------------------------------------------------------------------------
-  // DEBOUNCED AUTOSAVE — 1.5s after last change
+  // AUTOSAVE (1.5s debounce on any change)
   // ---------------------------------------------------------------------------
   useEffect(() => {
     if (!loaded) return
-    if (saveState !== 'dirty') return
-    const timer = setTimeout(async () => {
+    setSaveState('editing')
+    if (debounceTimer.current) clearTimeout(debounceTimer.current)
+
+    debounceTimer.current = setTimeout(async () => {
       setSaveState('saving')
       const updated = await upsertFrame(tenantId, strategicProfileId, {
         purpose,
-        purpose_notes: purposeNotes.trim() || null,
+        purpose_notes: purposeNotes || null,
         company_size_band: companySize,
-        receptivity_notes: receptivityNotes.trim() || null,
+        receptivity_notes: receptivityNotes || null,
         engagement_openness: engagementOpenness,
-        engagement_notes: engagementNotes.trim() || null,
+        engagement_notes: engagementNotes || null,
         persona_id: personaId,
+        human_classification: humanClassification || null,
+        market_state: marketState,
       })
       if (!updated) {
         setSaveState('error')
@@ -111,338 +155,306 @@ export function FramingTheFrame({
         previouslyComplete.current = true
         onCompleted?.()
       }
-      setTimeout(() => {
-        setSaveState((s) => (s === 'saved' ? 'idle' : s))
-      }, 1500)
     }, 1500)
-    return () => clearTimeout(timer)
+
+    return () => {
+      if (debounceTimer.current) clearTimeout(debounceTimer.current)
+    }
   }, [
-    saveState, loaded, tenantId, strategicProfileId,
+    loaded, tenantId, strategicProfileId,
     purpose, purposeNotes, companySize, receptivityNotes,
-    engagementOpenness, engagementNotes, personaId, onCompleted,
+    engagementOpenness, engagementNotes, personaId,
+    humanClassification, marketState,
+    onCompleted,
   ])
 
-  // Mark dirty on any change after load
-  function markDirty() {
-    if (!loaded) return
-    setSaveState((s) => (s === 'saving' ? s : 'dirty'))
+  // ---------------------------------------------------------------------------
+  // PERSONA ADD-NEW
+  // ---------------------------------------------------------------------------
+  async function handleAddPersona() {
+    const trimmed = newPersonaName.trim()
+    if (!trimmed) return
+    const created = await addCustomPersona(trimmed, newPersonaDesc.trim())
+    if (!created) return
+    setPersonas(prev => [...prev, created])
+    setPersonaId(created.id)
+    setShowAddPersona(false)
+    setNewPersonaName('')
+    setNewPersonaDesc('')
   }
 
-  async function handleAddCustomPersona() {
-    if (!newPersonaName.trim() || !newPersonaDesc.trim()) return
-    const created = await addCustomPersona(newPersonaName.trim(), newPersonaDesc.trim())
-    if (created) {
-      setPersonas((prev) => [...prev, created])
-      setPersonaId(created.id)
-      setNewPersonaName('')
-      setNewPersonaDesc('')
-      setShowAddPersona(false)
-      markDirty()
+  // ---------------------------------------------------------------------------
+  // RENDER HELPERS
+  // ---------------------------------------------------------------------------
+  function saveIndicator() {
+    const labels: Record<typeof saveState, string> = {
+      idle:    'Idle',
+      editing: 'Editing — autosave in 1.5s',
+      saving:  'Saving…',
+      saved:   '✓ Saved',
+      error:   '✗ Save error',
     }
+    const colors: Record<typeof saveState, string> = {
+      idle:    'var(--color-text-tertiary)',
+      editing: 'var(--color-text-secondary)',
+      saving:  'var(--color-text-secondary)',
+      saved:   '#2E6B3E',
+      error:   '#9B3838',
+    }
+    return (
+      <span style={{ fontSize: 12, color: colors[saveState], fontWeight: 500 }}>
+        {labels[saveState]}
+      </span>
+    )
   }
 
-  // ---------------------------------------------------------------------------
-  // RENDER
-  // ---------------------------------------------------------------------------
   if (!loaded) {
     return (
-      <Modal open={true} onClose={onClose} title="Framing the Frame" size="lg">
-        <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-          Loading…
+      <Modal open={true} onClose={onClose} title={`Framing the Frame · ${profileName}`} size="full">
+        <div style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+          Loading frame…
         </div>
       </Modal>
     )
   }
-
-  const isComplete = !!(purpose && companySize && engagementOpenness && personaId)
 
   return (
     <Modal
       open={true}
       onClose={onClose}
       title={`Framing the Frame · ${profileName}`}
-      size="lg"
+      size="full"
       footer={
         <>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 12 }}>
-            <SaveIndicator state={saveState} />
-            <CompletionState isComplete={isComplete} />
-          </div>
-          <Button variant="secondary" onClick={onClose}>
-            {isComplete ? 'Done' : 'Close'}
-          </Button>
+          <div style={{ flex: 1 }}>{saveIndicator()}</div>
+          <Button variant="secondary" onClick={onClose}>Close</Button>
         </>
       }
     >
       <style>{STYLES}</style>
 
       <div className="ftf-shell">
-        <p className="ftf-intro">
-          The brief renders against the answers below. Each block adjusts how
-          the Recon Brief and Options deck are voiced — what gets emphasized,
-          what gets backgrounded, what closing question lands.
-        </p>
+        <div className="ftf-intro">
+          <strong>Six blocks.</strong> Answer in any order. Autosaves as you go.
+          The first four define the editorial frame the brief renders against.
+          Blocks 5–6 (Zack's classification call + market state) drive axis-coded
+          conditional profile lookup at brief generation time.
+        </div>
 
         {/* BLOCK 1 — PURPOSE */}
-        <Block
-          number="01"
-          title="What is the purpose of this Recon Brief?"
-          subtitle="Pick the primary intent. The brief's BLUF and section ordering will follow."
-        >
-          <OptionGroup
-            value={purpose}
-            options={[
-              { value: 'educate', label: 'Educate', desc: 'Prospect needs to understand the federal landscape before any sale conversation.' },
-              { value: 'convince', label: 'Convince / persuade', desc: 'Prospect understands federal but needs to be moved to action.' },
-              { value: 'show_market_demand', label: 'Show evidence of market demand', desc: 'Surface that real demand exists in the prospect\'s codes.' },
-              { value: 'show_market_state', label: 'Show evidence of market state', desc: 'Surface what tier of competition the prospect is actually entering.' },
-            ]}
-            onChange={(v) => {
-              setPurpose(v as FramePurpose)
-              markDirty()
-            }}
-          />
-          <NotesField
-            value={purposeNotes}
-            onChange={(v) => {
-              setPurposeNotes(v)
-              markDirty()
-            }}
-            placeholder="Optional: any specifics about why this purpose for this prospect"
-          />
-        </Block>
+        <section className="ftf-block">
+          <div className="ftf-block-num">01</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">What is this brief for?</h3>
+            <p className="ftf-q-hint">The purpose anchors the editorial spine. Pick the dominant one; secondary purposes get notes below.</p>
+            <div className="ftf-options">
+              {PURPOSE_OPTIONS.map(opt => (
+                <label key={opt.value} className={`ftf-opt${purpose === opt.value ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="purpose"
+                    checked={purpose === opt.value}
+                    onChange={() => setPurpose(opt.value)}
+                  />
+                  <div>
+                    <div className="ftf-opt-label">{opt.label}</div>
+                    <div className="ftf-opt-hint">{opt.hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <textarea
+              className="ftf-notes"
+              placeholder="Notes on purpose (optional) — secondary purposes, specific angle, what NOT to do…"
+              value={purposeNotes}
+              onChange={e => setPurposeNotes(e.target.value)}
+              rows={2}
+            />
+          </div>
+        </section>
 
         {/* BLOCK 2 — SIZING & RECEPTIVITY */}
-        <Block
-          number="02"
-          title="What size of company will read this — and what will land?"
-          subtitle="Calibrates the scale of evidence and the gravity of the claims."
-        >
-          <OptionGroup
-            value={companySize}
-            options={[
-              { value: '<1M',     label: 'Under $1M',         desc: 'Pre-revenue or very early. Numbers in thousands feel large.' },
-              { value: '1M-10M',  label: '$1M – $10M',        desc: 'Most of Sunstone\'s prospects. $100K-$5M numbers land.' },
-              { value: '10M-50M', label: '$10M – $50M',       desc: 'Mid-market. $1M-$50M figures resonate.' },
-              { value: '50M-250M',label: '$50M – $250M',      desc: 'Established mid-market. $10M+ figures expected.' },
-              { value: '250M+',   label: '$250M+',            desc: 'Enterprise. Hundreds of millions or billions in TAM.' },
-            ]}
-            onChange={(v) => {
-              setCompanySize(v as FrameCompanySize)
-              markDirty()
-            }}
-          />
-          <NotesField
-            value={receptivityNotes}
-            onChange={(v) => {
-              setReceptivityNotes(v)
-              markDirty()
-            }}
-            placeholder="What will THIS prospect specifically need to see to find this compelling?"
-          />
-        </Block>
+        <section className="ftf-block">
+          <div className="ftf-block-num">02</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">What scale of evidence will land for this prospect?</h3>
+            <p className="ftf-q-hint">Determines how to size dollar references, peer cohorts, and award rings. A $5M opportunity reads compellingly to a small firm; the same number reads small to a midmarket firm.</p>
+            <div className="ftf-options">
+              {SIZE_OPTIONS.map(opt => (
+                <label key={opt.value} className={`ftf-opt${companySize === opt.value ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="company_size"
+                    checked={companySize === opt.value}
+                    onChange={() => setCompanySize(opt.value)}
+                  />
+                  <div>
+                    <div className="ftf-opt-label">{opt.label}</div>
+                    <div className="ftf-opt-hint">{opt.hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <textarea
+              className="ftf-notes"
+              placeholder="Receptivity notes — what evidence patterns specifically resonate with this prospect's decision-makers…"
+              value={receptivityNotes}
+              onChange={e => setReceptivityNotes(e.target.value)}
+              rows={2}
+            />
+          </div>
+        </section>
 
         {/* BLOCK 3 — ENGAGEMENT OPENNESS */}
-        <Block
-          number="03"
-          title="Sunstone-only entry, or open to the full Sun + Steptoe ecosystem?"
-          subtitle="Drives Stones emphasis. Sun-only weights Stones 1-2; full ecosystem opens Stones 1-4 in the Options deck."
-        >
-          <OptionGroup
-            value={engagementOpenness}
-            options={[
-              { value: 'sun_only', label: 'Sunstone-only to start', desc: 'Prospect not ready for Steptoe-tier commitment. Stones 1-2 dominate.' },
-              { value: 'sun_step_full', label: 'Open to Sun + Steptoe', desc: 'Full ecosystem available. Stones 1-4 carry trajectory analysis.' },
-              { value: 'undecided', label: 'Not yet known', desc: 'Show both paths in the Options deck and let them choose.' },
-            ]}
-            onChange={(v) => {
-              setEngagementOpenness(v as FrameEngagementOpenness)
-              markDirty()
-            }}
-          />
-          <NotesField
-            value={engagementNotes}
-            onChange={(v) => {
-              setEngagementNotes(v)
-              markDirty()
-            }}
-            placeholder="Optional context — has Steptoe been discussed, what was the temperature, etc."
-          />
-        </Block>
+        <section className="ftf-block">
+          <div className="ftf-block-num">03</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">Are they open to the full Sunstone + Steptoe ecosystem, or starting lean?</h3>
+            <p className="ftf-q-hint">Drives Stones recommendation. Lean prospects get Stones 1-2 emphasized; full-ecosystem prospects see all four with Steptoe burgundy active.</p>
+            <div className="ftf-options">
+              {ENGAGEMENT_OPTIONS.map(opt => (
+                <label key={opt.value} className={`ftf-opt${engagementOpenness === opt.value ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="engagement_openness"
+                    checked={engagementOpenness === opt.value}
+                    onChange={() => setEngagementOpenness(opt.value)}
+                  />
+                  <div>
+                    <div className="ftf-opt-label">{opt.label}</div>
+                    <div className="ftf-opt-hint">{opt.hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+            <textarea
+              className="ftf-notes"
+              placeholder="Engagement notes — known budget constraints, timeline pressure, prior consultant history (intake context only — does not appear in brief)…"
+              value={engagementNotes}
+              onChange={e => setEngagementNotes(e.target.value)}
+              rows={2}
+            />
+          </div>
+        </section>
 
         {/* BLOCK 4 — PERSONA */}
-        <Block
-          number="04"
-          title="What type of prospect is this?"
-          subtitle="Drives narrative tone, evidence selection, and the &quot;What about…&quot; page in the Options deck."
-        >
-          <div className="ftf-personas">
-            {personas.map((p) => (
-              <button
-                key={p.id}
-                type="button"
-                className={`ftf-persona-card${personaId === p.id ? ' selected' : ''}`}
-                onClick={() => {
-                  setPersonaId(p.id)
-                  markDirty()
-                }}
-              >
-                <div className="ftf-persona-name">
-                  {p.name}
-                  {!p.is_seeded && <span className="ftf-persona-tag">CUSTOM</span>}
-                </div>
-                <div className="ftf-persona-desc">{p.description}</div>
-              </button>
-            ))}
-          </div>
-
-          {!showAddPersona ? (
-            <button
-              type="button"
-              className="ftf-add-persona-btn"
-              onClick={() => setShowAddPersona(true)}
-            >
-              + Add a new persona
-            </button>
-          ) : (
-            <div className="ftf-add-persona-form">
-              <div className="ftf-add-persona-row">
-                <label>Name</label>
-                <input
-                  type="text"
-                  value={newPersonaName}
-                  onChange={(e) => setNewPersonaName(e.target.value)}
-                  placeholder="e.g. Acquired by PE, mandate to scale federal"
-                />
-              </div>
-              <div className="ftf-add-persona-row">
-                <label>Description</label>
-                <input
-                  type="text"
-                  value={newPersonaDesc}
-                  onChange={(e) => setNewPersonaDesc(e.target.value)}
-                  placeholder="One-line definition of the defining trait"
-                />
-              </div>
-              <div className="ftf-add-persona-actions">
-                <button
-                  type="button"
-                  className="ftf-add-persona-cancel"
-                  onClick={() => {
-                    setShowAddPersona(false)
-                    setNewPersonaName('')
-                    setNewPersonaDesc('')
-                  }}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="ftf-add-persona-save"
-                  disabled={!newPersonaName.trim() || !newPersonaDesc.trim()}
-                  onClick={handleAddCustomPersona}
-                >
-                  Add persona
-                </button>
-              </div>
+        <section className="ftf-block">
+          <div className="ftf-block-num">04</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">Which persona best describes this prospect?</h3>
+            <p className="ftf-q-hint">Drives narrative tone, evidence selection, BLUF posture, and the "What about..." page content. Selectable from the canonical 9, expandable when you encounter a new type.</p>
+            <div className="ftf-personas">
+              {personas.map(p => (
+                <label key={p.id} className={`ftf-persona${personaId === p.id ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="persona"
+                    checked={personaId === p.id}
+                    onChange={() => setPersonaId(p.id)}
+                  />
+                  <div>
+                    <div className="ftf-persona-name">
+                      {p.name}
+                      {!p.is_seeded && <span className="ftf-custom-tag">CUSTOM</span>}
+                      {p.axis_code_pattern && (
+                        <span className="ftf-axis-tag">{p.axis_code_pattern}</span>
+                      )}
+                    </div>
+                    <div className="ftf-persona-desc">{p.description}</div>
+                  </div>
+                </label>
+              ))}
             </div>
-          )}
-        </Block>
+            <div className="ftf-add-persona-wrap">
+              {!showAddPersona ? (
+                <button type="button" className="ftf-add-link" onClick={() => setShowAddPersona(true)}>
+                  + Add a new persona
+                </button>
+              ) : (
+                <div className="ftf-add-persona-form">
+                  <input
+                    type="text"
+                    placeholder="Persona name (e.g. 'Recently acquired')"
+                    value={newPersonaName}
+                    onChange={e => setNewPersonaName(e.target.value)}
+                  />
+                  <textarea
+                    placeholder="Short description — what makes this prospect type distinct"
+                    value={newPersonaDesc}
+                    onChange={e => setNewPersonaDesc(e.target.value)}
+                    rows={2}
+                  />
+                  <div className="ftf-add-persona-actions">
+                    <button type="button" className="ftf-cancel" onClick={() => setShowAddPersona(false)}>
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="ftf-save"
+                      disabled={!newPersonaName.trim()}
+                      onClick={handleAddPersona}
+                    >
+                      Add persona
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* BLOCK 5 — PERSONA + APPROACH (ZACK'S CALL) — gate 4b */}
+        <section className="ftf-block ftf-block-gate4b">
+          <div className="ftf-block-num">05</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">Persona + approach <span className="ftf-q-tag">v1 classifier</span></h3>
+            <p className="ftf-q-hint">
+              Free-text. Your read of who this prospect is and how to approach the brief.
+              In v1 this is the canonical input the brief generator uses to drive narrative tone,
+              evidence selection, and "What about..." page content. Mention specific levers
+              ("mirror their pursuit math against parallel sole-source landscape"),
+              specific framings to avoid ("don't lean on past performance — they have none"),
+              specific things to feature ("emphasize FAR 19.7 subcontracting").
+            </p>
+            <textarea
+              className="ftf-notes ftf-notes-large"
+              placeholder="Example: 'Successful Know-it-All in a Mature & Defined market. Don't argue. Mirror their pursuit math (83% F&O competitions, ask their win rate, calculate spend-to-lose). Show parallel sole-source landscape going to firms with their exact profile. Red-pill structure. They decide.'"
+              value={humanClassification}
+              onChange={e => setHumanClassification(e.target.value)}
+              rows={5}
+            />
+          </div>
+        </section>
+
+        {/* BLOCK 6 — MARKET STATE — gate 4b */}
+        <section className="ftf-block ftf-block-gate4b">
+          <div className="ftf-block-num">06</div>
+          <div className="ftf-block-body">
+            <h3 className="ftf-q">Market state <span className="ftf-q-tag">v1 classifier</span></h3>
+            <p className="ftf-q-hint">
+              How developed is the federal market for what this prospect sells?
+              Pairs with the persona to look up the conditional profile in the brief generator.
+            </p>
+            <div className="ftf-options">
+              {MARKET_STATE_OPTIONS.map(opt => (
+                <label key={opt.value} className={`ftf-opt${marketState === opt.value ? ' selected' : ''}`}>
+                  <input
+                    type="radio"
+                    name="market_state"
+                    checked={marketState === opt.value}
+                    onChange={() => setMarketState(opt.value)}
+                  />
+                  <div>
+                    <div className="ftf-opt-label">{opt.label}</div>
+                    <div className="ftf-opt-hint">{opt.hint}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+          </div>
+        </section>
       </div>
     </Modal>
-  )
-}
-
-// =============================================================================
-// SUB-COMPONENTS
-// =============================================================================
-function Block({
-  number, title, subtitle, children,
-}: {
-  number: string
-  title: string
-  subtitle: string
-  children: React.ReactNode
-}) {
-  return (
-    <section className="ftf-block">
-      <div className="ftf-block-head">
-        <span className="ftf-block-num">{number}</span>
-        <div>
-          <h3 className="ftf-block-title">{title}</h3>
-          <p className="ftf-block-subtitle">{subtitle}</p>
-        </div>
-      </div>
-      <div className="ftf-block-body">{children}</div>
-    </section>
-  )
-}
-
-function OptionGroup<T extends string>({
-  value, options, onChange,
-}: {
-  value: T | null
-  options: Array<{ value: T; label: string; desc: string }>
-  onChange: (v: T) => void
-}) {
-  return (
-    <div className="ftf-options">
-      {options.map((opt) => (
-        <button
-          key={opt.value}
-          type="button"
-          className={`ftf-option${value === opt.value ? ' selected' : ''}`}
-          onClick={() => onChange(opt.value)}
-        >
-          <div className="ftf-option-label">{opt.label}</div>
-          <div className="ftf-option-desc">{opt.desc}</div>
-        </button>
-      ))}
-    </div>
-  )
-}
-
-function NotesField({
-  value, onChange, placeholder,
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder: string
-}) {
-  return (
-    <textarea
-      className="ftf-notes"
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      placeholder={placeholder}
-      rows={2}
-    />
-  )
-}
-
-function SaveIndicator({ state }: { state: 'idle' | 'dirty' | 'saving' | 'saved' | 'error' }) {
-  if (state === 'idle') return null
-  const styles: Record<string, { color: string; text: string }> = {
-    dirty:  { color: '#F0A742', text: 'Editing — autosave in 1.5s' },
-    saving: { color: 'var(--color-accent)', text: 'Saving…' },
-    saved:  { color: '#2E6B3E', text: '✓ Saved' },
-    error:  { color: 'var(--color-danger)', text: '⚠ Save failed — will retry' },
-  }
-  const s = styles[state]
-  return <span style={{ color: s.color, fontSize: 12, fontVariantNumeric: 'tabular-nums' }}>{s.text}</span>
-}
-
-function CompletionState({ isComplete }: { isComplete: boolean }) {
-  return (
-    <span style={{
-      fontSize: 11, fontWeight: 600, letterSpacing: '0.06em', textTransform: 'uppercase',
-      color: isComplete ? '#2E6B3E' : 'var(--color-text-tertiary)',
-      padding: '3px 8px', borderRadius: 4,
-      background: isComplete ? 'rgba(46,107,62,0.10)' : 'transparent',
-      border: isComplete ? '1px solid rgba(46,107,62,0.25)' : '1px dashed var(--color-hairline)',
-    }}>
-      {isComplete ? 'Frame complete' : 'Frame incomplete'}
-    </span>
   )
 }
 
@@ -453,13 +465,15 @@ const STYLES = `
 .ftf-shell {
   font-family: var(--font-text);
   color: var(--color-text-primary);
-  padding: 4px 0;
+  padding: 24px 28px 32px;
+  max-width: 920px;
+  margin: 0 auto;
 }
 
 .ftf-intro {
   font-size: 13px;
   color: var(--color-text-secondary);
-  margin: 0 0 20px;
+  margin-bottom: 24px;
   padding: 12px 16px;
   background: var(--color-bg-subtle);
   border-radius: 8px;
@@ -467,231 +481,251 @@ const STYLES = `
 }
 
 .ftf-block {
+  display: flex;
+  gap: 20px;
   margin-bottom: 28px;
-  padding-bottom: 24px;
+  padding-bottom: 28px;
   border-bottom: 1px solid var(--color-hairline);
 }
 .ftf-block:last-child { border-bottom: none; }
 
-.ftf-block-head {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 14px;
+.ftf-block-gate4b {
+  background: rgba(240,167,66,0.04);
+  border-radius: 8px;
+  padding: 20px 16px 28px;
+  margin-left: -16px;
+  margin-right: -16px;
+  border-bottom: 1px solid var(--color-hairline);
+}
+.ftf-block-gate4b .ftf-block-num {
+  background: #F0A742;
+  color: #fff;
 }
 
 .ftf-block-num {
-  font-size: 11px;
+  flex: 0 0 36px;
+  width: 36px;
+  height: 36px;
+  border-radius: 18px;
+  background: var(--color-bg-subtle);
+  color: var(--color-text-secondary);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: 0.16em;
-  color: #F0A742;
-  background: rgba(240,167,66,0.10);
-  padding: 4px 8px;
-  border-radius: 4px;
   font-variant-numeric: tabular-nums;
-  height: fit-content;
-  margin-top: 2px;
 }
 
-.ftf-block-title {
+.ftf-block-body { flex: 1; min-width: 0; }
+
+.ftf-q {
   font-size: 16px;
   font-weight: 600;
-  margin: 0 0 4px;
+  margin: 0 0 6px;
   letter-spacing: -0.011em;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.ftf-block-subtitle {
+.ftf-q-tag {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  color: #C77A0F;
+  background: rgba(240,167,66,0.14);
+  padding: 3px 8px;
+  border-radius: 3px;
+  text-transform: uppercase;
+}
+
+.ftf-q-hint {
   font-size: 12px;
   color: var(--color-text-tertiary);
-  margin: 0;
+  margin: 0 0 14px;
   line-height: 1.5;
 }
 
-.ftf-block-body {
-  margin-left: 38px;
-}
-
 .ftf-options {
-  display: flex;
-  flex-direction: column;
+  display: grid;
   gap: 8px;
   margin-bottom: 12px;
 }
 
-.ftf-option {
-  text-align: left;
-  padding: 12px 14px;
+.ftf-opt {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 10px 12px;
   border: 1px solid var(--color-hairline);
   border-radius: 8px;
-  background: var(--color-bg-elevated);
   cursor: pointer;
-  font-family: inherit;
-  transition: border-color .12s ease, background .12s ease, box-shadow .12s ease;
+  background: var(--color-bg-elevated);
+  transition: all .15s ease;
 }
-.ftf-option:hover {
-  border-color: var(--color-text-tertiary);
-  background: var(--color-bg-subtle);
-}
-.ftf-option.selected {
+.ftf-opt:hover { border-color: var(--color-text-tertiary); }
+.ftf-opt.selected {
   border-color: #F0A742;
   background: rgba(240,167,66,0.06);
-  box-shadow: 0 0 0 2px rgba(240,167,66,0.18);
 }
+.ftf-opt input { margin-top: 4px; cursor: pointer; }
 
-.ftf-option-label {
+.ftf-opt-label {
   font-size: 13px;
   font-weight: 600;
   color: var(--color-text-primary);
-  margin-bottom: 2px;
+}
+.ftf-opt-hint {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
 }
 
-.ftf-option-desc {
+.ftf-personas {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.ftf-persona {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 8px 10px;
+  border: 1px solid var(--color-hairline);
+  border-radius: 6px;
+  cursor: pointer;
+  background: var(--color-bg-elevated);
+  transition: all .15s ease;
+}
+.ftf-persona:hover { border-color: var(--color-text-tertiary); }
+.ftf-persona.selected {
+  border-color: #F0A742;
+  background: rgba(240,167,66,0.06);
+}
+.ftf-persona input { margin-top: 3px; cursor: pointer; }
+
+.ftf-persona-name {
   font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.ftf-custom-tag {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
   color: var(--color-text-tertiary);
-  line-height: 1.45;
+  background: var(--color-bg-subtle);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ftf-axis-tag {
+  font-size: 10px;
+  font-weight: 600;
+  font-family: 'SF Mono', Menlo, monospace;
+  color: #C77A0F;
+  background: rgba(240,167,66,0.10);
+  padding: 1px 5px;
+  border-radius: 3px;
+}
+.ftf-persona-desc {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  margin-top: 2px;
+  line-height: 1.4;
 }
 
 .ftf-notes {
   width: 100%;
-  padding: 10px 12px;
+  padding: 8px 10px;
   border: 1px solid var(--color-hairline);
   border-radius: 6px;
   font-family: inherit;
-  font-size: 13px;
-  resize: vertical;
-  min-height: 50px;
+  font-size: 12px;
   background: var(--color-bg-elevated);
   color: var(--color-text-primary);
+  resize: vertical;
+  box-sizing: border-box;
 }
 .ftf-notes:focus {
   outline: 1px solid #F0A742;
   border-color: #F0A742;
 }
 
-.ftf-personas {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.ftf-persona-card {
-  text-align: left;
-  padding: 10px 12px;
-  border: 1px solid var(--color-hairline);
-  border-radius: 8px;
-  background: var(--color-bg-elevated);
-  cursor: pointer;
-  font-family: inherit;
-  transition: border-color .12s ease, background .12s ease;
-}
-.ftf-persona-card:hover {
-  border-color: var(--color-text-tertiary);
-  background: var(--color-bg-subtle);
-}
-.ftf-persona-card.selected {
-  border-color: #F0A742;
-  background: rgba(240,167,66,0.06);
-  box-shadow: 0 0 0 2px rgba(240,167,66,0.18);
-}
-
-.ftf-persona-name {
+.ftf-notes-large {
   font-size: 13px;
-  font-weight: 600;
-  color: var(--color-text-primary);
-  margin-bottom: 2px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
+  min-height: 100px;
 }
 
-.ftf-persona-tag {
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  color: #C77A0F;
-  background: rgba(240,167,66,0.10);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
+.ftf-add-persona-wrap { margin-top: 8px; }
 
-.ftf-persona-desc {
-  font-size: 11px;
-  color: var(--color-text-tertiary);
-  line-height: 1.4;
-}
-
-.ftf-add-persona-btn {
-  width: 100%;
-  padding: 10px;
-  background: transparent;
-  border: 1px dashed var(--color-hairline);
-  border-radius: 8px;
+.ftf-add-link {
+  background: none;
+  border: none;
   font-family: inherit;
   font-size: 12px;
-  color: var(--color-text-tertiary);
+  color: #C77A0F;
   cursor: pointer;
+  padding: 4px 0;
+  font-weight: 500;
 }
-.ftf-add-persona-btn:hover {
-  color: var(--color-text-primary);
-  border-color: var(--color-text-tertiary);
-}
+.ftf-add-link:hover { text-decoration: underline; }
 
 .ftf-add-persona-form {
-  padding: 14px;
+  margin-top: 8px;
+  padding: 12px;
   background: var(--color-bg-subtle);
   border-radius: 8px;
-  border: 1px solid var(--color-hairline);
-}
-.ftf-add-persona-row {
-  margin-bottom: 10px;
-}
-.ftf-add-persona-row label {
-  display: block;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--color-text-tertiary);
-  margin-bottom: 4px;
-}
-.ftf-add-persona-row input {
-  width: 100%;
-  padding: 8px 10px;
-  border: 1px solid var(--color-hairline);
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  background: var(--color-bg-elevated);
-  color: var(--color-text-primary);
-}
-.ftf-add-persona-actions {
-  display: flex;
-  justify-content: flex-end;
+  display: grid;
   gap: 8px;
 }
-.ftf-add-persona-cancel {
-  padding: 6px 12px;
-  background: transparent;
+.ftf-add-persona-form input,
+.ftf-add-persona-form textarea {
+  width: 100%;
+  padding: 6px 8px;
   border: 1px solid var(--color-hairline);
-  border-radius: 6px;
+  border-radius: 4px;
   font-family: inherit;
   font-size: 12px;
-  cursor: pointer;
-  color: var(--color-text-secondary);
+  background: var(--color-bg-elevated);
+  color: var(--color-text-primary);
+  box-sizing: border-box;
 }
-.ftf-add-persona-save {
+
+.ftf-add-persona-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+.ftf-cancel,
+.ftf-save {
   padding: 6px 12px;
-  background: #F0A742;
-  border: none;
-  border-radius: 6px;
+  border-radius: 4px;
   font-family: inherit;
   font-size: 12px;
-  font-weight: 600;
   cursor: pointer;
-  color: #fff;
+  border: none;
 }
-.ftf-add-persona-save:disabled {
+.ftf-cancel {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-hairline);
+}
+.ftf-save {
+  background: #F0A742;
+  color: #fff;
+  font-weight: 600;
+}
+.ftf-save:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
