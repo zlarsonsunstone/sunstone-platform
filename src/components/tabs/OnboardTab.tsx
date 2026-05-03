@@ -24,6 +24,7 @@ import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
 import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
 import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
 import { loadReadiness, ReadinessState } from '@/lib/recon'
+import { GenerateBriefButton as ReconBriefGenerator } from '@/components/onboard/GenerateBriefButton'
 
 export function OnboardTab() {
   const activeTenant = useStore((s) => s.activeTenant)
@@ -2306,7 +2307,11 @@ function StrategicProfileCard({
             onClick={onConfigureStones}
             number="03"
           />
-          <GenerateBriefButton readiness={r} />
+          <ReconBriefGenerator
+            strategicProfileId={profile.id}
+            tenantId={profile.tenant_id}
+            readiness={r}
+          />
         </div>
       </div>
     </Card>
@@ -2401,62 +2406,6 @@ function WorkflowButton({
       >
         {ready ? '✓ Ready' : 'Open'}
       </span>
-    </button>
-  )
-}
-
-function GenerateBriefButton({ readiness }: { readiness: ReadinessState }) {
-  let label = 'Generate Recon Brief'
-  let disabled = false
-
-  if (!readiness.cbp_ready) {
-    label = 'Build CBP first'
-    disabled = true
-  } else if (!readiness.frame_ready) {
-    label = 'Frame the brief first'
-    disabled = true
-  } else if (!readiness.research_ready) {
-    label = 'Build Surface Research first'
-    disabled = true
-  } else if (!readiness.stones_ready) {
-    label = 'Configure Stones first'
-    disabled = true
-  }
-
-  return (
-    <button
-      type="button"
-      disabled={disabled}
-      onClick={() => {
-        // Brief generator wires up in gate 4b. For now, this button is a
-        // visual gate that becomes clickable when all four prerequisites
-        // are ready. Clicking it before gate 4b ships shows a placeholder.
-        if (!disabled) {
-          window.alert(
-            'Brief generation arrives in gate 4b. All four prerequisites are ready — the generator function will produce the paired Recon Brief + Options deck once shipped.',
-          )
-        }
-      }}
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        gap: '8px',
-        width: '100%',
-        padding: '10px 14px',
-        marginTop: '4px',
-        background: disabled ? 'var(--color-bg-subtle)' : '#F0A742',
-        color: disabled ? 'var(--color-text-tertiary)' : '#fff',
-        border: 'none',
-        borderRadius: 'var(--radius-input)',
-        fontSize: '13px',
-        fontWeight: 600,
-        fontFamily: 'inherit',
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        letterSpacing: '-0.003em',
-      }}
-    >
-      ⊕ {label}
     </button>
   )
 }
