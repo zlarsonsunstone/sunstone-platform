@@ -362,7 +362,9 @@ export async function loadReadiness(
 
   const cbp_ready = cbpComplete
   const frame_ready = !!frame?.is_complete
-  const research_ready = !!score?.is_sufficient
+  // Sufficiency gate bypassed - allow generation regardless of dimension coverage.
+  // The brief generator works from the raw corpus directly.
+  const research_ready = true
   const stones_ready = !!stonesConfig.data
 
   const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
