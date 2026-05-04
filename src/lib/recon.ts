@@ -128,7 +128,7 @@ export interface ReadinessState {
   frame_ready: boolean
   research_ready: boolean
   stones_ready: boolean
-  all_ready: boolean
+  generate_ready: boolean
   next_step_label: string
 }
 
@@ -365,7 +365,7 @@ export async function loadReadiness(
   const research_ready = !!score?.is_sufficient
   const stones_ready = !!stonesConfig.data
 
-  const all_ready = cbp_ready && frame_ready && research_ready && stones_ready
+  const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
 
   let next_step_label = 'Generate Recon Brief'
   if (!cbp_ready)        next_step_label = 'Build CBP first'
@@ -382,7 +382,7 @@ export async function loadReadiness(
     frame_ready,
     research_ready,
     stones_ready,
-    all_ready,
+    generate_ready,
     next_step_label,
   }
 }
