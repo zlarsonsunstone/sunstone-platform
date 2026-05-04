@@ -86,13 +86,15 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     title: string
     sourceLabel?: string
     sourceUrl?: string
-    rawText?: string
+    userNote?: string
+    extractedText?: string
     dimensions: SignalDimension[]
     fileMetadata?: FileUploadResult['fileMetadata']
     storagePath?: string
   }) {
     const rawPayload: Record<string, unknown> = {}
-    if (entry.rawText) rawPayload.text = entry.rawText
+    if (entry.userNote) rawPayload.user_note = entry.userNote
+    if (entry.extractedText) rawPayload.text = entry.extractedText
     if (entry.fileMetadata) rawPayload.file_metadata = entry.fileMetadata
     if (entry.storagePath) rawPayload.storage_path = entry.storagePath
 
@@ -152,142 +154,144 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
   }
 
   return (
-    <Modal
-      open={true}
-      onClose={onClose}
-      title={'Surface Research . ' + profileName}
-      size="full"
-      footer={
-        <>
-          <div style={{ flex: 1, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
-            {entries.length === 0
-              ? 'Add evidence to the corpus until the platform reports it can support a compelling brief.'
-              : computing
-                ? 'Recomputing sufficiency...'
-                : entries.length + ' ' + (entries.length === 1 ? 'entry' : 'entries') + ' in the corpus'}
-          </div>
-          <Button variant="secondary" onClick={onClose}>Close</Button>
-        </>
-      }
-    >
-      <style>{STYLES}</style>
-
-      <div className="sr-shell">
-        <div className="sr-intro">
-          <strong>Add evidence freely.</strong> Any source, any order, any number of entries.
-          The platform reports when the corpus can support a compelling brief for the chosen Frame.
-          You decide when to stop iterating.
-        </div>
-
-        <div className={'sr-score-card' + (isSufficient ? ' ready' : '')}>
-          <div className="sr-score-head">
-            <div>
-              <div className="sr-score-eyebrow">SUFFICIENCY READ</div>
-              <div className="sr-score-headline">
-                {totalScore} of {requiredScore}
-                {isSufficient && <span className="sr-score-ready-tag">Ready</span>}
-              </div>
-              <div className="sr-score-sub">
-                {isSufficient
-                  ? 'The corpus can support a compelling brief. Proceed to Stones, then generate.'
-                  : 'Need ' + (requiredScore - totalScore) + ' more dimension points before generating the brief.'}
-              </div>
+    <>
+      <Modal
+        open={true}
+        onClose={onClose}
+        title={'Surface Research . ' + profileName}
+        size="full"
+        footer={
+          <>
+            <div style={{ flex: 1, fontSize: 12, color: 'var(--color-text-tertiary)' }}>
+              {entries.length === 0
+                ? 'Add evidence to the corpus until the platform reports it can support a compelling brief.'
+                : computing
+                  ? 'Recomputing sufficiency...'
+                  : entries.length + ' ' + (entries.length === 1 ? 'entry' : 'entries') + ' in the corpus'}
             </div>
-            <div className="sr-score-progress-wrap">
-              <div
-                className="sr-score-progress-bar"
-                style={{ width: Math.min(100, (totalScore / requiredScore) * 100) + '%' }}
-              />
-            </div>
+            <Button variant="secondary" onClick={onClose}>Close</Button>
+          </>
+        }
+      >
+        <style>{STYLES}</style>
+
+        <div className="sr-shell">
+          <div className="sr-intro">
+            <strong>Add evidence freely.</strong> Any source, any order, any number of entries.
+            The platform reports when the corpus can support a compelling brief for the chosen Frame.
+            You decide when to stop iterating.
           </div>
 
-          <div className="sr-dim-grid">
-            {dimensions.map((dim) => {
-              const d = dimensionScores[dim]
-              const meta = DIMENSION_META[dim]
-              return (
-                <div key={dim} className="sr-dim">
-                  <div className="sr-dim-head">
-                    <span className="sr-dim-label">{meta.label}</span>
-                    <span className={'sr-dim-score score-' + d}>{d}/3</span>
-                  </div>
-                  <div className="sr-dim-pips">
-                    {[1, 2, 3].map((n) => (
-                      <span key={n} className={'sr-dim-pip' + (d >= n ? ' filled' : '')} />
-                    ))}
-                  </div>
-                  <div className="sr-dim-hint">{meta.hint}</div>
+          <div className={'sr-score-card' + (isSufficient ? ' ready' : '')}>
+            <div className="sr-score-head">
+              <div>
+                <div className="sr-score-eyebrow">SUFFICIENCY READ</div>
+                <div className="sr-score-headline">
+                  {totalScore} of {requiredScore}
+                  {isSufficient && <span className="sr-score-ready-tag">Ready</span>}
                 </div>
-              )
-            })}
-          </div>
-
-          {!frame?.is_complete && (
-            <div className="sr-frame-warn">
-              Framing the Frame is incomplete. The brief needs all four blocks answered before generation,
-              and sufficiency reads against the chosen Frame.
-            </div>
-          )}
-        </div>
-
-        <div className="sr-corpus">
-          <div className="sr-corpus-head">
-            <h3>Corpus</h3>
-            <button
-              type="button"
-              className="sr-add-btn"
-              onClick={() => setShowAddEntry(true)}
-            >
-              + Add entry
-            </button>
-          </div>
-
-          {entries.length === 0 ? (
-            <div className="sr-empty">
-              <div className="sr-empty-title">No entries yet.</div>
-              <div className="sr-empty-sub">
-                Click <strong>+ Add entry</strong> to upload a CSV/XLSX/PDF, drop in a HigherGov pull,
-                paste from a market report, or write your own observation note.
+                <div className="sr-score-sub">
+                  {isSufficient
+                    ? 'The corpus can support a compelling brief. Proceed to Stones, then generate.'
+                    : 'Need ' + (requiredScore - totalScore) + ' more dimension points before generating the brief.'}
+                </div>
+              </div>
+              <div className="sr-score-progress-wrap">
+                <div
+                  className="sr-score-progress-bar"
+                  style={{ width: Math.min(100, (totalScore / requiredScore) * 100) + '%' }}
+                />
               </div>
             </div>
-          ) : (
-            <ul className="sr-entries">
-              {entries.map((e) => (
-                <li key={e.id} className="sr-entry">
-                  <div className="sr-entry-icon">{ENTRY_KIND_META[e.entry_kind].icon}</div>
-                  <div className="sr-entry-body">
-                    <div className="sr-entry-title">{e.title}</div>
-                    <div className="sr-entry-meta">
-                      <span className="sr-entry-kind">{ENTRY_KIND_META[e.entry_kind].label}</span>
-                      {e.source_label && <span className="sr-entry-source"> . {e.source_label}</span>}
-                      <span className="sr-entry-date">
-                        {' . ' + new Date(e.created_at).toLocaleDateString()}
-                      </span>
+
+            <div className="sr-dim-grid">
+              {dimensions.map((dim) => {
+                const d = dimensionScores[dim]
+                const meta = DIMENSION_META[dim]
+                return (
+                  <div key={dim} className="sr-dim">
+                    <div className="sr-dim-head">
+                      <span className="sr-dim-label">{meta.label}</span>
+                      <span className={'sr-dim-score score-' + d}>{d}/3</span>
                     </div>
-                    {e.signal_dimensions.length > 0 && (
-                      <div className="sr-entry-dims">
-                        {e.signal_dimensions.map((d) => (
-                          <span key={d} className="sr-entry-dim">
-                            {DIMENSION_META[d].label}
-                          </span>
-                        ))}
-                      </div>
-                    )}
+                    <div className="sr-dim-pips">
+                      {[1, 2, 3].map((n) => (
+                        <span key={n} className={'sr-dim-pip' + (d >= n ? ' filled' : '')} />
+                      ))}
+                    </div>
+                    <div className="sr-dim-hint">{meta.hint}</div>
                   </div>
-                  <button
-                    type="button"
-                    className="sr-entry-delete"
-                    onClick={() => handleDeleteEntry(e.id)}
-                    aria-label="Delete entry"
-                  >
-                    x
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+                )
+              })}
+            </div>
+
+            {!frame?.is_complete && (
+              <div className="sr-frame-warn">
+                Framing the Frame is incomplete. The brief needs all four blocks answered before generation,
+                and sufficiency reads against the chosen Frame.
+              </div>
+            )}
+          </div>
+
+          <div className="sr-corpus">
+            <div className="sr-corpus-head">
+              <h3>Corpus</h3>
+              <button
+                type="button"
+                className="sr-add-btn"
+                onClick={() => setShowAddEntry(true)}
+              >
+                + Add entry
+              </button>
+            </div>
+
+            {entries.length === 0 ? (
+              <div className="sr-empty">
+                <div className="sr-empty-title">No entries yet.</div>
+                <div className="sr-empty-sub">
+                  Click <strong>+ Add entry</strong> to upload a CSV/XLSX/PDF, drop in a HigherGov pull,
+                  paste from a market report, or write your own observation note.
+                </div>
+              </div>
+            ) : (
+              <ul className="sr-entries">
+                {entries.map((e) => (
+                  <li key={e.id} className="sr-entry">
+                    <div className="sr-entry-icon">{ENTRY_KIND_META[e.entry_kind].icon}</div>
+                    <div className="sr-entry-body">
+                      <div className="sr-entry-title">{e.title}</div>
+                      <div className="sr-entry-meta">
+                        <span className="sr-entry-kind">{ENTRY_KIND_META[e.entry_kind].label}</span>
+                        {e.source_label && <span className="sr-entry-source"> . {e.source_label}</span>}
+                        <span className="sr-entry-date">
+                          {' . ' + new Date(e.created_at).toLocaleDateString()}
+                        </span>
+                      </div>
+                      {e.signal_dimensions.length > 0 && (
+                        <div className="sr-entry-dims">
+                          {e.signal_dimensions.map((d) => (
+                            <span key={d} className="sr-entry-dim">
+                              {DIMENSION_META[d].label}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      className="sr-entry-delete"
+                      onClick={() => handleDeleteEntry(e.id)}
+                      aria-label="Delete entry"
+                    >
+                      x
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
         </div>
-      </div>
+      </Modal>
 
       {showAddEntry && (
         <AddEntryDialog
@@ -297,12 +301,12 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
           onSubmit={handleAddEntry}
         />
       )}
-    </Modal>
+    </>
   )
 }
 
 // =============================================================================
-// ADD ENTRY DIALOG
+// ADD ENTRY DIALOG - rendered as Modal (not custom backdrop) for stability
 // =============================================================================
 function AddEntryDialog({
   tenantId,
@@ -318,7 +322,8 @@ function AddEntryDialog({
     title: string
     sourceLabel?: string
     sourceUrl?: string
-    rawText?: string
+    userNote?: string
+    extractedText?: string
     dimensions: SignalDimension[]
     fileMetadata?: FileUploadResult['fileMetadata']
     storagePath?: string
@@ -328,8 +333,10 @@ function AddEntryDialog({
   const [title, setTitle] = useState('')
   const [sourceLabel, setSourceLabel] = useState('')
   const [sourceUrl, setSourceUrl] = useState('')
-  const [rawText, setRawText] = useState('')
+  const [userNote, setUserNote] = useState('')
   const [selectedDims, setSelectedDims] = useState<Set<SignalDimension>>(new Set())
+  // extractedText held separately - never goes into a controlled input
+  const [extractedText, setExtractedText] = useState<string>('')
   const [uploadedFile, setUploadedFile] = useState<FileUploadResult | null>(null)
 
   const dimensions: SignalDimension[] = [
@@ -347,6 +354,7 @@ function AddEntryDialog({
 
   function handleFileUploaded(result: FileUploadResult) {
     setUploadedFile(result)
+    setExtractedText(result.extractedText)
     if (kind !== 'file_upload') {
       setKind('file_upload')
     }
@@ -356,7 +364,6 @@ function AddEntryDialog({
     if (!sourceLabel.trim()) {
       setSourceLabel(result.fileMetadata.filename)
     }
-    setRawText(result.extractedText)
   }
 
   function handleSubmit() {
@@ -366,7 +373,8 @@ function AddEntryDialog({
       title: title.trim(),
       sourceLabel: sourceLabel.trim() || undefined,
       sourceUrl: sourceUrl.trim() || undefined,
-      rawText: rawText.trim() || undefined,
+      userNote: userNote.trim() || undefined,
+      extractedText: extractedText || undefined,
       dimensions: Array.from(selectedDims),
       fileMetadata: uploadedFile?.fileMetadata,
       storagePath: uploadedFile?.storagePath,
@@ -376,11 +384,23 @@ function AddEntryDialog({
   const isPullKind = kind === 'highergov_pull' || kind === 'usaspending_pull'
 
   return (
-    <div className="sr-dialog-backdrop" onClick={onCancel}>
-      <div className="sr-dialog" onClick={(e) => e.stopPropagation()}>
-        <h3 className="sr-dialog-title">Add corpus entry</h3>
-
-        <div className="sr-dialog-row">
+    <Modal
+      open={true}
+      onClose={onCancel}
+      title="Add corpus entry"
+      size="md"
+      footer={
+        <>
+          <Button variant="secondary" onClick={onCancel}>Cancel</Button>
+          <Button onClick={handleSubmit} disabled={!title.trim()}>
+            Add to corpus
+          </Button>
+        </>
+      }
+    >
+      <style>{DIALOG_STYLES}</style>
+      <div className="sr-dlg-body">
+        <div className="sr-dlg-row">
           <label>Entry kind</label>
           <select value={kind} onChange={(e) => setKind(e.target.value as SurfaceEntryKind)}>
             <option value="paste_in">Paste-in (text from a market report, search result, etc.)</option>
@@ -393,13 +413,13 @@ function AddEntryDialog({
         </div>
 
         {isPullKind && (
-          <div className="sr-dialog-warn">
+          <div className="sr-dlg-warn">
             API integration for {ENTRY_KIND_META[kind].label} arrives in gate 4b. For now, run the
-            query manually and paste the result into the text field below, or attach a CSV/XLSX export.
+            query manually and paste the result into the notes field below, or attach a CSV/XLSX export.
           </div>
         )}
 
-        <div className="sr-dialog-row">
+        <div className="sr-dlg-row">
           <label>Attach file (optional)</label>
           <FileUploadInput
             tenantId={tenantId}
@@ -407,9 +427,31 @@ function AddEntryDialog({
             onUploaded={handleFileUploaded}
             attachedFilename={uploadedFile?.fileMetadata.filename || null}
           />
+          {uploadedFile && (
+            <div className="sr-file-preview">
+              <div className="sr-file-preview-head">
+                <strong>{uploadedFile.fileMetadata.filename}</strong>
+                <span>
+                  {(uploadedFile.fileMetadata.size_bytes / 1024).toFixed(0)} KB
+                  {uploadedFile.fileMetadata.row_count
+                    ? ' . ' + uploadedFile.fileMetadata.row_count.toLocaleString() + ' rows'
+                    : ''}
+                  {uploadedFile.fileMetadata.sheet_names && uploadedFile.fileMetadata.sheet_names.length > 1
+                    ? ' . ' + uploadedFile.fileMetadata.sheet_names.length + ' sheets'
+                    : ''}
+                  . {extractedText.length.toLocaleString()} chars extracted
+                </span>
+              </div>
+              <div className="sr-file-preview-snippet">
+                {extractedText.length > 400
+                  ? extractedText.slice(0, 400).replace(/\n/g, ' ') + ' ... [truncated for preview]'
+                  : extractedText.replace(/\n/g, ' ')}
+              </div>
+            </div>
+          )}
         </div>
 
-        <div className="sr-dialog-row">
+        <div className="sr-dlg-row">
           <label>Title</label>
           <input
             type="text"
@@ -419,7 +461,7 @@ function AddEntryDialog({
           />
         </div>
 
-        <div className="sr-dialog-row">
+        <div className="sr-dlg-row">
           <label>Source label (optional)</label>
           <input
             type="text"
@@ -429,7 +471,7 @@ function AddEntryDialog({
           />
         </div>
 
-        <div className="sr-dialog-row">
+        <div className="sr-dlg-row">
           <label>Source URL (optional)</label>
           <input
             type="url"
@@ -439,22 +481,17 @@ function AddEntryDialog({
           />
         </div>
 
-        <div className="sr-dialog-row">
-          <label>Content (optional)</label>
+        <div className="sr-dlg-row">
+          <label>Your note about this entry (optional)</label>
           <textarea
-            value={rawText}
-            onChange={(e) => setRawText(e.target.value)}
-            placeholder="Paste data, extract, or full text here. Or attach a file above to auto-fill from extracted content."
-            rows={5}
+            value={userNote}
+            onChange={(e) => setUserNote(e.target.value)}
+            placeholder="What does this evidence show? Why does it matter? Add your synthesis here. The full file content is captured separately."
+            rows={4}
           />
-          {uploadedFile && uploadedFile.fileMetadata.row_count && (
-            <div className="sr-file-info">
-              Auto-filled from {uploadedFile.fileMetadata.filename}: {uploadedFile.fileMetadata.row_count} rows extracted, {rawText.length} chars in field.
-            </div>
-          )}
         </div>
 
-        <div className="sr-dialog-row">
+        <div className="sr-dlg-row">
           <label>Which dimensions does this contribute to?</label>
           <div className="sr-dim-checks">
             {dimensions.map((d) => (
@@ -472,22 +509,8 @@ function AddEntryDialog({
             Selecting dimensions tells the sufficiency scorer which gaps this entry fills.
           </div>
         </div>
-
-        <div className="sr-dialog-actions">
-          <button type="button" className="sr-dialog-cancel" onClick={onCancel}>
-            Cancel
-          </button>
-          <button
-            type="button"
-            className="sr-dialog-save"
-            disabled={!title.trim()}
-            onClick={handleSubmit}
-          >
-            Add to corpus
-          </button>
-        </div>
       </div>
-    </div>
+    </Modal>
   )
 }
 
@@ -784,41 +807,18 @@ const STYLES = `
   color: var(--color-danger);
   background: rgba(139,42,31,0.06);
 }
+`
 
-.sr-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.5);
-  backdrop-filter: blur(4px);
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  z-index: 500;
-  padding: 48px 16px;
-  overflow: auto;
+const DIALOG_STYLES = `
+.sr-dlg-body {
+  padding: 4px 0;
 }
 
-.sr-dialog {
-  background: var(--color-bg-elevated);
-  border-radius: 12px;
-  padding: 24px 28px;
-  width: 100%;
-  max-width: 640px;
-  box-shadow: 0 20px 60px rgba(0,0,0,0.25);
-}
-
-.sr-dialog-title {
-  font-size: 16px;
-  font-weight: 600;
-  margin: 0 0 18px;
-  letter-spacing: -0.011em;
-}
-
-.sr-dialog-row {
+.sr-dlg-row {
   margin-bottom: 14px;
 }
 
-.sr-dialog-row label {
+.sr-dlg-row label {
   display: block;
   font-size: 11px;
   font-weight: 600;
@@ -828,9 +828,9 @@ const STYLES = `
   margin-bottom: 4px;
 }
 
-.sr-dialog-row input,
-.sr-dialog-row select,
-.sr-dialog-row textarea {
+.sr-dlg-row input,
+.sr-dlg-row select,
+.sr-dlg-row textarea {
   width: 100%;
   padding: 8px 10px;
   border: 1px solid var(--color-hairline);
@@ -841,14 +841,14 @@ const STYLES = `
   color: var(--color-text-primary);
   box-sizing: border-box;
 }
-.sr-dialog-row input:focus,
-.sr-dialog-row select:focus,
-.sr-dialog-row textarea:focus {
+.sr-dlg-row input:focus,
+.sr-dlg-row select:focus,
+.sr-dlg-row textarea:focus {
   outline: 1px solid #F0A742;
   border-color: #F0A742;
 }
 
-.sr-dialog-warn {
+.sr-dlg-warn {
   padding: 10px 12px;
   background: rgba(240,167,66,0.08);
   border: 1px solid rgba(240,167,66,0.30);
@@ -858,13 +858,47 @@ const STYLES = `
   margin-bottom: 14px;
 }
 
-.sr-file-info {
-  margin-top: 6px;
-  padding: 6px 10px;
+.sr-file-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  background: rgba(46,107,62,0.04);
+  border: 1px solid rgba(46,107,62,0.20);
+  border-radius: 6px;
+}
+
+.sr-file-preview-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+.sr-file-preview-head strong {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--color-text-primary);
+  word-break: break-word;
+}
+.sr-file-preview-head span {
   font-size: 11px;
   color: #2E6B3E;
-  background: rgba(46,107,62,0.08);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.sr-file-preview-snippet {
+  font-size: 11px;
+  color: var(--color-text-tertiary);
+  font-family: 'SF Mono', Menlo, monospace;
+  background: var(--color-bg-subtle);
+  padding: 6px 8px;
   border-radius: 4px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+  max-height: 80px;
+  overflow: hidden;
 }
 
 .sr-dim-checks {
@@ -894,40 +928,5 @@ const STYLES = `
   font-size: 11px;
   color: var(--color-text-tertiary);
   margin-top: 6px;
-}
-
-.sr-dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  margin-top: 18px;
-  padding-top: 18px;
-  border-top: 1px solid var(--color-hairline);
-}
-
-.sr-dialog-cancel {
-  padding: 8px 14px;
-  background: transparent;
-  border: 1px solid var(--color-hairline);
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  cursor: pointer;
-  color: var(--color-text-secondary);
-}
-.sr-dialog-save {
-  padding: 8px 14px;
-  background: #F0A742;
-  border: none;
-  border-radius: 6px;
-  font-family: inherit;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  color: #fff;
-}
-.sr-dialog-save:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 `
