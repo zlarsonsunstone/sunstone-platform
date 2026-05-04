@@ -129,7 +129,7 @@ export interface ReadinessState {
   research_ready: boolean
   stones_ready: boolean
   generate_ready: boolean
-  next_step_label: string
+  next_step_label?: string
 }
 
 // =============================================================================
