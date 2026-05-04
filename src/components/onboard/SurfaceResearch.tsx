@@ -1,19 +1,3 @@
-/**
- * Surface Research workspace — Recon Engine
- *
- * Iterative outcome-managed loop. Three things on the page:
- *   1. CORPUS — running list of evidence entries the consultant adds
- *   2. SCORE — live read of corpus against 6 sufficiency dimensions
- *   3. GENERATE-BRIEF GATE — green when score crosses the bar; red otherwise
- *
- * The consultant adds entries freely (any kind, any order, any number) until
- * the score reads "ready." No fixed sequence. No predefined sources.
- *
- * Gate 4a: heuristic scoring only. Manual paste-in / note / fact entry kinds.
- * Gate 4b will add: HigherGov + USASpending API pulls, file uploads,
- * LLM-judged commentary on what's thin and what would strengthen it.
- */
-
 import { useEffect, useMemo, useState } from 'react'
 import { Modal } from '@/components/Modal'
 import { Button } from '@/components/Button'
@@ -30,6 +14,8 @@ import {
   computeAndSaveSufficiency,
   loadFrame,
 } from '@/lib/recon'
+import { FileUploadInput } from '@/components/onboard/FileUploadInput'
+import { FileUploadResult } from '@/lib/fileUpload'
 
 interface Props {
   strategicProfileId: string
@@ -39,21 +25,21 @@ interface Props {
 }
 
 const DIMENSION_META: Record<SignalDimension, { label: string; hint: string }> = {
-  market_sizing:     { label: 'Market sizing',      hint: 'Total federal $ in the prospect\'s codes; addressable subset' },
+  market_sizing:     { label: 'Market sizing',      hint: "Total federal $ in the prospect's codes; addressable subset" },
   peer_cohort:       { label: 'Peer cohort',        hint: 'Comparable firms (same NAICS, year, size); their outcomes' },
   vehicle_landscape: { label: 'Vehicle landscape',  hint: 'Active IDIQs, schedules, set-asides; dollar flow per vehicle' },
   agency_map:        { label: 'Agency map',         hint: 'Top buying agencies in the codes; their patterns' },
-  doppelganger:      { label: 'Doppelganger vendors', hint: 'Vendors that look like the prospect; what they\'ve won' },
+  doppelganger:      { label: 'Doppelganger vendors', hint: "Vendors that look like the prospect; what they've won" },
   trajectory:        { label: 'Trajectory',         hint: 'Public-record milestones for THIS prospect (entity, SAM, schedules, awards)' },
 }
 
 const ENTRY_KIND_META: Record<SurfaceEntryKind, { label: string; icon: string }> = {
-  highergov_pull:   { label: 'HigherGov pull',   icon: '⛁' },
+  highergov_pull:   { label: 'HigherGov pull',   icon: 'HG' },
   usaspending_pull: { label: 'USASpending pull', icon: '$' },
-  paste_in:         { label: 'Paste-in',         icon: '✎' },
-  file_upload:      { label: 'File upload',      icon: '⊕' },
-  note:             { label: 'Note',             icon: '⌇' },
-  fact:             { label: 'Extracted fact',   icon: '✓' },
+  paste_in:         { label: 'Paste-in',         icon: 'P' },
+  file_upload:      { label: 'File upload',      icon: 'F' },
+  note:             { label: 'Note',             icon: 'N' },
+  fact:             { label: 'Extracted fact',   icon: 'V' },
 }
 
 export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onClose }: Props) {
@@ -64,9 +50,6 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
   const [showAddEntry, setShowAddEntry] = useState(false)
   const [computing, setComputing] = useState(false)
 
-  // ---------------------------------------------------------------------------
-  // INITIAL LOAD
-  // ---------------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false
     ;(async () => {
@@ -86,9 +69,6 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     }
   }, [strategicProfileId])
 
-  // ---------------------------------------------------------------------------
-  // RECOMPUTE SUFFICIENCY when corpus changes
-  // ---------------------------------------------------------------------------
   async function recomputeSufficiency(currentEntries: SurfaceEntry[]) {
     setComputing(true)
     const newScore = await computeAndSaveSufficiency(
@@ -108,13 +88,20 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     sourceUrl?: string
     rawText?: string
     dimensions: SignalDimension[]
+    fileMetadata?: FileUploadResult['fileMetadata']
+    storagePath?: string
   }) {
+    const rawPayload: Record<string, unknown> = {}
+    if (entry.rawText) rawPayload.text = entry.rawText
+    if (entry.fileMetadata) rawPayload.file_metadata = entry.fileMetadata
+    if (entry.storagePath) rawPayload.storage_path = entry.storagePath
+
     const created = await addSurfaceEntry(tenantId, strategicProfileId, {
       title: entry.title,
       entry_kind: entry.kind,
       source_label: entry.sourceLabel,
       source_url: entry.sourceUrl,
-      raw_payload: entry.rawText ? { text: entry.rawText } : {},
+      raw_payload: rawPayload,
       signal_dimensions: entry.dimensions,
       extracted_facts: [],
     })
@@ -134,9 +121,6 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     await recomputeSufficiency(next)
   }
 
-  // ---------------------------------------------------------------------------
-  // SUFFICIENCY DISPLAY
-  // ---------------------------------------------------------------------------
   const dimensions: SignalDimension[] = useMemo(
     () => ['market_sizing', 'peer_cohort', 'vehicle_landscape', 'agency_map', 'doppelganger', 'trajectory'],
     [],
@@ -157,14 +141,11 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
   const requiredScore = score?.required_score || 12
   const isSufficient = score?.is_sufficient || false
 
-  // ---------------------------------------------------------------------------
-  // RENDER
-  // ---------------------------------------------------------------------------
   if (!loaded) {
     return (
-      <Modal open={true} onClose={onClose} title={`Surface Research · ${profileName}`} size="full">
+      <Modal open={true} onClose={onClose} title={'Surface Research . ' + profileName} size="full">
         <div style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-          Loading corpus…
+          Loading corpus...
         </div>
       </Modal>
     )
@@ -174,7 +155,7 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     <Modal
       open={true}
       onClose={onClose}
-      title={`Surface Research · ${profileName}`}
+      title={'Surface Research . ' + profileName}
       size="full"
       footer={
         <>
@@ -182,8 +163,8 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
             {entries.length === 0
               ? 'Add evidence to the corpus until the platform reports it can support a compelling brief.'
               : computing
-                ? 'Recomputing sufficiency…'
-                : `${entries.length} ${entries.length === 1 ? 'entry' : 'entries'} in the corpus`}
+                ? 'Recomputing sufficiency...'
+                : entries.length + ' ' + (entries.length === 1 ? 'entry' : 'entries') + ' in the corpus'}
           </div>
           <Button variant="secondary" onClick={onClose}>Close</Button>
         </>
@@ -192,15 +173,13 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
       <style>{STYLES}</style>
 
       <div className="sr-shell">
-        {/* INTRO */}
         <div className="sr-intro">
           <strong>Add evidence freely.</strong> Any source, any order, any number of entries.
           The platform reports when the corpus can support a compelling brief for the chosen Frame.
           You decide when to stop iterating.
         </div>
 
-        {/* SCORE PANEL */}
-        <div className={`sr-score-card${isSufficient ? ' ready' : ''}`}>
+        <div className={'sr-score-card' + (isSufficient ? ' ready' : '')}>
           <div className="sr-score-head">
             <div>
               <div className="sr-score-eyebrow">SUFFICIENCY READ</div>
@@ -211,13 +190,13 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
               <div className="sr-score-sub">
                 {isSufficient
                   ? 'The corpus can support a compelling brief. Proceed to Stones, then generate.'
-                  : `Need ${requiredScore - totalScore} more dimension points before generating the brief.`}
+                  : 'Need ' + (requiredScore - totalScore) + ' more dimension points before generating the brief.'}
               </div>
             </div>
             <div className="sr-score-progress-wrap">
               <div
                 className="sr-score-progress-bar"
-                style={{ width: `${Math.min(100, (totalScore / requiredScore) * 100)}%` }}
+                style={{ width: Math.min(100, (totalScore / requiredScore) * 100) + '%' }}
               />
             </div>
           </div>
@@ -230,11 +209,11 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
                 <div key={dim} className="sr-dim">
                   <div className="sr-dim-head">
                     <span className="sr-dim-label">{meta.label}</span>
-                    <span className={`sr-dim-score score-${d}`}>{d}/3</span>
+                    <span className={'sr-dim-score score-' + d}>{d}/3</span>
                   </div>
                   <div className="sr-dim-pips">
                     {[1, 2, 3].map((n) => (
-                      <span key={n} className={`sr-dim-pip${d >= n ? ' filled' : ''}`} />
+                      <span key={n} className={'sr-dim-pip' + (d >= n ? ' filled' : '')} />
                     ))}
                   </div>
                   <div className="sr-dim-hint">{meta.hint}</div>
@@ -251,7 +230,6 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
           )}
         </div>
 
-        {/* CORPUS */}
         <div className="sr-corpus">
           <div className="sr-corpus-head">
             <h3>Corpus</h3>
@@ -268,8 +246,8 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
             <div className="sr-empty">
               <div className="sr-empty-title">No entries yet.</div>
               <div className="sr-empty-sub">
-                Click <strong>+ Add entry</strong> to drop in a HigherGov pull, USASpending query result,
-                paste-in from a market report, or your own observation note.
+                Click <strong>+ Add entry</strong> to upload a CSV/XLSX/PDF, drop in a HigherGov pull,
+                paste from a market report, or write your own observation note.
               </div>
             </div>
           ) : (
@@ -281,9 +259,9 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
                     <div className="sr-entry-title">{e.title}</div>
                     <div className="sr-entry-meta">
                       <span className="sr-entry-kind">{ENTRY_KIND_META[e.entry_kind].label}</span>
-                      {e.source_label && <span className="sr-entry-source">· {e.source_label}</span>}
+                      {e.source_label && <span className="sr-entry-source"> . {e.source_label}</span>}
                       <span className="sr-entry-date">
-                        · {new Date(e.created_at).toLocaleDateString()}
+                        {' . ' + new Date(e.created_at).toLocaleDateString()}
                       </span>
                     </div>
                     {e.signal_dimensions.length > 0 && (
@@ -302,7 +280,7 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
                     onClick={() => handleDeleteEntry(e.id)}
                     aria-label="Delete entry"
                   >
-                    ×
+                    x
                   </button>
                 </li>
               ))}
@@ -313,6 +291,8 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
 
       {showAddEntry && (
         <AddEntryDialog
+          tenantId={tenantId}
+          strategicProfileId={strategicProfileId}
           onCancel={() => setShowAddEntry(false)}
           onSubmit={handleAddEntry}
         />
@@ -325,8 +305,13 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
 // ADD ENTRY DIALOG
 // =============================================================================
 function AddEntryDialog({
-  onCancel, onSubmit,
+  tenantId,
+  strategicProfileId,
+  onCancel,
+  onSubmit,
 }: {
+  tenantId: string
+  strategicProfileId: string
   onCancel: () => void
   onSubmit: (entry: {
     kind: SurfaceEntryKind
@@ -335,6 +320,8 @@ function AddEntryDialog({
     sourceUrl?: string
     rawText?: string
     dimensions: SignalDimension[]
+    fileMetadata?: FileUploadResult['fileMetadata']
+    storagePath?: string
   }) => void
 }) {
   const [kind, setKind] = useState<SurfaceEntryKind>('paste_in')
@@ -343,6 +330,7 @@ function AddEntryDialog({
   const [sourceUrl, setSourceUrl] = useState('')
   const [rawText, setRawText] = useState('')
   const [selectedDims, setSelectedDims] = useState<Set<SignalDimension>>(new Set())
+  const [uploadedFile, setUploadedFile] = useState<FileUploadResult | null>(null)
 
   const dimensions: SignalDimension[] = [
     'market_sizing', 'peer_cohort', 'vehicle_landscape', 'agency_map', 'doppelganger', 'trajectory',
@@ -357,6 +345,20 @@ function AddEntryDialog({
     })
   }
 
+  function handleFileUploaded(result: FileUploadResult) {
+    setUploadedFile(result)
+    if (kind !== 'file_upload') {
+      setKind('file_upload')
+    }
+    if (!title.trim()) {
+      setTitle(result.fileMetadata.filename)
+    }
+    if (!sourceLabel.trim()) {
+      setSourceLabel(result.fileMetadata.filename)
+    }
+    setRawText(result.extractedText)
+  }
+
   function handleSubmit() {
     if (!title.trim()) return
     onSubmit({
@@ -366,11 +368,11 @@ function AddEntryDialog({
       sourceUrl: sourceUrl.trim() || undefined,
       rawText: rawText.trim() || undefined,
       dimensions: Array.from(selectedDims),
+      fileMetadata: uploadedFile?.fileMetadata,
+      storagePath: uploadedFile?.storagePath,
     })
   }
 
-  // The pull kinds are stubbed for gate 4a — they'll be wired to actual API
-  // calls in gate 4b. For now, the consultant pastes results manually.
   const isPullKind = kind === 'highergov_pull' || kind === 'usaspending_pull'
 
   return (
@@ -382,19 +384,30 @@ function AddEntryDialog({
           <label>Entry kind</label>
           <select value={kind} onChange={(e) => setKind(e.target.value as SurfaceEntryKind)}>
             <option value="paste_in">Paste-in (text from a market report, search result, etc.)</option>
+            <option value="file_upload">File upload (CSV, XLSX, PDF, DOC)</option>
             <option value="note">Note (your own observation or synthesis)</option>
             <option value="fact">Extracted fact (a single specific claim with a value)</option>
-            <option value="highergov_pull">HigherGov pull (stub — API integration in gate 4b)</option>
-            <option value="usaspending_pull">USASpending pull (stub — API integration in gate 4b)</option>
+            <option value="highergov_pull">HigherGov pull (stub - API integration in gate 4b)</option>
+            <option value="usaspending_pull">USASpending pull (stub - API integration in gate 4b)</option>
           </select>
         </div>
 
         {isPullKind && (
           <div className="sr-dialog-warn">
             API integration for {ENTRY_KIND_META[kind].label} arrives in gate 4b. For now, run the
-            query manually and paste the result into the text field below.
+            query manually and paste the result into the text field below, or attach a CSV/XLSX export.
           </div>
         )}
+
+        <div className="sr-dialog-row">
+          <label>Attach file (optional)</label>
+          <FileUploadInput
+            tenantId={tenantId}
+            strategicProfileId={strategicProfileId}
+            onUploaded={handleFileUploaded}
+            attachedFilename={uploadedFile?.fileMetadata.filename || null}
+          />
+        </div>
 
         <div className="sr-dialog-row">
           <label>Title</label>
@@ -431,16 +444,21 @@ function AddEntryDialog({
           <textarea
             value={rawText}
             onChange={(e) => setRawText(e.target.value)}
-            placeholder="Paste the data, extract, or full text here. The brief generator will pull from this in gate 4b."
+            placeholder="Paste data, extract, or full text here. Or attach a file above to auto-fill from extracted content."
             rows={5}
           />
+          {uploadedFile && uploadedFile.fileMetadata.row_count && (
+            <div className="sr-file-info">
+              Auto-filled from {uploadedFile.fileMetadata.filename}: {uploadedFile.fileMetadata.row_count} rows extracted, {rawText.length} chars in field.
+            </div>
+          )}
         </div>
 
         <div className="sr-dialog-row">
           <label>Which dimensions does this contribute to?</label>
           <div className="sr-dim-checks">
             {dimensions.map((d) => (
-              <label key={d} className={`sr-dim-check${selectedDims.has(d) ? ' checked' : ''}`}>
+              <label key={d} className={'sr-dim-check' + (selectedDims.has(d) ? ' checked' : '')}>
                 <input
                   type="checkbox"
                   checked={selectedDims.has(d)}
@@ -493,7 +511,6 @@ const STYLES = `
   border-left: 3px solid #F0A742;
 }
 
-/* SCORE CARD */
 .sr-score-card {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-hairline);
@@ -635,7 +652,6 @@ const STYLES = `
   color: #8C5208;
 }
 
-/* CORPUS */
 .sr-corpus {
   background: var(--color-bg-elevated);
   border: 1px solid var(--color-hairline);
@@ -711,8 +727,10 @@ const STYLES = `
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 14px;
+  font-size: 11px;
+  font-weight: 600;
   color: var(--color-text-secondary);
+  font-family: 'SF Mono', Menlo, monospace;
 }
 
 .sr-entry-body { flex: 1; min-width: 0; }
@@ -767,7 +785,6 @@ const STYLES = `
   background: rgba(139,42,31,0.06);
 }
 
-/* ADD-ENTRY DIALOG */
 .sr-dialog-backdrop {
   position: fixed;
   inset: 0;
@@ -839,6 +856,15 @@ const STYLES = `
   font-size: 12px;
   color: #8C5208;
   margin-bottom: 14px;
+}
+
+.sr-file-info {
+  margin-top: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #2E6B3E;
+  background: rgba(46,107,62,0.08);
+  border-radius: 4px;
 }
 
 .sr-dim-checks {
