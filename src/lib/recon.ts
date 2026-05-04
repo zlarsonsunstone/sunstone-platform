@@ -365,7 +365,10 @@ export async function loadReadiness(
   // Sufficiency gate bypassed - allow generation regardless of dimension coverage.
   // The brief generator works from the raw corpus directly.
   const research_ready = true
-  const stones_ready = !!stonesConfig.data
+  // Stones gate bypassed - Stones are response strategy that comes AFTER the brief
+  // surfaces what's there. Brief is diagnostic, Stones are prescription.
+  const stones_ready = true
+  void stonesConfig
 
   const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
 
