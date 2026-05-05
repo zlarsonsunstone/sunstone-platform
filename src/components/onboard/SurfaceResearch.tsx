@@ -267,16 +267,6 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     }
   }
 
-  if (!loaded) {
-    return (
-      <Modal open={true} onClose={onClose} title={'Surface Research . ' + profileName} size="full">
-        <div style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
-          Loading corpus...
-        </div>
-      </Modal>
-    )
-  }
-
   const tieredEntries = useMemo(() => {
     const groups: Record<number, any[]> = { 1: [], 2: [], 3: [], 4: [], 0: [] }
     for (const e of entries) {
@@ -286,6 +276,16 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     }
     return groups
   }, [entries])
+
+  if (!loaded) {
+    return (
+      <Modal open={true} onClose={onClose} title={'Surface Research . ' + profileName} size="full">
+        <div style={{ padding: 64, textAlign: 'center', color: 'var(--color-text-secondary)' }}>
+          Loading corpus...
+        </div>
+      </Modal>
+    )
+  }
 
   return (
     <>
