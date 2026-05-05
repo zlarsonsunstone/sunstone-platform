@@ -31,6 +31,58 @@ const MIME_BY_EXT: Record<string, string> = {
   json: 'application/json',
 }
 
+// -----------------------------------------------------------------------------
+// Helper: convert a File to base64 string (no data URI prefix)
+// -----------------------------------------------------------------------------
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      // result looks like: "data:application/pdf;base64,JVBERi0xLjQK..."
+      const commaIdx = result.indexOf(',')
+      resolve(commaIdx >= 0 ? result.slice(commaIdx + 1) : result)
+    }
+    reader.onerror = () => reject(new Error('FileReader failed'))
+    reader.readAsDataURL(file)
+  })
+}
+
+// -----------------------------------------------------------------------------
+// Helper: call extract-pdf-text edge function
+// -----------------------------------------------------------------------------
+
+async function extractPdfText(file: File): Promise<string> {
+  const pdf_base64 = await fileToBase64(file)
+  const response = await fetch('/.netlify/functions/extract-pdf-text', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      filename: file.name,
+      pdf_base64,
+    }),
+  })
+
+  if (!response.ok) {
+    const errBody = await response.text()
+    throw new Error('extract-pdf-text failed: ' + response.status + ' ' + errBody.slice(0, 300))
+  }
+
+  const data = await response.json() as { text?: string; length?: number; error?: string }
+  if (data.error) {
+    throw new Error('extract-pdf-text returned error: ' + data.error)
+  }
+  if (!data.text) {
+    throw new Error('extract-pdf-text returned no text')
+  }
+  return data.text
+}
+
+// -----------------------------------------------------------------------------
+// Main upload + extract
+// -----------------------------------------------------------------------------
+
 export async function uploadAndExtract(
   file: File,
   tenantId: string,
@@ -90,10 +142,18 @@ export async function uploadAndExtract(
       extractedFormat = 'xlsx'
       rowCount = totalRows
     } else if (ext === 'pdf') {
-      extractedText =
-        '[PDF uploaded: ' + file.name + ', ' + (file.size / 1024).toFixed(1) + ' KB]\n\n' +
-        'Original file stored. Text extraction not performed in v1 - paste a summary below or refer to file via download link.'
-      extractedFormat = 'pdf'
+      // Call the extract-pdf-text edge function for real text extraction
+      try {
+        extractedText = await extractPdfText(file)
+        extractedFormat = 'pdf'
+      } catch (pdfErr) {
+        console.error('PDF extraction failed, file still stored:', pdfErr)
+        extractedText =
+          '[PDF uploaded: ' + file.name + ', ' + (file.size / 1024).toFixed(1) + ' KB]\n\n' +
+          'PDF text extraction failed: ' + (pdfErr instanceof Error ? pdfErr.message : String(pdfErr)) + '\n' +
+          'Original file stored at ' + storagePath + '. You may add a summary in the user-context field below.'
+        extractedFormat = 'pdf'
+      }
     } else if (ext === 'doc' || ext === 'docx') {
       extractedText =
         '[Word document uploaded: ' + file.name + ', ' + (file.size / 1024).toFixed(1) + ' KB]\n\n' +
