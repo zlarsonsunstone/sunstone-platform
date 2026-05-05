@@ -579,6 +579,48 @@ function AddEntryDialog({
   const [userNote, setUserNote] = useState('')
   const [extractedText, setExtractedText] = useState<string>('')
   const [uploadedFile, setUploadedFile] = useState<FileUploadResult | null>(null)
+  const [fetchingUrl, setFetchingUrl] = useState(false)
+  const [urlFetchStatus, setUrlFetchStatus] = useState<string | null>(null)
+
+  async function handleFetchUrl() {
+    if (!sourceUrl.trim()) {
+      setUrlFetchStatus('Enter a URL first')
+      return
+    }
+    setFetchingUrl(true)
+    setUrlFetchStatus(null)
+    try {
+      const response = await fetch('/.netlify/functions/fetch-website', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: sourceUrl.trim() }),
+      })
+      if (!response.ok) {
+        const errBody = await response.text()
+        throw new Error('fetch-website ' + response.status + ': ' + errBody.slice(0, 200))
+      }
+      const data = await response.json() as { text?: string; title?: string; length?: number; url?: string; error?: string }
+      if (data.error) {
+        throw new Error(data.error)
+      }
+      if (!data.text) {
+        throw new Error('No text returned from URL')
+      }
+      setExtractedText(data.text)
+      if (data.title && !title.trim()) {
+        setTitle(data.title)
+      }
+      if (!sourceLabel.trim()) {
+        setSourceLabel(data.title || sourceUrl.trim())
+      }
+      if (kind !== 'paste_in') setKind('paste_in')
+      setUrlFetchStatus('Fetched ' + (data.length || data.text.length).toLocaleString() + ' chars from "' + (data.title || data.url || 'page') + '"')
+    } catch (err: any) {
+      setUrlFetchStatus('Fetch failed: ' + err.message)
+    } finally {
+      setFetchingUrl(false)
+    }
+  }
 
   function handleFileUploaded(result: FileUploadResult) {
     setUploadedFile(result)
@@ -709,12 +751,27 @@ function AddEntryDialog({
 
             <div className="sr-dlg-row">
               <label>Source URL (optional)</label>
-              <input
-                type="url"
-                value={sourceUrl}
-                onChange={e => setSourceUrl(e.target.value)}
-                placeholder="https://..."
-              />
+              <div className="sr-url-row">
+                <input
+                  type="url"
+                  value={sourceUrl}
+                  onChange={e => setSourceUrl(e.target.value)}
+                  placeholder="https://..."
+                />
+                <button
+                  type="button"
+                  className="sr-fetch-btn"
+                  onClick={handleFetchUrl}
+                  disabled={fetchingUrl || !sourceUrl.trim()}
+                >
+                  {fetchingUrl ? 'Fetching...' : 'Fetch content'}
+                </button>
+              </div>
+              {urlFetchStatus && (
+                <div className={'sr-url-status ' + (urlFetchStatus.startsWith('Fetch failed') ? 'sr-url-err' : 'sr-url-ok')}>
+                  {urlFetchStatus}
+                </div>
+              )}
             </div>
 
             <div className="sr-dlg-row">
@@ -1362,6 +1419,43 @@ const DIALOG_STYLES = `
 .sr-file-preview strong {
   color: var(--color-text-primary);
   font-size: 12px;
+}
+
+.sr-url-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.sr-url-row input { flex: 1; }
+.sr-fetch-btn {
+  padding: 8px 14px;
+  background: #5B7DB8;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.sr-fetch-btn:hover:not(:disabled) { background: #4A6BA0; }
+.sr-fetch-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.sr-url-status {
+  margin-top: 6px;
+  padding: 6px 10px;
+  font-size: 11px;
+  border-radius: 4px;
+}
+.sr-url-ok {
+  background: rgba(46,107,62,0.06);
+  border: 1px solid rgba(46,107,62,0.20);
+  color: #2E6B3E;
+}
+.sr-url-err {
+  background: rgba(139,42,31,0.06);
+  border: 1px solid rgba(139,42,31,0.30);
+  color: #8B2A1F;
 }
 `
 
