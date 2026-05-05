@@ -363,9 +363,14 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
           <div className="sr-corpus">
             <div className="sr-corpus-head">
               <h3>Corpus</h3>
-              <button type="button" className="sr-add-btn" onClick={() => setShowAddEntry(true)}>
-                + Add artifact
-              </button>
+              <div className="sr-corpus-head-actions">
+                <button type="button" className="sr-refresh-btn" onClick={reloadEverything} title="Refresh corpus">
+                  Refresh
+                </button>
+                <button type="button" className="sr-add-btn" onClick={() => setShowAddEntry(true)}>
+                  + Add artifact
+                </button>
+              </div>
             </div>
 
             {entries.length === 0 ? (
@@ -1169,6 +1174,19 @@ const STYLES = `
   margin-bottom: 14px;
 }
 .sr-corpus-head h3 { font-size: 14px; font-weight: 600; margin: 0; }
+.sr-corpus-head-actions { display: flex; gap: 8px; align-items: center; }
+.sr-refresh-btn {
+  background: var(--color-bg-elevated);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-hairline);
+  padding: 7px 12px;
+  border-radius: 8px;
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.sr-refresh-btn:hover { background: var(--color-bg-subtle); color: var(--color-text-primary); }
 .sr-add-btn {
   background: #F0A742;
   color: #fff;
