@@ -1,9 +1,11 @@
 // extract-pdf-text: accept base64-encoded PDF, return extracted text
-// Uses Claude's native PDF support (document content block) as the extractor
+// PRIMARY: Use pdf-parse for direct text extraction (fast, no API cost)
+// FALLBACK: Use Claude for scanned/image PDFs where direct extraction fails
 // Request: { filename: string, pdf_base64: string }
-// Response: { text: string, filename: string, length: number }
+// Response: { text: string, filename: string, length: number, method: 'direct'|'claude'|'fallback' }
 
-import { callClaude, json } from './_shared-claude.mjs'
+import { json } from './_shared-claude.mjs'
+import pdfParse from 'pdf-parse'
 
 export const handler = async (event) => {
   if (event.httpMethod !== 'POST') return json(405, { error: 'POST only' })
@@ -18,11 +20,49 @@ export const handler = async (event) => {
   const { filename, pdf_base64 } = payload
   if (!pdf_base64) return json(400, { error: 'pdf_base64 required' })
 
+  // Decode base64 to buffer
+  let buffer
   try {
-    // Call Anthropic with the PDF as a document block + extraction instruction
-    const apiKey = process.env.ANTHROPIC_API_KEY
-    if (!apiKey) return json(500, { error: 'ANTHROPIC_API_KEY not configured' })
+    buffer = Buffer.from(pdf_base64, 'base64')
+  } catch (err) {
+    return json(400, { error: 'Invalid base64 PDF data' })
+  }
 
+  // -----------------------------------------------------------------
+  // PRIMARY: pdf-parse direct extraction
+  // -----------------------------------------------------------------
+  try {
+    const result = await pdfParse(buffer)
+    const text = (result.text || '').trim()
+
+    if (text.length > 50) {
+      // Got meaningful content
+      return json(200, {
+        text,
+        filename: filename || 'document.pdf',
+        length: text.length,
+        method: 'direct',
+        page_count: result.numpages || 0,
+      })
+    }
+
+    // pdf-parse returned almost nothing - might be a scanned PDF
+    // Fall through to Claude fallback
+    console.log('pdf-parse returned ' + text.length + ' chars, falling back to Claude')
+  } catch (err) {
+    console.error('pdf-parse failed: ' + (err.message || err))
+    // Fall through to Claude fallback
+  }
+
+  // -----------------------------------------------------------------
+  // FALLBACK: Claude (for scanned/image PDFs)
+  // -----------------------------------------------------------------
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) {
+    return json(500, { error: 'pdf-parse failed and ANTHROPIC_API_KEY not configured for fallback' })
+  }
+
+  try {
     const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -47,7 +87,7 @@ export const handler = async (event) => {
               },
               {
                 type: 'text',
-                text: 'Extract ALL text content from this PDF. Preserve the structure with headings and sections. Output only the extracted text — no commentary, no meta-description, no summary. Just the text as it appears in the document.',
+                text: 'Extract ALL text content from this PDF. Preserve the structure with headings and sections. Output only the extracted text - no commentary, no meta-description, no summary. Just the text as it appears in the document.',
               },
             ],
           },
@@ -57,7 +97,7 @@ export const handler = async (event) => {
 
     if (!resp.ok) {
       const txt = await resp.text()
-      return json(502, { error: `Anthropic ${resp.status}: ${txt.slice(0, 500)}` })
+      return json(502, { error: 'Both pdf-parse and Claude failed. Claude response: ' + resp.status + ': ' + txt.slice(0, 300) })
     }
 
     const data = await resp.json()
@@ -70,8 +110,9 @@ export const handler = async (event) => {
       text,
       filename: filename || 'document.pdf',
       length: text.length,
+      method: 'claude',
     })
   } catch (err) {
-    return json(500, { error: err.message || 'PDF extraction failed' })
+    return json(500, { error: 'PDF extraction failed: ' + (err.message || 'unknown') })
   }
 }
