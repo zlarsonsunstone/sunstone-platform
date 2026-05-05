@@ -166,6 +166,51 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
     return () => { cancelled = true }
   }, [strategicProfileId])
 
+  // -----------------------------------------------------------------
+  // Realtime subscription - auto-update when surface_research or
+  // strategic_profiles changes for this profile.
+  // No more manual refresh needed.
+  // -----------------------------------------------------------------
+  useEffect(() => {
+    const channel = supabase
+      .channel('surface-research-' + strategicProfileId)
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'v2',
+          table: 'surface_research',
+          filter: 'strategic_profile_id=eq.' + strategicProfileId,
+        },
+        async () => {
+          // Any change to any entry for this profile - reload the corpus
+          const refreshed = await loadSurfaceEntries(strategicProfileId)
+          setEntries(refreshed)
+        }
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'v2',
+          table: 'strategic_profiles',
+          filter: 'id=eq.' + strategicProfileId,
+        },
+        async (payload) => {
+          // Profile understanding updated - refresh the convergent panel
+          const newUnderstanding = (payload.new as any)?.profile_understanding
+          if (newUnderstanding) {
+            setUnderstanding(newUnderstanding)
+          }
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
+  }, [strategicProfileId])
+
   async function reloadEverything() {
     const [e, profileRow] = await Promise.all([
       loadSurfaceEntries(strategicProfileId),
@@ -229,20 +274,21 @@ export function SurfaceResearch({ strategicProfileId, tenantId, profileName, onC
 
   async function triggerAnalysis(entryId: string) {
     try {
-      const response = await fetch('/.netlify/functions/analyze-corpus-entry', {
+      // Call background function - returns immediately with 202 Accepted.
+      // Realtime subscription handles the status updates automatically.
+      const response = await fetch('/.netlify/functions/analyze-corpus-entry-background', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ entry_id: entryId }),
       })
       if (!response.ok) {
         const errorBody = await response.text()
-        console.error('Analysis function failed:', response.status, errorBody)
+        console.error('Analysis function failed to start:', response.status, errorBody)
       }
     } catch (err: any) {
       console.error('Analysis call error:', err.message)
     }
-    // Reload regardless - the function may have updated the row before failing
-    await reloadEverything()
+    // No reload needed - realtime subscription will pick up the status change
   }
 
   async function handleDeleteEntry(id: string) {
