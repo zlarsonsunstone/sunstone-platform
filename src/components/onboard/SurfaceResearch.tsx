@@ -7,7 +7,6 @@ import {
   SurfaceEntryKind,
   ReconFrame,
   loadSurfaceEntries,
-  addSurfaceEntry,
   deleteSurfaceEntry,
   loadFrame,
 } from '@/lib/recon'
@@ -703,6 +702,8 @@ function ReviewEntryDialog({
   strategicProfileId: string
   onClose: () => void
 }) {
+  void tenantId
+  void strategicProfileId
   const [entry, setEntry] = useState<any>(null)
   const [claims, setClaims] = useState<any[]>([])
   const [evidence, setEvidence] = useState<any[]>([])
@@ -777,7 +778,7 @@ function ReviewEntryDialog({
     >
       <style>{REVIEW_STYLES}</style>
       <div className="rv-shell">
-        {analysis?.error ? (
+        {(analysis as any)?.error ? (
           <div className="rv-error">
             <strong>Analysis error:</strong> {(analysis as any).error || 'unknown'}
             {(analysis as any).claude_raw && (
