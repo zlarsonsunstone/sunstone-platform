@@ -12,6 +12,9 @@
 [functions]
   node_bundler = "esbuild"
 
+[functions."analyze-corpus-entry-background"]
+     timeout = 900
+
 [functions."build-commercial-profile"]
   timeout = 120
 
