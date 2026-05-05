@@ -23,7 +23,6 @@
 
 import type { Handler } from '@netlify/functions'
 import { createClient } from '@supabase/supabase-js'
-import Anthropic from '@anthropic-ai/sdk'
 
 // -----------------------------------------------------------------------------
 // CONFIG
@@ -34,6 +33,8 @@ const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
 const ANTHROPIC_API_KEY = process.env.VITE_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || ''
 
 const CLAUDE_MODEL = 'claude-sonnet-4-5-20251022'
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
+const ANTHROPIC_VERSION = '2023-06-01'
 const MAX_ARTIFACT_TEXT_CHARS = 80000  // ~20K tokens, fits comfortably with system prompt + context
 
 // -----------------------------------------------------------------------------
@@ -405,21 +406,35 @@ ${artifactContext}
 
 Analyze this artifact per the doctrine. Return ONLY the JSON object.`
 
-  const anthropic = new Anthropic({ apiKey: ANTHROPIC_API_KEY })
+  const anthropicHeaders = {
+    'Content-Type': 'application/json',
+    'x-api-key': ANTHROPIC_API_KEY,
+    'anthropic-version': ANTHROPIC_VERSION,
+  }
 
   let analysis: ClaudeAnalysis
   let claudeRaw = ''
 
   try {
-    const response = await anthropic.messages.create({
-      model: CLAUDE_MODEL,
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: 'user', content: userMessage }],
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: anthropicHeaders,
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 8000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
     })
 
-    const textBlock = response.content.find(b => b.type === 'text')
-    if (!textBlock || textBlock.type !== 'text') {
+    if (!response.ok) {
+      const errorBody = await response.text()
+      throw new Error(`Claude API error ${response.status}: ${errorBody.slice(0, 500)}`)
+    }
+
+    const data = await response.json() as { content?: Array<{ type: string; text?: string }> }
+    const textBlock = data.content?.find(b => b.type === 'text')
+    if (!textBlock || !textBlock.text) {
       throw new Error('No text block in Claude response')
     }
     claudeRaw = textBlock.text
