@@ -164,6 +164,7 @@ export interface ReadinessState {
   // still typecheck. The full OnboardTab patch will pass hypothesis_ready
   // explicitly. Until then, undefined is treated as false in the chip render.
   hypothesis_ready?: boolean
+  market_research_ready?: boolean
   generate_ready: boolean
   next_step_label?: string
 }
@@ -424,6 +425,15 @@ export async function loadReadiness(
   // Stones gate bypassed - Stones are response strategy that comes AFTER the brief
   // surfaces what's there. Brief is diagnostic, Stones are prescription.
   const stones_ready = true
+  
+  // Market Research gate: at least one entry must be reviewed.
+  // Gate is permissive: any reviewed market entry qualifies.
+  const { count: marketReviewedCount } = await supabase
+    .from('market_research')
+    .select('*', { count: 'exact', head: true })
+    .eq('strategic_profile_id', strategicProfileId)
+    .eq('analysis_status', 'reviewed')
+  const market_research_ready = (marketReviewedCount || 0) > 0
   // Hypothesis gate bypassed - optional input. When present, brief generator leads
   // with closing_proof as editorial spine. When absent, brief composes from
   // objective state alone (degraded mode). Per session 4 doctrine.
@@ -450,6 +460,7 @@ export async function loadReadiness(
     research_ready,
     stones_ready,
     hypothesis_ready,
+    market_research_ready,
     generate_ready,
     next_step_label,
   }
