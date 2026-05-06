@@ -442,7 +442,7 @@ export async function loadReadiness(
 
   // generate_ready intentionally does NOT require hypothesis_ready - the brief
   // generator handles both modes. The dot is informational.
-  const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
+  const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready && market_research_ready
 
   let next_step_label = 'Generate Recon Brief'
   if (!cbp_ready)        next_step_label = 'Build CBP first'
