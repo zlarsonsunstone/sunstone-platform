@@ -418,9 +418,9 @@ export async function loadReadiness(
 
   const cbp_ready = cbpComplete
   const frame_ready = !!frame?.is_complete
-  // Sufficiency gate bypassed - allow generation regardless of dimension coverage.
-  // The brief generator works from the raw corpus directly.
-  const research_ready = true
+  // Sufficiency gate enforced - brief requires real market research evidence.
+  // No corpus = no contradictions to narrate = no substantive brief.
+  const research_ready = score?.is_sufficient === true
   // Stones gate bypassed - Stones are response strategy that comes AFTER the brief
   // surfaces what's there. Brief is diagnostic, Stones are prescription.
   const stones_ready = true
