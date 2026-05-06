@@ -4,6 +4,7 @@ import { Button } from '@/components/Button'
 import { Field, TextInput, TextArea } from '@/components/FormInputs'
 import { supabase } from '@/lib/supabase'
 import { fetchJson } from '@/lib/fetchJson'
+import { extractPdfTextBrowser } from '@/lib/claude'
 import type { SourceBucket, SourceType } from '@/lib/types'
 
 type Mode = 'fetch' | 'paste' | 'upload' | 'highergov'
@@ -451,24 +452,10 @@ function DocumentUploader({
         setStage('extracting')
         try {
           const base64 = await fileToBase64(file)
-          const resp = await fetchJson<{ text: string; length: number }>(
-            '/.netlify/functions/extract-pdf-text',
-            {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ filename: file.name, pdf_base64: base64 }),
-            }
-          )
-          if (!resp.ok || !resp.data) {
-            extractionError = resp.error || 'Extraction failed'
-          } else {
-            extractedText = resp.data.text
-          }
+          extractedText = await extractPdfTextBrowser(base64, file.name)
         } catch (e: any) {
-          // Extraction is best-effort - record error but still save the source
           extractionError = e.message || 'Extraction failed'
         }
-      }
 
       // 3. Save source row
       setStage('saving')
