@@ -25,10 +25,10 @@ const OPTIONS: SourceOption[] = [
   { type: 'free_text', label: 'Notes', description: 'Free-form commercial context or research notes', bucket: 'commercial', mode: 'paste' },
   // Federal
   { type: 'highergov', label: 'HigherGov pull', description: 'Auto-fetch awards + entity from HigherGov', bucket: 'federal', mode: 'highergov' },
-  { type: 'sam_gov', label: 'SAM.gov (paste)', description: 'Paste entity registration data from SAM', bucket: 'federal', mode: 'paste' },
-  { type: 'sba_dsbs', label: 'SBA DSBS (paste)', description: 'Paste SBA profile / certifications', bucket: 'federal', mode: 'paste' },
-  { type: 'usaspending', label: 'USASpending (paste)', description: 'Paste CSV or award history summary', bucket: 'federal', mode: 'paste' },
-  { type: 'gsa_elibrary', label: 'GSA eLibrary (paste)', description: 'Paste schedule holdings / SIN info', bucket: 'federal', mode: 'paste' },
+  { type: 'sam_gov', label: 'SAM.gov entity', description: 'Upload SAM entity registration PDF', bucket: 'federal', mode: 'upload' },
+  { type: 'sba_dsbs', label: 'SBA DSBS profile', description: 'Upload SBA DSBS profile PDF', bucket: 'federal', mode: 'upload' },
+  { type: 'usaspending', label: 'USASpending awards', description: 'Upload USASpending PDF, CSV, or award history', bucket: 'federal', mode: 'upload' },
+  { type: 'gsa_elibrary', label: 'GSA Schedule / eLibrary', description: 'Upload GSA Schedule contract PDF or SIN info', bucket: 'federal', mode: 'upload' },
   { type: 'cape_statement', label: 'Capability statement', description: 'Upload a federal cape statement PDF', bucket: 'federal', mode: 'upload' },
   { type: 'free_text', label: 'Federal notes', description: 'Free-form federal context notes', bucket: 'federal', mode: 'paste' },
 ]
@@ -521,10 +521,10 @@ function DocumentUploader({
 
   return (
     <PanelContainer>
-      <Field label="File" hint="PDF, up to ~25MB. Text is extracted automatically after upload.">
+      <Field label="File" hint="PDF, CSV, Excel, Word, or text. Up to ~25MB. PDFs are auto-extracted to text.">
         <input
           type="file"
-          accept="application/pdf"
+          accept=".pdf,.csv,.xls,.xlsx,.doc,.docx,.txt,.json"
           onChange={(e) => {
             const f = e.target.files?.[0] || null
             setFile(f)
