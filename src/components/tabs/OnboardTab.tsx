@@ -1,7 +1,7 @@
 import { useEffect, useState, CSSProperties } from 'react'
 import { useStore } from '@/store/useStore'
 import { supabase } from '@/lib/supabase'
-import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
+import { callClaudeBrowser, extractJsonBlock, extractPdfTextBrowser } from '@/lib/claude'
 import { resetTenantDownstream } from '@/lib/tenantReset'
 import { logMethodology } from '@/lib/methodologyLog'
 import { fetchAllActivePscCodes, fetchAllNaicsCodes } from '@/lib/referenceData'
@@ -167,19 +167,8 @@ export function OnboardTab() {
           reader.onerror = () => reject(new Error('Failed to read stored file'))
           reader.readAsDataURL(fileBlob)
         })
-        const extractResp = await fetch('/.netlify/functions/extract-pdf-text', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ filename: meta.filename || src.label, pdf_base64: base64 }),
-        })
-        if (!extractResp.ok) {
-          const errText = await extractResp.text()
-          throw new Error(`Extraction failed (${extractResp.status}): ${errText.slice(0, 300)}`)
-        }
-        const extractData = await extractResp.json()
-        if (!extractData.text) {
-          throw new Error('Extraction returned no text')
-        }
+       const extractedText = await extractPdfTextBrowser(base64, meta.filename || src.label)
+        const extractData = { text: extractedText }
         // Persist extracted_text + clear needs_extraction so we don't re-run next time
         await supabase
           .from('profile_sources')
