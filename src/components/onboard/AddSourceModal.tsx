@@ -456,6 +456,7 @@ function DocumentUploader({
         } catch (e: any) {
           extractionError = e.message || 'Extraction failed'
         }
+      }
 
       // 3. Save source row
       setStage('saving')
