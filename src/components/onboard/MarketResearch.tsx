@@ -556,7 +556,7 @@ function AddMarketArtifact({
   }
 
   return (
-    <Modal open={true} onClose={onClose} title="Add market artifact" size="large">
+    <Modal open={true} onClose={onClose} title="Add market artifact" size="full">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
         {/* Posture picker - always first */}
         {!posture ? (
