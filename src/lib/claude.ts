@@ -7,7 +7,7 @@
  * Requires: VITE_ANTHROPIC_API_KEY in the environment at build time.
  *
  * Security note: the API key IS visible to anyone who inspects the site's JS.
- * For this admin tool that's acceptable — the app is login-gated and the key
+ * For this admin tool that's acceptable - the app is login-gated and the key
  * can be rotated if leaked. For a public-facing product we would route through
  * a proper auth-gated proxy.
  */
@@ -106,4 +106,83 @@ export function extractJsonBlock(text: string): any | null {
   } catch {
     return null
   }
+}
+
+/**
+ * Extract text from a PDF directly in the browser via Anthropic's document API.
+ *
+ * Bypasses Netlify functions entirely - no timeout cap, no upload-roundtrip
+ * to a serverless function. The browser sends the base64 PDF straight to
+ * Anthropic and gets text back.
+ *
+ * @param pdfBase64 base64-encoded PDF bytes (no data: prefix)
+ * @param filename optional filename for context
+ * @returns extracted text
+ */
+export async function extractPdfTextBrowser(
+  pdfBase64: string,
+  filename?: string
+): Promise<string> {
+  if (!API_KEY) {
+    throw new Error(
+      'VITE_ANTHROPIC_API_KEY not configured. Add it to Netlify env vars and redeploy.'
+    )
+  }
+
+  const body = {
+    model: 'claude-sonnet-4-5',
+    max_tokens: 8192,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: pdfBase64,
+            },
+          },
+          {
+            type: 'text',
+            text: filename
+              ? `Extract ALL text content from this PDF (${filename}). Preserve the structure with headings and sections. Output only the extracted text - no commentary, no meta-description, no summary. Just the text as it appears in the document.`
+              : 'Extract ALL text content from this PDF. Preserve the structure with headings and sections. Output only the extracted text - no commentary, no meta-description, no summary. Just the text as it appears in the document.',
+          },
+        ],
+      },
+    ],
+  }
+
+  const resp = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify(body),
+  })
+
+  if (!resp.ok) {
+    let errBody = ''
+    try {
+      errBody = await resp.text()
+    } catch {}
+    throw new Error(`Anthropic API ${resp.status}: ${errBody.slice(0, 500) || 'no body'}`)
+  }
+
+  const data = await resp.json()
+  const text = (data.content || [])
+    .filter((b: any) => b.type === 'text')
+    .map((b: any) => b.text)
+    .join('\n')
+
+  if (!text || text.trim().length === 0) {
+    throw new Error('Extraction returned no text')
+  }
+
+  return text
 }
