@@ -24,6 +24,7 @@ import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
 import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
 import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
 import { ConversionHypothesis } from '@/components/onboard/ConversionHypothesis'
+import { MarketResearch } from '@/components/onboard/MarketResearch'
 import { loadReadiness, ReadinessState } from '@/lib/recon'
 import { GenerateBriefButton as ReconBriefGenerator } from '@/components/onboard/GenerateBriefButton'
 
@@ -49,6 +50,7 @@ export function OnboardTab() {
   const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
     const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
   const [hypothesisProfile, setHypothesisProfile] = useState<StrategicProfile | null>(null)
+  const [marketResearchProfile, setMarketResearchProfile] = useState<StrategicProfile | null>(null)
   const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
   const [viewingProfile, setViewingProfile] = useState<{
     title: string
@@ -1132,7 +1134,8 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 onConfigureFrame={() => setFrameProfile(sp)}
                 onOpenResearch={() => setResearchProfile(sp)}
                 onConfigureStones={() => setStonesEditorProfile(sp)}
-                                onConfigureHypothesis={() => setHypothesisProfile(sp)}
+                onConfigureHypothesis={() => setHypothesisProfile(sp)}
+                onOpenMarketResearch={() => setMarketResearchProfile(sp)}
               />
             ))}
           </div>
@@ -1223,6 +1226,20 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
             refreshReadinessFor(id)
           }}
           onCompleted={() => refreshReadinessFor(hypothesisProfile.id)}
+        />
+      )}
+      
+      {marketResearchProfile && (
+        <MarketResearch
+          strategicProfileId={marketResearchProfile.id}
+          tenantId={activeTenant.id}
+          profileName={marketResearchProfile.name}
+          onClose={() => {
+            const id = marketResearchProfile.id
+            setMarketResearchProfile(null)
+            refreshReadinessFor(id)
+          }}
+          onCompleted={() => refreshReadinessFor(marketResearchProfile.id)}
         />
       )}
       
@@ -2215,6 +2232,7 @@ function StrategicProfileCard({
   onOpenResearch,
   onConfigureStones,
   onConfigureHypothesis,
+  onOpenMarketResearch,
 }: {
   profile: StrategicProfile
   readiness?: ReadinessState
@@ -2224,6 +2242,7 @@ function StrategicProfileCard({
   onOpenResearch: () => void
   onConfigureStones: () => void
   onConfigureHypothesis: () => void
+  onOpenMarketResearch: () => void
 }) {
   const r = readiness || {
     cbp_ready: false,
@@ -2231,6 +2250,7 @@ function StrategicProfileCard({
     research_ready: false,
     stones_ready: false,
     hypothesis_ready: false,
+    market_research_ready: false,
     generate_ready: false,
   }
 
@@ -2333,6 +2353,12 @@ function StrategicProfileCard({
             onClick={onConfigureHypothesis}
             number="04"
           />
+          <WorkflowButton
+            ready={r.market_research_ready === true}
+            label="Market Research"
+            onClick={onOpenMarketResearch}
+            number="05"
+          />
           <ReconBriefGenerator
             strategicProfileId={profile.id}
             tenantId={profile.tenant_id}
@@ -2351,6 +2377,7 @@ function ReadinessChips({ r }: { r: ReadinessState }) {
     { ready: r.research_ready, label: 'Research' },
     { ready: r.stones_ready, label: 'Stones' },
     { ready: r.hypothesis_ready === true, label: 'Hypothesis' },
+    { ready: r.market_research_ready === true, label: 'Market' },
   ]
   return (
     <div style={{ display: 'flex', gap: '4px' }}>
