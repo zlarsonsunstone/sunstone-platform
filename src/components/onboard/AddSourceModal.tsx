@@ -385,6 +385,24 @@ function ModeButton({
 /* -------------------------------------------------------------------------- */
 /* Document uploader                                                          */
 /* -------------------------------------------------------------------------- */
+
+// Helper: read a File as a base64 string (no data: prefix)
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const result = reader.result as string
+      const idx = result.indexOf('base64,')
+      if (idx === -1) {
+        reject(new Error('FileReader returned unexpected format'))
+        return
+      }
+      resolve(result.slice(idx + 7))
+    }
+    reader.onerror = () => reject(new Error('Failed to read file'))
+    reader.readAsDataURL(file)
+  })
+}
 function DocumentUploader({
   bucket,
   type,
@@ -402,13 +420,15 @@ function DocumentUploader({
   const [label, setLabel] = useState('')
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState<string | null>(null)
+  const [stage, setStage] = useState<'idle' | 'uploading' | 'extracting' | 'saving'>('idle')
 
   async function uploadAndSave() {
     if (!file) return
     setLoading(true)
     setErr(null)
     try {
-      // Unique path: tenantId/bucket/timestamp-filename
+      // 1. Upload to storage
+      setStage('uploading')
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_')
       const path = `${tenantId}/${bucket}/${Date.now()}-${safeName}`
 
@@ -420,30 +440,69 @@ function DocumentUploader({
         })
       if (uploadErr) throw new Error(`Upload failed: ${uploadErr.message}`)
 
+      // 2. Extract text via edge function (only if PDF)
+      let extractedText: string | null = null
+      let extractionError: string | null = null
+      const isPdf = (file.type === 'application/pdf') || file.name.toLowerCase().endsWith('.pdf')
+
+      if (isPdf) {
+        setStage('extracting')
+        try {
+          const base64 = await fileToBase64(file)
+          const resp = await fetchJson<{ text: string; length: number }>(
+            '/.netlify/functions/extract-pdf-text',
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ filename: file.name, pdf_base64: base64 }),
+            }
+          )
+          if (!resp.ok || !resp.data) {
+            extractionError = resp.error || 'Extraction failed'
+          } else {
+            extractedText = resp.data.text
+          }
+        } catch (e: any) {
+          extractionError = e.message || 'Extraction failed'
+        }
+      }
+
+      // 3. Save source row
+      setStage('saving')
       const { error: insertErr } = await supabase.from('profile_sources').insert({
         tenant_id: tenantId,
         bucket,
         source_type: type,
         label: label.trim() || file.name,
         url: null,
-        // No extracted_text yet — it gets extracted server-side during profile synthesis
         raw_content: null,
-        extracted_text: null,
+        extracted_text: extractedText,
         metadata: {
           filename: file.name,
           size: file.size,
           content_type: file.type,
           storage_path: path,
           storage_bucket: 'profile-documents',
-          needs_extraction: true,
+          needs_extraction: extractedText === null && isPdf,
+          extraction_error: extractionError,
+          extraction_length: extractedText ? extractedText.length : 0,
         },
         fetched_at: new Date().toISOString(),
       })
       if (insertErr) throw new Error(`Save failed: ${insertErr.message}`)
 
+      if (extractionError && isPdf) {
+        setErr(`Uploaded, but text extraction failed: ${extractionError}. You can retry from the source list.`)
+        setStage('idle')
+        setLoading(false)
+        setTimeout(() => onDone(), 1500)
+        return
+      }
+
       onDone()
     } catch (e: any) {
       setErr(e.message || 'Upload failed')
+      setStage('idle')
     } finally {
       setLoading(false)
     }
@@ -478,7 +537,7 @@ function DocumentUploader({
       <FooterRow>
         <Button variant="secondary" onClick={onBack}>Back</Button>
         <Button onClick={uploadAndSave} disabled={!file || loading}>
-          {loading ? 'Uploading…' : 'Upload & save'}
+          stage === 'uploading' ? 'Uploading...' : stage === 'extracting' ? 'Extracting text...' : stage === 'saving' ? 'Saving...' : 'Upload & save'
         </Button>
       </FooterRow>
     </PanelContainer>
