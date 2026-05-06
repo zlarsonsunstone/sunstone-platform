@@ -71,6 +71,38 @@ export interface ReconPersona {
 }
 
 // =============================================================================
+// CONVERSION HYPOTHESIS - editorial spine of the brief (Pillar 2 of Gate 4c)
+// =============================================================================
+
+export interface ConversionObjection {
+  text: string
+  counter?: string
+}
+
+export interface ConversionRisk {
+  text: string
+  mitigation?: string
+}
+
+export interface ConversionHypothesis {
+  id: string
+  tenant_id: string
+  strategic_profile_id: string
+  closing_proof: string
+  closing_proof_notes: string | null
+  primary_objections: ConversionObjection[] | null
+  opening_hook: string | null
+  engagement_risks: ConversionRisk[] | null
+  success_criteria: string | null
+  fallback_strategy: string | null
+  is_complete: boolean
+  completed_at: string | null
+  created_at: string
+  updated_at: string
+  created_by: string | null
+}
+
+// =============================================================================
 // SURFACE RESEARCH
 // =============================================================================
 
@@ -128,6 +160,7 @@ export interface ReadinessState {
   frame_ready: boolean
   research_ready: boolean
   stones_ready: boolean
+  hypothesis_ready: boolean
   generate_ready: boolean
   next_step_label?: string
 }
@@ -218,6 +251,25 @@ export async function addCustomPersona(
     return null
   }
   return data as ReconPersona
+}
+
+// =============================================================================
+// CONVERSION HYPOTHESIS HELPERS
+// =============================================================================
+
+export async function loadConversionHypothesis(
+  strategicProfileId: string,
+): Promise<ConversionHypothesis | null> {
+  const { data, error } = await supabase
+    .from('conversion_hypothesis')
+    .select('*')
+    .eq('strategic_profile_id', strategicProfileId)
+    .maybeSingle()
+  if (error) {
+    console.error('loadConversionHypothesis error:', error.message)
+    return null
+  }
+  return data as ConversionHypothesis | null
 }
 
 // =============================================================================
@@ -350,7 +402,7 @@ export async function loadReadiness(
   strategicProfileId: string,
   cbpComplete: boolean,
 ): Promise<ReadinessState> {
-  const [frame, score, stonesConfig] = await Promise.all([
+  const [frame, score, stonesConfig, hypothesis] = await Promise.all([
     loadFrame(strategicProfileId),
     loadSufficiencyScore(strategicProfileId),
     supabase
@@ -358,6 +410,7 @@ export async function loadReadiness(
       .select('id')
       .eq('strategic_profile_id', strategicProfileId)
       .maybeSingle(),
+    loadConversionHypothesis(strategicProfileId),
   ])
 
   const cbp_ready = cbpComplete
@@ -368,8 +421,14 @@ export async function loadReadiness(
   // Stones gate bypassed - Stones are response strategy that comes AFTER the brief
   // surfaces what's there. Brief is diagnostic, Stones are prescription.
   const stones_ready = true
+  // Hypothesis gate bypassed - optional input. When present, brief generator leads
+  // with closing_proof as editorial spine. When absent, brief composes from
+  // objective state alone (degraded mode). Per session 4 doctrine.
+  const hypothesis_ready = !!hypothesis?.is_complete
   void stonesConfig
 
+  // generate_ready intentionally does NOT require hypothesis_ready - the brief
+  // generator handles both modes. The dot is informational.
   const generate_ready = cbp_ready && frame_ready && research_ready && stones_ready
 
   let next_step_label = 'Generate Recon Brief'
@@ -387,6 +446,7 @@ export async function loadReadiness(
     frame_ready,
     research_ready,
     stones_ready,
+    hypothesis_ready,
     generate_ready,
     next_step_label,
   }
