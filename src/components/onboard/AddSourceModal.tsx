@@ -219,14 +219,14 @@ function WebsiteFetcher({
       {!preview ? (
         <FooterRow>
           <Button variant="secondary" onClick={onBack}>Back</Button>
-          <Button onClick={run} disabled={!url || loading}>{loading ? 'Fetching…' : 'Fetch'}</Button>
+          <Button onClick={run} disabled={!url || loading}>{loading ? 'Fetching...' : 'Fetch'}</Button>
         </FooterRow>
       ) : (
         <>
           <Preview title={preview.title} text={preview.text} />
           <FooterRow>
             <Button variant="secondary" onClick={() => setPreview(null)}>Re-fetch</Button>
-            <Button onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save source'}</Button>
+            <Button onClick={save} disabled={loading}>{loading ? 'Saving...' : 'Save source'}</Button>
           </FooterRow>
         </>
       )}
@@ -320,7 +320,7 @@ function HigherGovFetcher({
         <FooterRow>
           <Button variant="secondary" onClick={onBack}>Back</Button>
           <Button onClick={run} disabled={loading || (mode === 'uei' ? !uei : !name)}>
-            {loading ? 'Fetching…' : 'Fetch from HigherGov'}
+            {loading ? 'Fetching...' : 'Fetch from HigherGov'}
           </Button>
         </FooterRow>
       ) : (
@@ -340,12 +340,12 @@ function HigherGovFetcher({
               }}
             >
               {preview.summary.slice(0, 3000)}
-              {preview.summary.length > 3000 ? '…' : ''}
+              {preview.summary.length > 3000 ? '...' : ''}
             </div>
           </div>
           <FooterRow>
             <Button variant="secondary" onClick={() => setPreview(null)}>Retry</Button>
-            <Button onClick={save} disabled={loading}>{loading ? 'Saving…' : 'Save source'}</Button>
+            <Button onClick={save} disabled={loading}>{loading ? 'Saving...' : 'Save source'}</Button>
           </FooterRow>
         </>
       )}
@@ -383,7 +383,7 @@ function ModeButton({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Document uploader                                                          */
+/* Document uploader - now extracts PDF text via extract-pdf-text edge fn     */
 /* -------------------------------------------------------------------------- */
 
 // Helper: read a File as a base64 string (no data: prefix)
@@ -392,6 +392,7 @@ function fileToBase64(file: File): Promise<string> {
     const reader = new FileReader()
     reader.onload = () => {
       const result = reader.result as string
+      // result is "data:application/pdf;base64,XXXX" - strip the prefix
       const idx = result.indexOf('base64,')
       if (idx === -1) {
         reject(new Error('FileReader returned unexpected format'))
@@ -403,6 +404,7 @@ function fileToBase64(file: File): Promise<string> {
     reader.readAsDataURL(file)
   })
 }
+
 function DocumentUploader({
   bucket,
   type,
@@ -463,6 +465,7 @@ function DocumentUploader({
             extractedText = resp.data.text
           }
         } catch (e: any) {
+          // Extraction is best-effort - record error but still save the source
           extractionError = e.message || 'Extraction failed'
         }
       }
@@ -491,10 +494,12 @@ function DocumentUploader({
       })
       if (insertErr) throw new Error(`Save failed: ${insertErr.message}`)
 
+      // If extraction failed, surface it but don't block - user can retry later
       if (extractionError && isPdf) {
         setErr(`Uploaded, but text extraction failed: ${extractionError}. You can retry from the source list.`)
         setStage('idle')
         setLoading(false)
+        // Still call onDone so the modal closes and they see the source in the list
         setTimeout(() => onDone(), 1500)
         return
       }
@@ -508,9 +513,15 @@ function DocumentUploader({
     }
   }
 
+  const buttonLabel =
+    stage === 'uploading' ? 'Uploading...' :
+    stage === 'extracting' ? 'Extracting text...' :
+    stage === 'saving' ? 'Saving...' :
+    'Upload & save'
+
   return (
     <PanelContainer>
-      <Field label="File" hint="PDF, up to ~25MB. Text will be extracted when you build the profile.">
+      <Field label="File" hint="PDF, up to ~25MB. Text is extracted automatically after upload.">
         <input
           type="file"
           accept="application/pdf"
@@ -537,7 +548,7 @@ function DocumentUploader({
       <FooterRow>
         <Button variant="secondary" onClick={onBack}>Back</Button>
         <Button onClick={uploadAndSave} disabled={!file || loading}>
-          stage === 'uploading' ? 'Uploading...' : stage === 'extracting' ? 'Extracting text...' : stage === 'saving' ? 'Saving...' : 'Upload & save'
+          {buttonLabel}
         </Button>
       </FooterRow>
     </PanelContainer>
@@ -586,7 +597,7 @@ function PastePanel({
 
   return (
     <PanelContainer>
-      <Field label="Label" hint={`e.g., "${typeLabel} – ${new Date().toLocaleDateString()}"`}>
+      <Field label="Label" hint={`e.g., "${typeLabel} - ${new Date().toLocaleDateString()}"`}>
         <TextInput value={label} onChange={(e) => setLabel(e.target.value)} placeholder={typeLabel} />
       </Field>
       <Field label="Source URL (optional)">
@@ -601,13 +612,13 @@ function PastePanel({
           value={content}
           onChange={(e) => setContent(e.target.value)}
           rows={12}
-          placeholder="Paste text here…"
+          placeholder="Paste text here..."
         />
       </Field>
       <FooterRow>
         <Button variant="secondary" onClick={onBack}>Back</Button>
         <Button onClick={save} disabled={!content.trim() || loading}>
-          {loading ? 'Saving…' : 'Save source'}
+          {loading ? 'Saving...' : 'Save source'}
         </Button>
       </FooterRow>
     </PanelContainer>
@@ -655,7 +666,7 @@ function Preview({ title, text }: { title: string; text: string }) {
         }}
       >
         {text.slice(0, 2000)}
-        {text.length > 2000 ? '…' : ''}
+        {text.length > 2000 ? '...' : ''}
       </div>
       <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', marginTop: '8px' }}>
         {text.length.toLocaleString()} characters
