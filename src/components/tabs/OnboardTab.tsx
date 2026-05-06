@@ -142,10 +142,60 @@ export function OnboardTab() {
       // Fill in the prompt template. PDF sources not yet supported via browser direct
       // call (would need multimodal content blocks). For now, text digests only.
       const meta = src.metadata as any
-      if (meta?.needs_extraction) {
-        throw new Error(
-          'PDF digesting via browser not yet supported. Paste the PDF text manually for now.'
-        )
+      // If the source still needs extraction (PDF where extract-pdf-text failed
+      // on initial upload), download the file from storage and re-run extraction
+      // before proceeding with digest.
+      if (meta?.needs_extraction && meta?.storage_path && meta?.storage_bucket) {
+        const { data: fileBlob, error: dlErr } = await supabase.storage
+          .from(meta.storage_bucket)
+          .download(meta.storage_path)
+        if (dlErr || !fileBlob) {
+          throw new Error(`Could not download stored file: ${dlErr?.message || 'no blob'}`)
+        }
+        // Read blob as base64
+        const base64 = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader()
+          reader.onload = () => {
+            const result = reader.result as string
+            const idx = result.indexOf('base64,')
+            if (idx === -1) {
+              reject(new Error('FileReader returned unexpected format'))
+              return
+            }
+            resolve(result.slice(idx + 7))
+          }
+          reader.onerror = () => reject(new Error('Failed to read stored file'))
+          reader.readAsDataURL(fileBlob)
+        })
+        const extractResp = await fetch('/.netlify/functions/extract-pdf-text', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ filename: meta.filename || src.label, pdf_base64: base64 }),
+        })
+        if (!extractResp.ok) {
+          const errText = await extractResp.text()
+          throw new Error(`Extraction failed (${extractResp.status}): ${errText.slice(0, 300)}`)
+        }
+        const extractData = await extractResp.json()
+        if (!extractData.text) {
+          throw new Error('Extraction returned no text')
+        }
+        // Persist extracted_text + clear needs_extraction so we don't re-run next time
+        await supabase
+          .from('profile_sources')
+          .update({
+            extracted_text: extractData.text,
+            metadata: {
+              ...meta,
+              needs_extraction: false,
+              extraction_error: null,
+              extraction_length: extractData.text.length,
+              extracted_via_retry_at: new Date().toISOString(),
+            },
+          })
+          .eq('id', sourceId)
+        // Mutate src so the rest of digestOne sees the new text
+        src.extracted_text = extractData.text
       }
 
       const sourceContent = src.extracted_text || src.raw_content || ''
