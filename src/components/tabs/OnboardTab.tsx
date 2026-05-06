@@ -23,6 +23,7 @@ import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEdi
 import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
 import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
 import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
+import { ConversionHypothesis } from '@/components/onboard/ConversionHypothesis'
 import { loadReadiness, ReadinessState } from '@/lib/recon'
 import { GenerateBriefButton as ReconBriefGenerator } from '@/components/onboard/GenerateBriefButton'
 
@@ -46,7 +47,8 @@ export function OnboardTab() {
   >(null)
   const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
   const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
-  const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
+    const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
+  const [hypothesisProfile, setHypothesisProfile] = useState<StrategicProfile | null>(null)
   const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
   const [viewingProfile, setViewingProfile] = useState<{
     title: string
@@ -1130,6 +1132,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 onConfigureFrame={() => setFrameProfile(sp)}
                 onOpenResearch={() => setResearchProfile(sp)}
                 onConfigureStones={() => setStonesEditorProfile(sp)}
+                                onConfigureHypothesis={() => setHypothesisProfile(sp)}
               />
             ))}
           </div>
@@ -1209,6 +1212,20 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         />
       )}
 
+      {hypothesisProfile && (
+        <ConversionHypothesis
+          strategicProfileId={hypothesisProfile.id}
+          tenantId={activeTenant.id}
+          profileName={hypothesisProfile.name}
+          onClose={() => {
+            const id = hypothesisProfile.id
+            setHypothesisProfile(null)
+            refreshReadinessFor(id)
+          }}
+          onCompleted={() => refreshReadinessFor(hypothesisProfile.id)}
+        />
+      )}
+      
       {viewingProfile && (
         <ProfileViewModal
           title={viewingProfile.title}
@@ -2197,6 +2214,7 @@ function StrategicProfileCard({
   onConfigureFrame,
   onOpenResearch,
   onConfigureStones,
+  onConfigureHypothesis,
 }: {
   profile: StrategicProfile
   readiness?: ReadinessState
@@ -2205,12 +2223,14 @@ function StrategicProfileCard({
   onConfigureFrame: () => void
   onOpenResearch: () => void
   onConfigureStones: () => void
+  onConfigureHypothesis: () => void
 }) {
   const r = readiness || {
     cbp_ready: false,
     frame_ready: false,
     research_ready: false,
     stones_ready: false,
+    hypothesis_ready: false,
     generate_ready: false,
   }
 
@@ -2307,6 +2327,12 @@ function StrategicProfileCard({
             onClick={onConfigureStones}
             number="03"
           />
+          <WorkflowButton
+            ready={r.hypothesis_ready === true}
+            label="Conversion Hypothesis"
+            onClick={onConfigureHypothesis}
+            number="04"
+          />
           <ReconBriefGenerator
             strategicProfileId={profile.id}
             tenantId={profile.tenant_id}
@@ -2324,6 +2350,7 @@ function ReadinessChips({ r }: { r: ReadinessState }) {
     { ready: r.frame_ready, label: 'Frame' },
     { ready: r.research_ready, label: 'Research' },
     { ready: r.stones_ready, label: 'Stones' },
+    { ready: r.hypothesis_ready === true, label: 'Hypothesis' },
   ]
   return (
     <div style={{ display: 'flex', gap: '4px' }}>
