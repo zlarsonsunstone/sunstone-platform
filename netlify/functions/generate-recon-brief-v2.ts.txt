@@ -1,0 +1,854 @@
+/**
+ * generate-recon-brief-v2
+ *
+ * Composes a Recon Brief from the convergent state - claims, evidence,
+ * understanding, frame, profile, Steptoe commitments, lobbying intel,
+ * conversion hypothesis (editorial spine), and posture-typed market research.
+ *
+ * Replaces the v1 brief generator which tried to read a raw corpus pile.
+ * The v2 reads structured analytical state and Claude's job becomes
+ * NARRATING the contradictions and CLOSING with the conversion hypothesis,
+ * not finding insights in raw data.
+ *
+ * INPUT:  { strategic_profile_id: uuid }
+ * OUTPUT: { ok: true, brief_id: uuid, brief: {...} }
+ *
+ * Flow:
+ *   1. Load strategic_profile, frame, CBP (commercial+federal), understanding
+ *   2. Load all profile_claims (with status untested/confirmed/contradicted)
+ *   3. Load all profile_evidence
+ *   4. Load conversion_hypothesis (editorial spine - what closes this prospect)
+ *   5. Load market_research entries grouped by posture
+ *   6. Load steptoe_commitments (if any)
+ *   7. Load lobbying_engagements + outcomes for prospect
+ *   8. Build structured prompt with posture-typed market sections
+ *   9. Call Claude
+ *  10. Parse brief JSON
+ *  11. Insert into recon_briefs
+ *  12. Return brief_id + brief content
+ */
+
+import type { Handler } from '@netlify/functions'
+import { createClient } from '@supabase/supabase-js'
+
+// -----------------------------------------------------------------------------
+// CONFIG
+// -----------------------------------------------------------------------------
+
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL || ''
+const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || ''
+const ANTHROPIC_API_KEY = process.env.VITE_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY || ''
+
+const CLAUDE_MODEL = 'claude-sonnet-4-5-20250929'
+const CLAUDE_API_URL = 'https://api.anthropic.com/v1/messages'
+const ANTHROPIC_VERSION = '2023-06-01'
+
+// -----------------------------------------------------------------------------
+// TYPES
+// -----------------------------------------------------------------------------
+
+interface BriefRequest {
+  strategic_profile_id: string
+}
+
+interface ProfileUnderstanding {
+  market_state?: {
+    current_read?: string
+    confidence?: string
+    reasoning?: string
+  } | null
+  persona?: {
+    current_read?: string
+    confidence?: string
+    reasoning?: string
+  } | null
+  dynamic_findings?: Array<{
+    topic: string
+    finding: string
+    confidence: string
+  }>
+  open_questions?: Array<{
+    question: string
+    answered: boolean
+    answer_text?: string | null
+  }>
+  lobbying_posture?: {
+    status?: string
+    era_alignment_concern?: boolean
+  } | null
+}
+
+interface BriefOutput {
+  bluf: {
+    headline: string
+    one_sentence_diagnosis: string
+    recommended_next_action: string
+  }
+  page_1_where_you_sit: {
+    title: string
+    body_paragraphs: string[]
+    visual_callout: string
+  }
+  page_2_what_the_record_shows: {
+    title: string
+    body_paragraphs: string[]
+    contradiction_table: Array<{
+      stated: string
+      record: string
+      implication: string
+    }>
+  }
+  page_3_what_about: {
+    title: string
+    pairs: Array<{
+      anticipated_objection: string
+      answer: string
+      evidence_anchor: string
+    }>
+  }
+  page_4_the_path: {
+    title: string
+    body_paragraphs: string[]
+    stones_summary: string[]
+  }
+  back_cover: {
+    open_questions_for_consultant: string[]
+    next_data_to_pull: string[]
+    confidence_disclosures: string[]
+  }
+  metadata: {
+    generated_at: string
+    frame_purpose: string
+    persona: string
+    market_state: string
+    artifact_count: number
+    claim_count: number
+    evidence_count: number
+    contradicted_claim_count: number
+    market_research_count: number
+    has_conversion_hypothesis: boolean
+  }
+}
+
+// -----------------------------------------------------------------------------
+// SYSTEM PROMPT
+// -----------------------------------------------------------------------------
+
+const SYSTEM_PROMPT = `You are composing a Sunstone Recon Brief.
+
+YOUR JOB IS NOT TO ANALYZE. The analytical layer is already done. You are the COMPOSER.
+
+The structured analytical state has been pre-built:
+- A truth pyramid of claims (what the prospect/their materials say) and evidence (what the federal record shows)
+- Each claim has been tested against evidence and marked confirmed/contradicted/untested/silent
+- Convergent reads on market state and persona with explicit confidence levels
+- Dynamic findings unique to this prospect
+- Open questions still being investigated
+- A CONVERSION HYPOTHESIS - the consultant's editorial spine for what proof would close this prospect
+- POSTURE-TYPED MARKET RESEARCH - separate from prospect data, classified into four analytical postures
+
+YOUR JOB IS TO NARRATE THE CONTRADICTIONS AND CLOSE WITH THE HYPOTHESIS.
+
+The brief lives or dies on COGNITIVE DISSONANCE. The prospect needs to encounter a gap between what they believe about themselves and what the federal record shows. That gap is the dissonance engine.
+
+CONVERSION HYPOTHESIS IS THE EDITORIAL SPINE.
+
+If a conversion_hypothesis is present, it overrides default editorial structure:
+- The BLUF must lead with the closing_proof framing (what evidence would close this prospect)
+- Page 1 should set up the proof requirement, not just diagnose position
+- Page 2's contradiction table should foreground the contradictions that block the closing_proof
+- The "primary_objections" become the anticipated_objections on Page 3
+- The recommended_next_action should advance toward producing the closing_proof
+
+If conversion_hypothesis is missing, fall back to default contradiction-narrative structure.
+
+MARKET RESEARCH IS POSTURE-TYPED. USE EACH POSTURE'S OUTPUT DIFFERENTLY:
+
+- GENERAL ANALYSIS findings: background context for Page 1 (where you sit). Use to establish the market environment in 1-2 sentences. Do not lead with general analysis - it is wallpaper, not headline.
+
+- THESIS SUPPORT findings: narrative spine for Page 2 (what the record shows). The thesis is what we believe about the market and the supporting data is the load-bearing argument. Lead Page 2 paragraphs with the thesis support pattern.
+
+- MYTH-BUSTING findings: HIGH-IMPACT REVEALS. These are the most powerful items in the brief. Use them as page-leading hooks. The conventional_wisdom framed as the prospect's prior belief, the contradicting_evidence as the reveal. Best_reveal goes on Page 2 first paragraph or BLUF.
+
+- EVIDENCE HUNTING findings: feed directly into the contradiction_table. The claim_tested becomes the "stated" column. The verdict + supporting/conflicting data becomes the "record" column. The verdict_rationale becomes the "implication" column.
+
+DOCTRINAL PRINCIPLES:
+
+1. Lead with the contradiction or the myth-bust, not generic analysis. The prospect needs to see the mirror first.
+2. Quote the prospect's own claims back to them. Then put the federal record next to it.
+3. Be specific. Names, dates, dollar amounts, contract numbers. Generalities don't compel.
+4. Tier 1/3/4 claims that have been CONTRADICTED by Tier 2 evidence are the brief's spine when no hypothesis present.
+5. When hypothesis is present, the closing_proof is the spine and contradictions are levers toward it.
+6. Mark confidence honestly. If the system has low confidence on something, say so.
+7. Open questions go on the back cover, not in the body. They show analytical rigor.
+
+THE FRAME PURPOSE controls editorial spine when no hypothesis:
+- "show_market_state": diagnostic mirror, no sales push, end with "here is what the data says"
+- "convince": there is a specific objection to overcome, name it, dismantle it
+- "educate": teach federal mechanics they need to understand before they can decide
+- "show_market_demand": prove the market exists at scale they doubted
+
+THE PERSONA controls voice and selection of evidence:
+- "Subcontractor Stuck in the Middle": acknowledge the trap, surface why certification alone won't unlock prime
+- "Successful and Skeptical": don't pitch, show data, let them draw conclusions
+- "Brand New": educate before diagnose
+- "Compliance-maintaining non-participant": show what they have built but never deployed
+- (and others - tune voice to persona)
+
+THE MARKET STATE controls vocabulary and competitive context:
+- "mature_defined": established vehicles, clear vocabulary, vendor competition shapes wins
+- "mature_diffuse": real demand, scattered vocabulary, reconstruction work needed
+- "emerging": vocabulary lags 3-5 years behind tech
+- "recently_legislated": fresh appropriations or mandates driving spend
+- "novel": pre-vocabulary, education before procurement
+
+OUTPUT FORMAT:
+
+Return ONLY a JSON object matching this exact schema. No preamble, no markdown, no code fences:
+
+{
+  "bluf": {
+    "headline": "One sharp diagnostic line, 12-18 words",
+    "one_sentence_diagnosis": "What the federal record actually says, one sentence",
+    "recommended_next_action": "What we recommend they do next, one sentence"
+  },
+  "page_1_where_you_sit": {
+    "title": "Where you sit right now",
+    "body_paragraphs": ["3-5 paragraphs", "Each 2-4 sentences", "Diagnose current position from federal record"],
+    "visual_callout": "One key stat or visual concept to anchor the page"
+  },
+  "page_2_what_the_record_shows": {
+    "title": "What the record shows",
+    "body_paragraphs": ["The contradiction narrative", "Specific examples"],
+    "contradiction_table": [
+      {
+        "stated": "What the prospect or their materials claim",
+        "record": "What the federal record shows",
+        "implication": "What this means for their position"
+      }
+    ]
+  },
+  "page_3_what_about": {
+    "title": "What about...",
+    "pairs": [
+      {
+        "anticipated_objection": "Concern or objection in prospect's actual words/mindset",
+        "answer": "Direct response with evidence",
+        "evidence_anchor": "Specific data point or claim ID"
+      }
+    ]
+  },
+  "page_4_the_path": {
+    "title": "The path forward",
+    "body_paragraphs": ["What we recommend", "Why this approach"],
+    "stones_summary": ["Stone 1: ...", "Stone 2: ...", "etc"]
+  },
+  "back_cover": {
+    "open_questions_for_consultant": ["Specific questions Sunstone is still investigating"],
+    "next_data_to_pull": ["What artifacts/data would sharpen the brief"],
+    "confidence_disclosures": ["Where confidence is medium/low and why"]
+  },
+  "metadata": {
+    "generated_at": "ISO timestamp",
+    "frame_purpose": "what the frame said",
+    "persona": "what the persona is",
+    "market_state": "what the market state is",
+    "artifact_count": 0,
+    "claim_count": 0,
+    "evidence_count": 0,
+    "contradicted_claim_count": 0,
+    "market_research_count": 0,
+    "has_conversion_hypothesis": false
+  }
+}
+
+VOICE DISCIPLINE:
+- Use the prospect's own vocabulary where possible
+- "What about" col1 should be the prospect's actual internal monologue, not a strawman
+- Avoid: "Objection / Why-you're-right / WIFM / Defensibility" framing
+- Yes: precise, evidence-grounded, mirror-first
+
+NEVER:
+- Fabricate evidence
+- Invent contract numbers, agencies, or dollar amounts not in the input
+- Make claims the analytical state doesn't support
+- Use marketing language ("game-changing", "revolutionary", "premier")
+- Reproduce more than 14 words verbatim from any input source
+- Treat market research as interchangeable with prospect evidence - they are different data planes
+
+Be ruthlessly precise. The prospect should read this and feel they have been seen accurately AND given the proof they need to act.`
+
+// -----------------------------------------------------------------------------
+// HELPERS
+// -----------------------------------------------------------------------------
+
+function extractJSON(s: string): any {
+  let cleaned = s.trim()
+  if (cleaned.startsWith('```json')) cleaned = cleaned.slice(7)
+  if (cleaned.startsWith('```')) cleaned = cleaned.slice(3)
+  if (cleaned.endsWith('```')) cleaned = cleaned.slice(0, -3)
+  cleaned = cleaned.trim()
+  return JSON.parse(cleaned)
+}
+
+function summarizeUnderstanding(u: ProfileUnderstanding): string {
+  const parts: string[] = []
+  if (u.market_state?.current_read) {
+    parts.push(`Market state: ${u.market_state.current_read} (${u.market_state.confidence || 'unknown'} confidence)`)
+    if (u.market_state.reasoning) parts.push(`  Reasoning: ${u.market_state.reasoning}`)
+  }
+  if (u.persona?.current_read) {
+    parts.push(`Persona: ${u.persona.current_read} (${u.persona.confidence || 'unknown'} confidence)`)
+    if (u.persona.reasoning) parts.push(`  Reasoning: ${u.persona.reasoning}`)
+  }
+  if (u.dynamic_findings && u.dynamic_findings.length > 0) {
+    parts.push(`\nDYNAMIC FINDINGS:`)
+    for (const f of u.dynamic_findings) {
+      parts.push(`  - [${f.confidence}] ${f.topic}: ${f.finding}`)
+    }
+  }
+  if (u.open_questions && u.open_questions.length > 0) {
+    const unanswered = u.open_questions.filter(q => !q.answered)
+    if (unanswered.length > 0) {
+      parts.push(`\nOPEN QUESTIONS (unanswered):`)
+      for (const q of unanswered) {
+        parts.push(`  - ${q.question}`)
+      }
+    }
+  }
+  if (u.lobbying_posture?.status) {
+    parts.push(`\nLobbying posture: ${u.lobbying_posture.status}`)
+    if (u.lobbying_posture.era_alignment_concern) {
+      parts.push(`  WARNING: Era alignment concern - existing lobbying firm's network may be pre-Trump-II`)
+    }
+  }
+  return parts.join('\n')
+}
+
+function summarizeClaims(claims: any[]): string {
+  if (claims.length === 0) return 'No claims captured yet.'
+  const parts: string[] = []
+  parts.push(`${claims.length} claims, segmented by status:\n`)
+
+  const byStatus: Record<string, any[]> = { untested: [], confirmed: [], contradicted: [], silent: [], partial: [] }
+  for (const c of claims) {
+    if (byStatus[c.status]) byStatus[c.status].push(c)
+  }
+
+  for (const [status, items] of Object.entries(byStatus)) {
+    if (items.length === 0) continue
+    parts.push(`\n${status.toUpperCase()} (${items.length}):`)
+    for (const c of items) {
+      const critical = c.is_brief_critical ? ' [BRIEF-CRITICAL]' : ''
+      parts.push(`  - "${c.claim_text}" [${c.claim_category}] [Tier ${c.source_tier}]${critical}`)
+      if (c.status_reason) parts.push(`    Reason: ${c.status_reason}`)
+    }
+  }
+  return parts.join('\n')
+}
+
+function summarizeEvidence(evidence: any[]): string {
+  if (evidence.length === 0) return 'No evidence captured yet.'
+  const parts: string[] = []
+  parts.push(`${evidence.length} evidence rows:\n`)
+
+  for (const e of evidence) {
+    parts.push(`  - "${e.evidence_text}" [${e.evidence_category}] [Tier ${e.source_tier}]`)
+    if (e.data_as_of) parts.push(`    As of: ${e.data_as_of}`)
+    if (e.contradicts_claim_ids && e.contradicts_claim_ids.length > 0) {
+      parts.push(`    CONTRADICTS ${e.contradicts_claim_ids.length} claim(s)`)
+    }
+    if (e.confirms_claim_ids && e.confirms_claim_ids.length > 0) {
+      parts.push(`    Confirms ${e.confirms_claim_ids.length} claim(s)`)
+    }
+  }
+  return parts.join('\n')
+}
+
+function summarizeFrame(frame: any): string {
+  if (!frame) return 'Frame not configured.'
+  const parts: string[] = []
+  parts.push(`Purpose: ${frame.purpose || 'unset'}`)
+  if (frame.purpose_notes) parts.push(`  Notes: ${frame.purpose_notes}`)
+  parts.push(`Sizing: ${frame.company_size_band || 'unset'}`)
+  parts.push(`Engagement openness: ${frame.engagement_openness || 'unset'}`)
+  if (frame.persona_id) parts.push(`Persona ID: ${frame.persona_id}`)
+  if (frame.market_state) parts.push(`Initial market state read: ${frame.market_state}`)
+  if (frame.human_classification) parts.push(`\nConsultant classification:\n${frame.human_classification}`)
+  return parts.join('\n')
+}
+
+function summarizeCBP(commercial: any, federal: any): string {
+  const parts: string[] = []
+  if (commercial) {
+    parts.push('COMMERCIAL PROFILE:')
+    if (commercial.summary) parts.push(commercial.summary.slice(0, 2000))
+    parts.push('')
+  }
+  if (federal) {
+    parts.push('FEDERAL PROFILE:')
+    if (federal.summary) parts.push(federal.summary.slice(0, 2000))
+    parts.push(`Posture: ${federal.posture || 'unknown'}`)
+  }
+  return parts.join('\n')
+}
+
+function summarizeSteptoe(commitments: any[]): string {
+  if (commitments.length === 0) return 'No Steptoe commitments configured yet.'
+  const parts: string[] = []
+  parts.push(`${commitments.length} Steptoe commitments, by Stone:`)
+  for (const stone of [2, 3, 4]) {
+    const stoneCommitments = commitments.filter(c => c.stone_number === stone)
+    if (stoneCommitments.length === 0) continue
+    parts.push(`\nStone ${stone}:`)
+    for (const c of stoneCommitments) {
+      parts.push(`  - ${c.action_text}`)
+      if (c.target_person_name) parts.push(`    Target: ${c.target_person_name} (${c.target_person_role || ''}) at ${c.target_organization || ''}`)
+      if (c.week_window) parts.push(`    Window: ${c.week_window}`)
+      if (c.expected_outcome) parts.push(`    Expected: ${c.expected_outcome}`)
+    }
+  }
+  return parts.join('\n')
+}
+
+function summarizeLobbying(engagements: any[], outcomes: any[]): string {
+  if (engagements.length === 0) return 'No lobbying engagements found for prospect.'
+  const parts: string[] = []
+  parts.push(`Prospect has ${engagements.length} lobbying engagement record(s):`)
+  for (const e of engagements) {
+    parts.push(`  - Firm: ${e.firm_name || e.firm_id}, Era: ${e.era_code || 'unknown'}`)
+    if (e.total_paid_cents) parts.push(`    Paid: $${(e.total_paid_cents / 100).toLocaleString()}`)
+    if (e.registration_date) parts.push(`    Registered: ${e.registration_date}`)
+  }
+  if (outcomes.length > 0) {
+    parts.push(`\n${outcomes.length} outcome rollups available for cross-reference.`)
+  }
+  return parts.join('\n')
+}
+
+function summarizeConversionHypothesis(hyp: any): string {
+  if (!hyp) return 'NO CONVERSION HYPOTHESIS PROVIDED. Fall back to default contradiction-narrative structure.'
+  const parts: string[] = []
+  parts.push('THIS BRIEF MUST LEAD WITH THE CLOSING PROOF.')
+  parts.push('')
+  if (hyp.closing_proof) {
+    parts.push(`CLOSING PROOF (what would close this prospect):`)
+    parts.push(`  ${hyp.closing_proof}`)
+  }
+  if (hyp.desired_evidence) {
+    parts.push(`\nDESIRED EVIDENCE:`)
+    parts.push(`  ${hyp.desired_evidence}`)
+  }
+  if (hyp.product_catalog_mapping) {
+    parts.push(`\nPRODUCT/SERVICE MAPPING:`)
+    parts.push(`  ${hyp.product_catalog_mapping}`)
+  }
+  if (hyp.specific_targets && Array.isArray(hyp.specific_targets) && hyp.specific_targets.length > 0) {
+    parts.push(`\nSPECIFIC TARGETS (named officials / programs / line items):`)
+    for (const t of hyp.specific_targets) {
+      parts.push(`  - ${typeof t === 'string' ? t : JSON.stringify(t)}`)
+    }
+  }
+  if (hyp.primary_objections && Array.isArray(hyp.primary_objections) && hyp.primary_objections.length > 0) {
+    parts.push(`\nPRIMARY OBJECTIONS (use as Page 3 anticipated_objections):`)
+    for (const o of hyp.primary_objections) {
+      parts.push(`  - ${typeof o === 'string' ? o : JSON.stringify(o)}`)
+    }
+  }
+  if (hyp.fallback_proof) {
+    parts.push(`\nFALLBACK PROOF (if primary unavailable):`)
+    parts.push(`  ${hyp.fallback_proof}`)
+  }
+  if (hyp.success_criteria) {
+    parts.push(`\nSUCCESS CRITERIA:`)
+    parts.push(`  ${hyp.success_criteria}`)
+  }
+  return parts.join('\n')
+}
+
+function summarizeMarketResearch(entries: any[]): string {
+  if (entries.length === 0) return 'No reviewed market research entries.'
+
+  const byPosture: Record<string, any[]> = {
+    general: [],
+    evidence: [],
+    thesis: [],
+    myth_bust: [],
+  }
+  for (const e of entries) {
+    if (byPosture[e.market_posture]) byPosture[e.market_posture].push(e)
+  }
+
+  const parts: string[] = []
+  parts.push(`${entries.length} reviewed market research entries, organized by analytical posture.`)
+  parts.push('Each posture feeds the brief differently - see system prompt for posture-to-section mapping.')
+
+  if (byPosture.myth_bust.length > 0) {
+    parts.push(`\n========== MYTH-BUSTING (${byPosture.myth_bust.length}) - HIGH-IMPACT REVEALS, LEAD WITH THESE ==========`)
+    for (const e of byPosture.myth_bust) {
+      const a = e.analysis || {}
+      parts.push(`\nTitle: ${e.title}`)
+      if (e.posture_context) parts.push(`Conventional wisdom tested: ${e.posture_context}`)
+      if (a.conventional_wisdom) parts.push(`  Restated: ${a.conventional_wisdom}`)
+      if (a.verdict) parts.push(`  Verdict: ${a.verdict.toUpperCase()}`)
+      if (a.dissonance_strength) parts.push(`  Dissonance strength: ${a.dissonance_strength}`)
+      if (a.best_reveal) parts.push(`  BEST REVEAL: ${a.best_reveal}`)
+      if (a.contradicting_evidence && Array.isArray(a.contradicting_evidence)) {
+        parts.push(`  Contradicting evidence:`)
+        for (const item of a.contradicting_evidence.slice(0, 5)) {
+          parts.push(`    - ${item}`)
+        }
+      }
+      if (a.caveats && Array.isArray(a.caveats) && a.caveats.length > 0) {
+        parts.push(`  Caveats: ${a.caveats.join('; ')}`)
+      }
+    }
+  }
+
+  if (byPosture.thesis.length > 0) {
+    parts.push(`\n========== THESIS SUPPORT (${byPosture.thesis.length}) - NARRATIVE SPINE FOR PAGE 2 ==========`)
+    for (const e of byPosture.thesis) {
+      const a = e.analysis || {}
+      parts.push(`\nTitle: ${e.title}`)
+      if (e.posture_context) parts.push(`Thesis being supported: ${e.posture_context}`)
+      if (a.strength_of_support) parts.push(`  Strength of support: ${a.strength_of_support}`)
+      if (a.supporting_pattern) parts.push(`  Supporting pattern: ${a.supporting_pattern}`)
+      if (a.best_supporting_data && Array.isArray(a.best_supporting_data)) {
+        parts.push(`  Best supporting data:`)
+        for (const item of a.best_supporting_data.slice(0, 5)) {
+          parts.push(`    - ${item}`)
+        }
+      }
+      if (a.counterevidence_found && Array.isArray(a.counterevidence_found) && a.counterevidence_found.length > 0) {
+        parts.push(`  Counterevidence (acknowledge honestly):`)
+        for (const item of a.counterevidence_found.slice(0, 3)) {
+          parts.push(`    - ${item}`)
+        }
+      }
+      if (a.narrative_recommendation) parts.push(`  Narrative recommendation: ${a.narrative_recommendation}`)
+    }
+  }
+
+  if (byPosture.evidence.length > 0) {
+    parts.push(`\n========== EVIDENCE HUNTING (${byPosture.evidence.length}) - FEEDS CONTRADICTION TABLE ==========`)
+    for (const e of byPosture.evidence) {
+      const a = e.analysis || {}
+      parts.push(`\nTitle: ${e.title}`)
+      if (a.claim_tested) parts.push(`  Claim tested: ${a.claim_tested}`)
+      if (a.verdict) parts.push(`  Verdict: ${a.verdict.toUpperCase()} (${a.confidence || 'unknown'} confidence)`)
+      if (a.verdict_rationale) parts.push(`  Rationale: ${a.verdict_rationale}`)
+      if (a.supporting_data && Array.isArray(a.supporting_data) && a.supporting_data.length > 0) {
+        parts.push(`  Supporting data:`)
+        for (const item of a.supporting_data.slice(0, 4)) {
+          parts.push(`    - ${item}`)
+        }
+      }
+      if (a.conflicting_data && Array.isArray(a.conflicting_data) && a.conflicting_data.length > 0) {
+        parts.push(`  Conflicting data:`)
+        for (const item of a.conflicting_data.slice(0, 4)) {
+          parts.push(`    - ${item}`)
+        }
+      }
+    }
+  }
+
+  if (byPosture.general.length > 0) {
+    parts.push(`\n========== GENERAL ANALYSIS (${byPosture.general.length}) - BACKGROUND CONTEXT ONLY, DO NOT LEAD WITH ==========`)
+    for (const e of byPosture.general) {
+      const a = e.analysis || {}
+      parts.push(`\nTitle: ${e.title}`)
+      if (a.summary) parts.push(`  Summary: ${a.summary}`)
+      if (a.total_addressable_spend) parts.push(`  TAM: ${a.total_addressable_spend}`)
+      if (a.key_players && Array.isArray(a.key_players)) {
+        parts.push(`  Key players: ${a.key_players.slice(0, 5).join('; ')}`)
+      }
+      if (a.trends && Array.isArray(a.trends) && a.trends.length > 0) {
+        parts.push(`  Trends:`)
+        for (const t of a.trends.slice(0, 4)) {
+          parts.push(`    - ${t}`)
+        }
+      }
+      if (a.anomalies && Array.isArray(a.anomalies) && a.anomalies.length > 0) {
+        parts.push(`  Anomalies:`)
+        for (const t of a.anomalies.slice(0, 3)) {
+          parts.push(`    - ${t}`)
+        }
+      }
+    }
+  }
+
+  return parts.join('\n')
+}
+
+// -----------------------------------------------------------------------------
+// MAIN HANDLER
+// -----------------------------------------------------------------------------
+
+export const handler: Handler = async (event) => {
+  const corsHeaders = {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  }
+
+  if (event.httpMethod === 'OPTIONS') {
+    return { statusCode: 200, headers: corsHeaders, body: '' }
+  }
+
+  if (event.httpMethod !== 'POST') {
+    return { statusCode: 405, headers: corsHeaders, body: JSON.stringify({ error: 'Method not allowed' }) }
+  }
+
+  if (!ANTHROPIC_API_KEY) {
+    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'ANTHROPIC_API_KEY not configured' }) }
+  }
+  if (!SUPABASE_URL || !SUPABASE_SERVICE_KEY) {
+    return { statusCode: 500, headers: corsHeaders, body: JSON.stringify({ error: 'Supabase env not configured' }) }
+  }
+
+  let req: BriefRequest
+  try {
+    req = JSON.parse(event.body || '{}')
+  } catch {
+    return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'Invalid JSON body' }) }
+  }
+
+  if (!req.strategic_profile_id) {
+    return { statusCode: 400, headers: corsHeaders, body: JSON.stringify({ error: 'strategic_profile_id required' }) }
+  }
+
+  const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
+    db: { schema: 'v2' },
+    auth: { persistSession: false },
+  })
+
+  // ---------------------------------------------------------------------------
+  // 1. Load all the inputs in parallel
+  // ---------------------------------------------------------------------------
+
+  const [
+    profileResult,
+    frameResult,
+    claimsResult,
+    evidenceResult,
+    entriesResult,
+    commitmentsResult,
+    engagementsResult,
+    hypothesisResult,
+    marketResearchResult,
+  ] = await Promise.all([
+    supabase.from('strategic_profiles').select('*').eq('id', req.strategic_profile_id).single(),
+    supabase.from('recon_frames').select('*').eq('strategic_profile_id', req.strategic_profile_id).maybeSingle(),
+    supabase.from('profile_claims').select('*').eq('strategic_profile_id', req.strategic_profile_id),
+    supabase.from('profile_evidence').select('*').eq('strategic_profile_id', req.strategic_profile_id),
+    supabase.from('surface_research').select('id, title, tier, analysis_status').eq('strategic_profile_id', req.strategic_profile_id),
+    supabase.from('steptoe_commitments').select('*').eq('strategic_profile_id', req.strategic_profile_id),
+    supabase.from('lobbying_engagements').select('*, firm:lobbying_firms(firm_name)').eq('strategic_profile_id', req.strategic_profile_id).eq('is_prospect_engagement', true),
+    supabase.from('conversion_hypothesis').select('*').eq('strategic_profile_id', req.strategic_profile_id).maybeSingle(),
+    supabase.from('market_research').select('*').eq('strategic_profile_id', req.strategic_profile_id).eq('analysis_status', 'reviewed'),
+  ])
+
+  const profile = profileResult.data
+  const frame = frameResult.data
+  const claims = claimsResult.data || []
+  const evidence = evidenceResult.data || []
+  const entries = entriesResult.data || []
+  const commitments = commitmentsResult.data || []
+  const engagements = engagementsResult.data || []
+  const hypothesis = hypothesisResult.data
+  const marketResearch = marketResearchResult.data || []
+
+  if (!profile) {
+    return { statusCode: 404, headers: corsHeaders, body: JSON.stringify({ error: 'Strategic profile not found' }) }
+  }
+
+  // Tenant-scoped CBP load
+  const tenantId = profile.tenant_id
+  const [commercialResult, federalResult, outcomesResult] = await Promise.all([
+    supabase.from('commercial_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
+    supabase.from('federal_profile').select('*').eq('tenant_id', tenantId).maybeSingle(),
+    supabase.from('lobbying_firm_era_rollups').select('*'),
+  ])
+
+  const commercial = commercialResult.data
+  const federal = federalResult.data
+  const outcomes = outcomesResult.data || []
+
+  const understanding = (profile.profile_understanding || {}) as ProfileUnderstanding
+  const contradictedClaimCount = claims.filter(c => c.status === 'contradicted').length
+
+  // ---------------------------------------------------------------------------
+  // 2. Build the structured prompt
+  // ---------------------------------------------------------------------------
+
+  const userMessage = `STRATEGIC PROFILE: ${profile.name}
+
+==========================
+CONVERSION HYPOTHESIS (editorial spine - read first)
+==========================
+${summarizeConversionHypothesis(hypothesis)}
+
+==========================
+FRAME (frame purpose, persona, market state context)
+==========================
+${summarizeFrame(frame)}
+
+==========================
+CONVERGENT UNDERSTANDING
+==========================
+${summarizeUnderstanding(understanding)}
+
+==========================
+CLAIMS (Tier 1, 3, 4 - what the prospect says)
+==========================
+${summarizeClaims(claims)}
+
+==========================
+EVIDENCE (Tier 2, 3 - federal record on the prospect)
+==========================
+${summarizeEvidence(evidence)}
+
+==========================
+MARKET RESEARCH (posture-typed - DIFFERENT from prospect data)
+==========================
+${summarizeMarketResearch(marketResearch)}
+
+==========================
+COMMERCIAL + FEDERAL PROFILE
+==========================
+${summarizeCBP(commercial, federal)}
+
+==========================
+STEPTOE COMMITMENTS
+==========================
+${summarizeSteptoe(commitments)}
+
+==========================
+LOBBYING INTEL
+==========================
+${summarizeLobbying(engagements, outcomes)}
+
+==========================
+ANALYTICAL STATE METADATA
+==========================
+Total artifacts in corpus: ${entries.length}
+Artifacts reviewed: ${entries.filter(e => e.analysis_status === 'reviewed' || e.analysis_status === 'awaiting_review').length}
+Total claims captured: ${claims.length}
+Contradicted claims: ${contradictedClaimCount}
+Total evidence rows: ${evidence.length}
+Reviewed market research entries: ${marketResearch.length}
+Conversion hypothesis present: ${hypothesis ? 'YES' : 'NO'}
+
+==========================
+
+Compose the brief per doctrine. Return ONLY the JSON object matching the exact schema.`
+
+  // ---------------------------------------------------------------------------
+  // 3. Call Claude
+  // ---------------------------------------------------------------------------
+
+  const anthropicHeaders = {
+    'Content-Type': 'application/json',
+    'x-api-key': ANTHROPIC_API_KEY,
+    'anthropic-version': ANTHROPIC_VERSION,
+  }
+
+  let brief: BriefOutput
+  let claudeRaw = ''
+
+  try {
+    const response = await fetch(CLAUDE_API_URL, {
+      method: 'POST',
+      headers: anthropicHeaders,
+      body: JSON.stringify({
+        model: CLAUDE_MODEL,
+        max_tokens: 16000,
+        system: SYSTEM_PROMPT,
+        messages: [{ role: 'user', content: userMessage }],
+      }),
+    })
+
+    if (!response.ok) {
+      const errorBody = await response.text()
+      throw new Error(`Claude API error ${response.status}: ${errorBody.slice(0, 500)}`)
+    }
+
+    const data = await response.json() as { content?: Array<{ type: string; text?: string }> }
+    const textBlock = data.content?.find(b => b.type === 'text')
+    if (!textBlock || !textBlock.text) {
+      throw new Error('No text block in Claude response')
+    }
+    claudeRaw = textBlock.text
+    brief = extractJSON(claudeRaw) as BriefOutput
+  } catch (err: any) {
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        error: 'Brief composition failed',
+        detail: err.message,
+        claude_raw_preview: claudeRaw.slice(0, 1000),
+      }),
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 4. Backfill metadata from inputs (don't trust Claude to count rows)
+  // ---------------------------------------------------------------------------
+
+  brief.metadata = {
+    generated_at: new Date().toISOString(),
+    frame_purpose: frame?.purpose || 'unset',
+    persona: understanding.persona?.current_read || 'unread',
+    market_state: understanding.market_state?.current_read || frame?.market_state || 'unread',
+    artifact_count: entries.length,
+    claim_count: claims.length,
+    evidence_count: evidence.length,
+    contradicted_claim_count: contradictedClaimCount,
+    market_research_count: marketResearch.length,
+    has_conversion_hypothesis: !!hypothesis,
+  }
+
+  // ---------------------------------------------------------------------------
+  // 5. Insert into recon_briefs
+  // ---------------------------------------------------------------------------
+
+  const { data: insertedBrief, error: insertError } = await supabase
+    .from('recon_briefs')
+    .insert({
+      tenant_id: tenantId,
+      strategic_profile_id: req.strategic_profile_id,
+      brief_payload: brief,
+      brief_version: 'v2_contradiction_pipeline',
+      status: 'draft',
+    })
+    .select()
+    .single()
+
+  if (insertError) {
+    console.error('Brief insert failed:', insertError.message)
+    return {
+      statusCode: 500,
+      headers: corsHeaders,
+      body: JSON.stringify({
+        error: 'Brief generated but database insert failed',
+        detail: insertError.message,
+        brief,
+      }),
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 6. Return
+  // ---------------------------------------------------------------------------
+
+  return {
+    statusCode: 200,
+    headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ok: true,
+      brief_id: insertedBrief.id,
+      brief,
+    }),
+  }
+}
