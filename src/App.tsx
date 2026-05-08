@@ -8,8 +8,15 @@ import { NavBar } from '@/components/NavBar'
 import { Banner } from '@/components/Banner'
 import { Dashboard } from '@/components/Dashboard'
 import { AdminPanel } from '@/components/AdminPanel'
+import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 
 export default function App() {
+  // Intercept prospect-view URLs before auth check.
+  // Tokens are generated for clients who don't have platform accounts.
+  const prospectMatch = window.location.pathname.match(/^\/prospect\/([A-Za-z0-9_-]+)\/?$/)
+  if (prospectMatch) {
+    return <ProspectConfirmation token={prospectMatch[1]} />
+  }
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
   const [adminOpen, setAdminOpen] = useState(false)
