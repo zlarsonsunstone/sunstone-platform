@@ -524,7 +524,12 @@ async function loadProfileSnapshot(profileId: string) {
   // column doesn't break the whole snapshot. The recommendation engine can
   // work with partial data.
 
-  const profile = await supabase.from('strategic_profiles').select('*').eq('id', profileId).single().catch(() => ({ data: null }))
+  let profile: { data: any } = { data: null }
+  try {
+    profile = await supabase.from('strategic_profiles').select('*').eq('id', profileId).single()
+  } catch {
+    // Skip if profile not found
+  }
 
   let claims: any[] = []
   try {
@@ -548,7 +553,12 @@ async function loadProfileSnapshot(profileId: string) {
     // Skip if missing
   }
 
-  const understanding = await supabase.from('strategic_profiles').select('profile_understanding, market_understanding').eq('id', profileId).single().catch(() => ({ data: null }))
+  let understanding: { data: any } = { data: null }
+  try {
+    understanding = await supabase.from('strategic_profiles').select('profile_understanding, market_understanding').eq('id', profileId).single()
+  } catch {
+    // Skip if not available
+  }
 
   // Build a reconciled summary string from federal_profile + commercial_profile
   // (best-effort - just stitch what we have)
