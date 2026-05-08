@@ -27,6 +27,8 @@ import { ConversionHypothesis } from '@/components/onboard/ConversionHypothesis'
 import { MarketResearch } from '@/components/onboard/MarketResearch'
 import { loadReadiness, ReadinessState } from '@/lib/recon'
 import { GenerateBriefButton as ReconBriefGenerator } from '@/components/onboard/GenerateBriefButton'
+import { EngagementInit } from '@/components/onboard/EngagementInit'
+import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
 
 export function OnboardTab() {
   const activeTenant = useStore((s) => s.activeTenant)
@@ -49,6 +51,8 @@ export function OnboardTab() {
   const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
   const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
     const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
+  import { EngagementInit } from '@/components/onboard/EngagementInit'
+import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
   const [hypothesisProfile, setHypothesisProfile] = useState<StrategicProfile | null>(null)
   const [marketResearchProfile, setMarketResearchProfile] = useState<StrategicProfile | null>(null)
   const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
@@ -1173,6 +1177,8 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 onConfigureFrame={() => setFrameProfile(sp)}
                 onOpenResearch={() => setResearchProfile(sp)}
                 onConfigureStones={() => setStonesEditorProfile(sp)}
+                onInitEngagement={() => setEngagementInitProfile(sp)}
+                onOpenFrameWorkshop={() => setFrameWorkshopProfile(sp)}
                 onConfigureHypothesis={() => setHypothesisProfile(sp)}
                 onOpenMarketResearch={() => setMarketResearchProfile(sp)}
               />
@@ -1279,6 +1285,34 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
             refreshReadinessFor(id)
           }}
           onCompleted={() => refreshReadinessFor(marketResearchProfile.id)}
+        />
+      )}
+      
+      {engagementInitProfile && (
+        <EngagementInit
+          strategicProfileId={engagementInitProfile.id}
+          tenantId={activeTenant.id}
+          profileName={engagementInitProfile.name}
+          onClose={() => setEngagementInitProfile(null)}
+          onCompleted={() => {
+            setEngagementInitProfile(null)
+            if (activeTenant) loadProfileData(activeTenant.id)
+          }}
+        />
+      )}
+
+      {frameWorkshopProfile && (
+        <FrameWorkshop
+          strategicProfileId={frameWorkshopProfile.id}
+          tenantId={activeTenant.id}
+          profileName={frameWorkshopProfile.name}
+          onClose={() => setFrameWorkshopProfile(null)}
+          onCompleted={(tokenUrl) => {
+            setFrameWorkshopProfile(null)
+            navigator.clipboard.writeText(tokenUrl).catch(() => {})
+            alert(`Frame Workshop complete. Client confirmation link copied to clipboard:\n\n${tokenUrl}`)
+            if (activeTenant) loadProfileData(activeTenant.id)
+          }}
         />
       )}
       
@@ -2270,6 +2304,8 @@ function StrategicProfileCard({
   onConfigureFrame,
   onOpenResearch,
   onConfigureStones,
+  onInitEngagement,
+  onOpenFrameWorkshop,
   onConfigureHypothesis,
   onOpenMarketResearch,
 }: {
@@ -2280,6 +2316,8 @@ function StrategicProfileCard({
   onConfigureFrame: () => void
   onOpenResearch: () => void
   onConfigureStones: () => void
+  onInitEngagement: () => void
+  onOpenFrameWorkshop: () => void
   onConfigureHypothesis: () => void
   onOpenMarketResearch: () => void
 }) {
@@ -2368,6 +2406,18 @@ function StrategicProfileCard({
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+          <WorkflowButton
+            ready={false}
+            label="Initialize Engagement (NEW)"
+            onClick={onInitEngagement}
+            number="0"
+          />
+          <WorkflowButton
+            ready={false}
+            label="Frame Workshop (NEW)"
+            onClick={onOpenFrameWorkshop}
+            number="01b"
+          />
           <WorkflowButton
             ready={r.frame_ready}
             label="Framing the Frame"
