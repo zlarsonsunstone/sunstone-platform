@@ -452,7 +452,7 @@ function DocumentUploader({
         setStage('extracting')
         try {
           const base64 = await fileToBase64(file)
-          extractedText = await extractPdfTextBrowser(base64, file.name)
+          extractedText = await extractPdfTextBrowser(base64)
         } catch (e: any) {
           extractionError = e.message || 'Extraction failed'
         }
