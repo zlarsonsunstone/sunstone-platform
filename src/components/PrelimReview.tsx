@@ -370,9 +370,19 @@ export function PrelimReview({ submissionId: propSubmissionId, onApproved }: Pre
 
       // 3. If no prelim exists yet, run the convert RPC to bootstrap one.
       if (!prelimRow) {
+        // Get the logged-in consultant for the reviewer audit field.
+        const { data: { user } } = await supabase.auth.getUser()
+
+        // Public intake submissions don't carry a tenant_id, so we route them
+        // into a default 'sunstone' tenant per the project decision. Adjust
+        // here later if multi-tenant prospect routing is added.
         const { data: rpcResult, error: rpcErr } = await supabase
           .schema('v2')
-          .rpc('convert_intake_to_profile', { submission_id: id })
+          .rpc('convert_intake_to_profile', {
+            p_submission_id: id,
+            p_tenant_id: 'sunstone',
+            p_reviewer_id: user?.id || null,
+          })
 
         if (rpcErr) throw new Error(`convert_intake_to_profile RPC failed: ${rpcErr.message}`)
 
