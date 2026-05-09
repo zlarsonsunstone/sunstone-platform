@@ -12,6 +12,8 @@
  *
  * On submit: writes to v2.public_intake_submission via shared supabase client.
  * Sends notification to Zack via Netlify function.
+ * Then shows an embedded Calendly widget so the prospect can book the
+ * 30-min Zoom intake call directly from the thank-you page.
  *
  * Saves progress to localStorage on every step. Refresh recovers.
  */
@@ -19,6 +21,8 @@ import { useState, useEffect, CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
 
 const LOCAL_STORAGE_KEY = 'sunstone_public_intake_v2'
+const CALENDLY_URL = 'https://calendly.com/zack-sunstoneadvisors/30-min-discovery?primary_color=ff9600'
+const SUNSTONE_WEBSITE_URL = 'https://sunstoneag.com/'
 
 // =============================================================================
 // TYPES
@@ -29,15 +33,12 @@ type TimeTier = 'quick' | 'standard' | 'deep'
 type FederalPath = 'none' | 'some' | 'sub' | 'limited_prime' | 'established_prime' | ''
 
 interface FormData {
-  // contact
   full_name: string
   email: string
   phone: string
-  // about you
   industry_sector: string
   referred_by: string
   catalyst: string
-  // commercial
   company_name: string
   company_website: string
   year_founded: string
@@ -48,7 +49,6 @@ interface FormData {
   geographic_footprint: string[]
   differentiator: string
   linkedin_url: string
-  // federal
   federal_path: FederalPath
   federal_answers: Record<string, any>
 }
@@ -75,13 +75,11 @@ interface Question {
   required?: boolean
   options?: { value: string; label: string }[]
   placeholder?: string
-  // tier inclusion: which tiers this question appears in
   tiers: TimeTier[]
-  federalPath?: FederalPath[]  // adaptive Section 2 questions
+  federalPath?: FederalPath[]
 }
 
 const ALL_QUESTIONS: Question[] = [
-  // CORE CONTACT - all tiers
   { id: 'C1', field: 'full_name', label: 'What\'s your name?', type: 'text', required: true,
     tiers: ['quick', 'standard', 'deep'], placeholder: 'Jane Smith' },
   { id: 'C2', field: 'email', label: 'What\'s your email?',
@@ -91,7 +89,6 @@ const ALL_QUESTIONS: Question[] = [
     hint: 'Optional. We only call if you say yes to a follow-up.',
     type: 'phone', tiers: ['standard', 'deep'], placeholder: '(555) 123-4567' },
 
-  // CORE COMPANY - all tiers
   { id: 'CO1', field: 'company_name', label: 'Company name?', type: 'text', required: true,
     tiers: ['quick', 'standard', 'deep'] },
   { id: 'CO2', field: 'industry_sector', label: 'What industry sector?',
@@ -99,7 +96,6 @@ const ALL_QUESTIONS: Question[] = [
     type: 'text', required: true, tiers: ['quick', 'standard', 'deep'],
     placeholder: 'e.g., Industrial cleaning, Cybersecurity, Medical devices' },
 
-  // STANDARD+ COMPANY
   { id: 'CO3', field: 'company_website', label: 'Company website?',
     hint: 'We use this to round out the public picture.',
     type: 'url', required: true, tiers: ['standard', 'deep'], placeholder: 'https://yourcompany.com' },
@@ -132,7 +128,6 @@ const ALL_QUESTIONS: Question[] = [
     type: 'textarea', required: true, tiers: ['standard', 'deep'],
     placeholder: '1. ...\n2. ...\n3. ...' },
 
-  // DEEP COMPANY
   { id: 'CO8', field: 'customers', label: 'Who are your three most important customer types?',
     hint: 'Companies, types of buyers, industries - whatever fits.',
     type: 'textarea', tiers: ['deep'] },
@@ -152,7 +147,6 @@ const ALL_QUESTIONS: Question[] = [
     hint: 'Optional but helpful.',
     type: 'url', tiers: ['deep'], placeholder: 'https://linkedin.com/company/...' },
 
-  // CATALYST + REFERRAL
   { id: 'CAT', field: 'catalyst', label: 'What\'s prompting this conversation?',
     hint: 'What happened in your business that made federal contracting worth a real conversation?',
     type: 'textarea', tiers: ['quick', 'standard', 'deep'] },
@@ -160,7 +154,6 @@ const ALL_QUESTIONS: Question[] = [
     hint: 'A name, company, podcast, anything. Or skip if you came on your own.',
     type: 'text', tiers: ['standard', 'deep'] },
 
-  // FEDERAL POSTURE GATE - all tiers
   { id: 'FP', field: 'federal_path', label: 'Federal contracting experience?',
     hint: 'Pick the closest fit.',
     type: 'radio', required: true, tiers: ['quick', 'standard', 'deep'],
@@ -172,7 +165,6 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'established_prime', label: 'Established prime - real part of business' },
     ] },
 
-  // STANDARD federal - lighter
   { id: 'FS1', field: 'federal_answers.sam_status', label: 'SAM.gov registration?',
     type: 'radio', tiers: ['standard', 'deep'],
     federalPath: ['none', 'some', 'sub', 'limited_prime', 'established_prime'],
@@ -197,9 +189,6 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'dont_know', label: 'Don\'t know what these are' },
     ] },
 
-  // DEEP federal - path-specific probes
-
-  // PATH: none
   { id: 'FD_N1', field: 'federal_answers.budget', label: 'Budget for federal market entry next 6-12 months?',
     type: 'radio', tiers: ['deep'], federalPath: ['none'],
     options: [
@@ -222,7 +211,6 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'disbelief', label: 'I don\'t believe it' },
     ] },
 
-  // PATH: some
   { id: 'FD_S1', field: 'federal_answers.proposals_recent', label: 'Federal proposals submitted in the last two years?',
     hint: 'Wins, losses, no-bids - all welcome.',
     type: 'textarea', tiers: ['deep'], federalPath: ['some'] },
@@ -239,7 +227,6 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'other', label: 'Other' },
     ] },
 
-  // PATH: sub
   { id: 'FD_C1', field: 'federal_answers.primes_subbed_under', label: 'Primes you\'ve subbed under in the last 3 years.',
     type: 'textarea', tiers: ['deep'], federalPath: ['sub'] },
   { id: 'FD_C2', field: 'federal_answers.why_not_prime', label: 'Why haven\'t you become a prime yet?',
@@ -255,7 +242,6 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'other', label: 'Other' },
     ] },
 
-  // PATH: limited_prime
   { id: 'FD_L1', field: 'federal_answers.contracts_held', label: 'Contracts currently held + agencies?',
     type: 'textarea', tiers: ['deep'], federalPath: ['limited_prime'] },
   { id: 'FD_L2', field: 'federal_answers.largest_contract', label: 'Largest contract value ever held?',
@@ -270,7 +256,6 @@ const ALL_QUESTIONS: Question[] = [
   { id: 'FD_L3', field: 'federal_answers.next_capability_or_contract', label: 'What capability or contract do you want next?',
     type: 'textarea', tiers: ['deep'], federalPath: ['limited_prime'] },
 
-  // PATH: established_prime
   { id: 'FD_E1', field: 'federal_answers.federal_revenue_range', label: 'Annual federal revenue range?',
     type: 'select', tiers: ['deep'], federalPath: ['established_prime'],
     options: [
@@ -458,7 +443,6 @@ export function PublicIntakeForm() {
   const [form, setForm] = useState<FormData>(INITIAL_FORM)
   const [error, setError] = useState<string | null>(null)
 
-  // Restore from localStorage on mount
   useEffect(() => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY)
@@ -474,7 +458,6 @@ export function PublicIntakeForm() {
     }
   }, [])
 
-  // Persist on every change (except submitted)
   useEffect(() => {
     if (section === 'submitted' || section === 'submitting') return
     try {
@@ -606,7 +589,7 @@ export function PublicIntakeForm() {
   }
 
   if (section === 'submitted') {
-    return <Submitted firstName={form.full_name.split(' ')[0] || 'there'} email={form.email} tier={tier} />
+    return <Submitted firstName={form.full_name.split(' ')[0] || 'there'} />
   }
 
   if (!currentQuestion) {
@@ -745,32 +728,79 @@ function TierCard({ title, subtitle, description, onClick, recommended }: {
   )
 }
 
-function Submitted({ firstName, email, tier }: { firstName: string; email: string; tier: TimeTier | null }) {
+// =============================================================================
+// SUBMITTED - thank-you page with embedded Calendly widget
+// =============================================================================
+
+function Submitted({ firstName }: { firstName: string }) {
+  // Inject Calendly's external widget script once when this view mounts.
+  useEffect(() => {
+    const SCRIPT_SRC = 'https://assets.calendly.com/assets/external/widget.js'
+    const existing = document.querySelector('script[src="' + SCRIPT_SRC + '"]') as HTMLScriptElement | null
+    if (existing) return
+    const script = document.createElement('script')
+    script.src = SCRIPT_SRC
+    script.async = true
+    document.body.appendChild(script)
+  }, [])
+
+  const wideInner: CSSProperties = {
+    ...innerStyle,
+    maxWidth: '900px',
+  }
+
   return (
     <div style={containerStyle}>
-      <div style={innerStyle}>
+      <div style={wideInner}>
         <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '24px' }}>
           Submission received
         </div>
         <h1 style={{ fontSize: '36px', fontWeight: 700, lineHeight: 1.2, marginBottom: '20px' }}>
           Thanks, {firstName}.
         </h1>
-        <p style={{ fontSize: '17px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '24px' }}>
-          We'll get back to you within 2 business days at <strong>{email}</strong> with your free preliminary RECON report.
+        <p style={{ fontSize: '17px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '8px' }}>
+          The next step is a 30-minute Zoom call so we can dig in together. Pick a time below.
         </p>
-        <p style={{ fontSize: '15px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '40px' }}>
-          {tier === 'quick' && 'For a richer analysis, you can always come back and complete the longer version.'}
-          {tier === 'standard' && 'If we have any clarifying questions, we\'ll email first. No surprise calls.'}
-          {tier === 'deep' && 'Thanks for the depth - it lets us produce a much sharper recon.'}
+        <p style={{ fontSize: '15px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '32px' }}>
+          After our call, we'll build your free RECON report and send it over.
         </p>
-        <div style={{ background: 'white', border: `1px solid ${palette.hairline}`, borderRadius: '8px', padding: '24px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '12px' }}>What happens next</div>
-          <ol style={{ fontSize: '15px', color: palette.espresso, lineHeight: 1.7, paddingLeft: '20px', margin: 0 }}>
-            <li style={{ marginBottom: '8px' }}>We synthesize your inputs with public data (SAM, USASpending, web).</li>
-            <li style={{ marginBottom: '8px' }}>We send you a draft Preliminary Profile to review and edit.</li>
-            <li style={{ marginBottom: '8px' }}>If it makes sense, we schedule a 30-min Zoom intake.</li>
-            <li>Your free RECON report is built and delivered.</li>
-          </ol>
+
+        <div
+          className="calendly-inline-widget"
+          data-url={CALENDLY_URL}
+          style={{
+            minWidth: '320px',
+            width: '100%',
+            height: '700px',
+            background: 'white',
+            border: '1px solid ' + palette.hairline,
+            borderRadius: '12px',
+            overflow: 'hidden',
+          }}
+        />
+
+        <div style={{
+          marginTop: '32px',
+          background: 'white',
+          border: '1px solid ' + palette.hairline,
+          borderRadius: '8px',
+          padding: '20px 24px',
+        }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '6px' }}>
+            While you wait
+          </div>
+          <p style={{ fontSize: '14px', color: palette.textSecondary, lineHeight: 1.6, margin: 0 }}>
+            Curious about the Sunstone approach?{' '}
+            <a
+              href={SUNSTONE_WEBSITE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{ color: palette.amber, fontWeight: 600, textDecoration: 'underline' }}
+            >
+              Visit sunstoneag.com
+            </a>{' '}
+            to see how we work.
+          </p>
         </div>
       </div>
     </div>
@@ -780,7 +810,7 @@ function Submitted({ firstName, email, tier }: { firstName: string; email: strin
 function ProgressBar({ progress }: { progress: number }) {
   return (
     <div style={{ position: 'sticky', top: 0, height: '4px', background: palette.hairline, width: '100%', zIndex: 10 }}>
-      <div style={{ height: '100%', background: palette.amber, width: `${progress}%`, transition: 'width 0.3s' }} />
+      <div style={{ height: '100%', background: palette.amber, width: progress + '%', transition: 'width 0.3s' }} />
     </div>
   )
 }
