@@ -1,7 +1,6 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
-import { ProspectConfirmation } from './components/ProspectConfirmation'
 import { PublicIntakeForm } from './components/PublicIntakeForm'
 import './index.css'
 import { initializeTheme } from './lib/theme'
@@ -12,9 +11,8 @@ initializeTheme()
 // =============================================================================
 // PATH-LEVEL ROUTING
 // =============================================================================
-// Decide which root component to render based on URL path. Public routes
-// bypass the auth-gated platform entirely, so they're never gated by sign-in
-// state. Each public route is its own root component instance.
+// Public routes bypass the auth-gated platform entirely. /prospect/:token
+// continues to be handled by App/components however it was before.
 // =============================================================================
 
 function getRootComponent(): React.ReactNode {
@@ -25,15 +23,7 @@ function getRootComponent(): React.ReactNode {
     return <PublicIntakeForm />
   }
 
-  // /prospect/:token - existing prospect confirmation flow
-  if (path.startsWith('/prospect/')) {
-    const token = path.replace(/^\/prospect\//, '').replace(/\/$/, '')
-    if (token) {
-      return <ProspectConfirmation token={token} />
-    }
-  }
-
-  // Default: auth-gated platform
+  // Default: auth-gated platform (handles /prospect/:token internally)
   return <App />
 }
 
