@@ -9,6 +9,7 @@ import { Banner } from '@/components/Banner'
 import { Dashboard } from '@/components/Dashboard'
 import { AdminPanel } from '@/components/AdminPanel'
 import { PrelimReview } from '@/components/PrelimReview'
+import { AdminSubmissionsPage } from '@/components/AdminSubmissionsPage'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 
 export default function App() {
@@ -26,6 +27,11 @@ export default function App() {
   // BEFORE App ever loads.
   const isPrelimReviewPath = window.location.pathname === '/prelim/review'
     || window.location.pathname === '/prelim/review/'
+
+  // /admin/submissions - SuperAdmin / Admin list of all public intake submissions.
+  // Auth-gated. RLS policy added in 0039 lets SuperAdmin/Admin SELECT any row.
+  const isAdminSubmissionsPath = window.location.pathname === '/admin/submissions'
+    || window.location.pathname === '/admin/submissions/'
 
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
@@ -177,6 +183,12 @@ export default function App() {
   // Renders without NavBar / Dashboard chrome to keep it focused.
   if (isPrelimReviewPath) {
     return <PrelimReview />
+  }
+
+  // /admin/submissions - SuperAdmin/Admin list of all public intake submissions.
+  // Auth-gated; rendered without NavBar/Dashboard chrome for focus.
+  if (isAdminSubmissionsPath) {
+    return <AdminSubmissionsPage />
   }
 
   // Signed in with role - show the main app
