@@ -1,41 +1,43 @@
 /**
- * PublicIntakeForm - the public-facing /start page
+ * PublicIntakeForm - the public-facing /start page (v2)
  *
- * Typeform-style single-question-at-a-time intake. Replaces 5-10 min discovery calls.
- * No auth, no login, no payment. Free-form data collection only.
+ * Typeform-style intake. Replaces 5-10 min discovery calls.
  *
- * Flow:
- *   Welcome -> Contact (3 fields) -> Section 0 (3 Q's) -> Section 1 (8 Q's)
- *   -> Section 2 (gate + 4-5 adaptive Q's by federal_path) -> Submitted
+ * Welcome page lets prospect choose their time investment:
+ *   - 2 min Quick Look (~6 Q's)  -> minimum viable profile
+ *   - 5 min Standard (~15 Q's)   -> rich prelim profile
+ *   - 10 min Deep (~30 Q's)      -> full intake
  *
- * On submit: writes to v2.public_intake_submission via anon Supabase client.
- * Sends email to Zack via Netlify function.
+ * The longer they spend, the richer the recon report they get.
+ *
+ * On submit: writes to v2.public_intake_submission via shared supabase client.
+ * Sends notification to Zack via Netlify function.
  *
  * Saves progress to localStorage on every step. Refresh recovers.
  */
 import { useState, useEffect, CSSProperties } from 'react'
-import { createClient } from '@supabase/supabase-js'
+import { supabase } from '@/lib/supabase'
 
-const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
-const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string
-const supabasePublic = createClient(supabaseUrl, supabaseAnonKey)
-
-const LOCAL_STORAGE_KEY = 'sunstone_public_intake_v1'
+const LOCAL_STORAGE_KEY = 'sunstone_public_intake_v2'
 
 // =============================================================================
 // TYPES
 // =============================================================================
 
-type Section = 'welcome' | 'contact' | 'section0' | 'section1' | 'section2' | 'submitting' | 'submitted' | 'error'
+type Section = 'welcome' | 'questions' | 'submitting' | 'submitted'
+type TimeTier = 'quick' | 'standard' | 'deep'
 type FederalPath = 'none' | 'some' | 'sub' | 'limited_prime' | 'established_prime' | ''
 
 interface FormData {
+  // contact
   full_name: string
   email: string
   phone: string
+  // about you
   industry_sector: string
   referred_by: string
   catalyst: string
+  // commercial
   company_name: string
   company_website: string
   year_founded: string
@@ -46,6 +48,7 @@ interface FormData {
   geographic_footprint: string[]
   differentiator: string
   linkedin_url: string
+  // federal
   federal_path: FederalPath
   federal_answers: Record<string, any>
 }
@@ -60,7 +63,7 @@ const INITIAL_FORM: FormData = {
 }
 
 // =============================================================================
-// QUESTION DEFINITIONS
+// QUESTION DEFINITIONS - tagged by time tier
 // =============================================================================
 
 interface Question {
@@ -72,26 +75,38 @@ interface Question {
   required?: boolean
   options?: { value: string; label: string }[]
   placeholder?: string
-  section: 'contact' | '0' | '1' | '2'
-  federalPath?: FederalPath[]
+  // tier inclusion: which tiers this question appears in
+  tiers: TimeTier[]
+  federalPath?: FederalPath[]  // adaptive Section 2 questions
 }
 
 const ALL_QUESTIONS: Question[] = [
-  // CONTACT
-  { id: 'C1', field: 'full_name', label: 'What\'s your name?', hint: 'First and last is fine.', type: 'text', required: true, section: 'contact', placeholder: 'Jane Smith' },
-  { id: 'C2', field: 'email', label: 'What\'s your email?', hint: 'We use this only to send your recon report and follow up. Never sold, never shared.', type: 'email', required: true, section: 'contact', placeholder: 'jane@yourcompany.com' },
-  { id: 'C3', field: 'phone', label: 'And your phone?', hint: 'Optional. We only call if you say yes to a follow-up call.', type: 'phone', section: 'contact', placeholder: '(555) 123-4567' },
+  // CORE CONTACT - all tiers
+  { id: 'C1', field: 'full_name', label: 'What\'s your name?', type: 'text', required: true,
+    tiers: ['quick', 'standard', 'deep'], placeholder: 'Jane Smith' },
+  { id: 'C2', field: 'email', label: 'What\'s your email?',
+    hint: 'For your recon report and follow-up. Never sold, never shared.',
+    type: 'email', required: true, tiers: ['quick', 'standard', 'deep'], placeholder: 'jane@yourcompany.com' },
+  { id: 'C3', field: 'phone', label: 'And your phone?',
+    hint: 'Optional. We only call if you say yes to a follow-up.',
+    type: 'phone', tiers: ['standard', 'deep'], placeholder: '(555) 123-4567' },
 
-  // SECTION 0 - About you
-  { id: 'Q01', field: 'industry_sector', label: 'What industry sector best describes your business?', hint: 'Use your own words. Doesn\'t need to be a NAICS code.', type: 'text', required: true, section: '0', placeholder: 'e.g., Industrial cleaning, Cybersecurity software, Medical devices' },
-  { id: 'Q02', field: 'referred_by', label: 'Who pointed you to Sunstone?', hint: 'A name, a company, a podcast, an article - whatever you\'ve got. Or skip if you came on your own.', type: 'text', section: '0', placeholder: 'Optional' },
-  { id: 'Q03', field: 'catalyst', label: 'What\'s prompting this conversation right now?', hint: 'What happened in your business that made federal contracting worth a real conversation? Skip if you\'d rather tell us live.', type: 'textarea', section: '0', placeholder: 'Optional' },
+  // CORE COMPANY - all tiers
+  { id: 'CO1', field: 'company_name', label: 'Company name?', type: 'text', required: true,
+    tiers: ['quick', 'standard', 'deep'] },
+  { id: 'CO2', field: 'industry_sector', label: 'What industry sector?',
+    hint: 'Use your own words. Doesn\'t need to be a NAICS code.',
+    type: 'text', required: true, tiers: ['quick', 'standard', 'deep'],
+    placeholder: 'e.g., Industrial cleaning, Cybersecurity, Medical devices' },
 
-  // SECTION 1 - Commercial
-  { id: 'Q11A', field: 'company_name', label: 'What\'s the legal name of your company?', type: 'text', required: true, section: '1' },
-  { id: 'Q11B', field: 'company_website', label: 'Company website?', hint: 'We use this to round out the public picture of your business.', type: 'url', required: true, section: '1', placeholder: 'https://yourcompany.com' },
-  { id: 'Q12A', field: 'year_founded', label: 'What year did you start the business?', type: 'number', required: true, section: '1', placeholder: '2018' },
-  { id: 'Q12B', field: 'headcount', label: 'How many people work there today?', type: 'select', required: true, section: '1',
+  // STANDARD+ COMPANY
+  { id: 'CO3', field: 'company_website', label: 'Company website?',
+    hint: 'We use this to round out the public picture.',
+    type: 'url', required: true, tiers: ['standard', 'deep'], placeholder: 'https://yourcompany.com' },
+  { id: 'CO4', field: 'year_founded', label: 'What year did you start the business?',
+    type: 'number', required: true, tiers: ['standard', 'deep'], placeholder: '2018' },
+  { id: 'CO5', field: 'headcount', label: 'How many people work there today?',
+    type: 'select', required: true, tiers: ['standard', 'deep'],
     options: [
       { value: '1', label: 'Just me' },
       { value: '2-5', label: '2-5' },
@@ -101,7 +116,9 @@ const ALL_QUESTIONS: Question[] = [
       { value: '201-500', label: '201-500' },
       { value: '500+', label: '500+' },
     ] },
-  { id: 'Q13', field: 'revenue_range', label: 'What\'s your approximate annual revenue?', hint: 'Ballpark is fine. Helps us scope the recon right.', type: 'select', required: true, section: '1',
+  { id: 'CO6', field: 'revenue_range', label: 'Approximate annual revenue?',
+    hint: 'Ballpark is fine. Helps us scope right.',
+    type: 'select', required: true, tiers: ['standard', 'deep'],
     options: [
       { value: 'under_500k', label: 'Under $500k' },
       { value: '500k_2m', label: '$500k - $2M' },
@@ -110,36 +127,65 @@ const ALL_QUESTIONS: Question[] = [
       { value: '50m_plus', label: '$50M+' },
       { value: 'prefer_not_to_say', label: 'Prefer not to say' },
     ] },
-  { id: 'Q14', field: 'capabilities', label: 'Describe the three things your company does best.', hint: 'Use the words your customers would use, not industry jargon. One per line is great.', type: 'textarea', required: true, section: '1', placeholder: '1. ...\n2. ...\n3. ...' },
-  { id: 'Q15', field: 'customers', label: 'Who are your three most important customer types or named customers?', hint: 'Companies, types of buyers, industries - whatever fits.', type: 'textarea', required: true, section: '1' },
-  { id: 'Q16', field: 'geographic_footprint', label: 'Where do you operate?', hint: 'Check all that apply.', type: 'multiselect', section: '1',
+  { id: 'CO7', field: 'capabilities', label: 'What are the three things your company does best?',
+    hint: 'Use the words your customers would use, not industry jargon.',
+    type: 'textarea', required: true, tiers: ['standard', 'deep'],
+    placeholder: '1. ...\n2. ...\n3. ...' },
+
+  // DEEP COMPANY
+  { id: 'CO8', field: 'customers', label: 'Who are your three most important customer types?',
+    hint: 'Companies, types of buyers, industries - whatever fits.',
+    type: 'textarea', tiers: ['deep'] },
+  { id: 'CO9', field: 'geographic_footprint', label: 'Where do you operate?',
+    hint: 'Check all that apply.',
+    type: 'multiselect', tiers: ['deep'],
     options: [
       { value: 'local', label: 'Local' },
       { value: 'regional', label: 'Regional' },
       { value: 'national', label: 'National' },
       { value: 'international', label: 'International' },
     ] },
-  { id: 'Q17', field: 'differentiator', label: 'What can you do that your competitors can\'t?', hint: 'Or that you do meaningfully better than they do. Be specific.', type: 'textarea', required: true, section: '1' },
-  { id: 'Q18', field: 'linkedin_url', label: 'Company LinkedIn URL?', hint: 'Optional but helpful.', type: 'url', section: '1', placeholder: 'https://linkedin.com/company/...' },
+  { id: 'CO10', field: 'differentiator', label: 'What can you do that your competitors can\'t?',
+    hint: 'Or what you do meaningfully better than they do. Be specific.',
+    type: 'textarea', tiers: ['deep'] },
+  { id: 'CO11', field: 'linkedin_url', label: 'Company LinkedIn URL?',
+    hint: 'Optional but helpful.',
+    type: 'url', tiers: ['deep'], placeholder: 'https://linkedin.com/company/...' },
 
-  // SECTION 2 - Federal posture (gate)
-  { id: 'Q20', field: 'federal_path', label: 'Which best describes your federal contracting experience?', hint: 'Pick the closest fit. We adapt the rest of the questions based on this.', type: 'radio', required: true, section: '2',
+  // CATALYST + REFERRAL
+  { id: 'CAT', field: 'catalyst', label: 'What\'s prompting this conversation?',
+    hint: 'What happened in your business that made federal contracting worth a real conversation?',
+    type: 'textarea', tiers: ['quick', 'standard', 'deep'] },
+  { id: 'REF', field: 'referred_by', label: 'Who pointed you to Sunstone?',
+    hint: 'A name, company, podcast, anything. Or skip if you came on your own.',
+    type: 'text', tiers: ['standard', 'deep'] },
+
+  // FEDERAL POSTURE GATE - all tiers
+  { id: 'FP', field: 'federal_path', label: 'Federal contracting experience?',
+    hint: 'Pick the closest fit.',
+    type: 'radio', required: true, tiers: ['quick', 'standard', 'deep'],
     options: [
-      { value: 'none', label: 'None - we\'ve never bid federal' },
-      { value: 'some', label: 'Some - we\'ve bid but not won, or won state/local that\'s federally funded' },
+      { value: 'none', label: 'None - never bid federal' },
+      { value: 'some', label: 'Some - bid but not won, or won state/local that\'s federally funded' },
       { value: 'sub', label: 'Sub experience - worked under primes but never as a prime' },
-      { value: 'limited_prime', label: 'Limited prime - one or two federal prime awards' },
-      { value: 'established_prime', label: 'Established prime - multiple federal awards, real part of business' },
+      { value: 'limited_prime', label: 'Limited prime - one or two federal awards' },
+      { value: 'established_prime', label: 'Established prime - real part of business' },
     ] },
 
-  // PATH A: None
-  { id: 'Q2A1', field: 'federal_answers.sam_registered', label: 'Are you registered in SAM.gov?', type: 'radio', section: '2', federalPath: ['none'],
+  // STANDARD federal - lighter
+  { id: 'FS1', field: 'federal_answers.sam_status', label: 'SAM.gov registration?',
+    type: 'radio', tiers: ['standard', 'deep'],
+    federalPath: ['none', 'some', 'sub', 'limited_prime', 'established_prime'],
     options: [
-      { value: 'yes', label: 'Yes' },
+      { value: 'active', label: 'Yes - active' },
+      { value: 'expired', label: 'Yes - expired' },
       { value: 'no', label: 'No' },
       { value: 'dont_know', label: 'Don\'t know' },
     ] },
-  { id: 'Q2A2', field: 'federal_answers.certifications', label: 'Do you hold any small-business socioeconomic certifications?', hint: 'Check all that apply.', type: 'multiselect', section: '2', federalPath: ['none','some','sub','limited_prime','established_prime'],
+  { id: 'FS2', field: 'federal_answers.certifications', label: 'Small business / socioeconomic certifications?',
+    hint: 'Check all that apply.',
+    type: 'multiselect', tiers: ['standard', 'deep'],
+    federalPath: ['none', 'some', 'sub', 'limited_prime', 'established_prime'],
     options: [
       { value: '8a', label: '8(a)' },
       { value: 'hubzone', label: 'HUBZone' },
@@ -150,7 +196,12 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'none', label: 'None' },
       { value: 'dont_know', label: 'Don\'t know what these are' },
     ] },
-  { id: 'Q2A3', field: 'federal_answers.budget', label: 'What budget would you allocate to federal market entry in the next 6-12 months?', type: 'radio', section: '2', federalPath: ['none','some'],
+
+  // DEEP federal - path-specific probes
+
+  // PATH: none
+  { id: 'FD_N1', field: 'federal_answers.budget', label: 'Budget for federal market entry next 6-12 months?',
+    type: 'radio', tiers: ['deep'], federalPath: ['none'],
     options: [
       { value: 'under_10k', label: 'Under $10k' },
       { value: '10k_25k', label: '$10k - $25k' },
@@ -159,26 +210,26 @@ const ALL_QUESTIONS: Question[] = [
       { value: '100k_plus', label: '$100k+' },
       { value: 'prefer_not_to_say', label: 'Prefer not to say' },
     ] },
-  { id: 'Q2A4', field: 'federal_answers.imagined_first_win', label: 'Two years from now, you\'ve won your first federal contract. Describe it briefly.', hint: 'Who\'s the customer? What did they buy? Skip if not yet sure.', type: 'textarea', section: '2', federalPath: ['none'] },
-  { id: 'Q2A5', field: 'federal_answers.cycle_reaction', label: 'What\'s your reaction to "18-36 month sales cycle for new federal entrants"?', type: 'radio', section: '2', federalPath: ['none'],
+  { id: 'FD_N2', field: 'federal_answers.imagined_first_win', label: 'Two years from now, you\'ve won your first federal contract. Describe it briefly.',
+    hint: 'Who\'s the customer? What did they buy? Skip if not yet sure.',
+    type: 'textarea', tiers: ['deep'], federalPath: ['none'] },
+  { id: 'FD_N3', field: 'federal_answers.cycle_reaction', label: 'Reaction to "18-36 month sales cycle for new federal entrants"?',
+    type: 'radio', tiers: ['deep'], federalPath: ['none'],
     options: [
       { value: 'fine', label: 'That\'s fine' },
-      { value: 'longer', label: 'That\'s longer than I hoped' },
+      { value: 'longer', label: 'Longer than I hoped' },
       { value: 'problem', label: 'That\'s a problem' },
       { value: 'disbelief', label: 'I don\'t believe it' },
     ] },
 
-  // PATH B: Some
-  { id: 'Q2B1', field: 'federal_answers.sam_status', label: 'SAM.gov registration status?', type: 'radio', section: '2', federalPath: ['some','sub','limited_prime','established_prime'],
-    options: [
-      { value: 'active', label: 'Yes - active' },
-      { value: 'expired', label: 'Yes - expired' },
-      { value: 'registered_inactive', label: 'Registered but not active' },
-      { value: 'no', label: 'No' },
-    ] },
-  { id: 'Q2B3', field: 'federal_answers.proposals_recent', label: 'Federal proposals submitted in the last two years?', hint: 'Wins, losses, no-bids - all welcome.', type: 'textarea', section: '2', federalPath: ['some'] },
-  { id: 'Q2B4', field: 'federal_answers.why_no_win', label: 'Why didn\'t you win? Your honest read.', type: 'textarea', section: '2', federalPath: ['some'] },
-  { id: 'Q2B5', field: 'federal_answers.blocker', label: 'What\'s stopping you from going harder at federal?', type: 'radio', section: '2', federalPath: ['some'],
+  // PATH: some
+  { id: 'FD_S1', field: 'federal_answers.proposals_recent', label: 'Federal proposals submitted in the last two years?',
+    hint: 'Wins, losses, no-bids - all welcome.',
+    type: 'textarea', tiers: ['deep'], federalPath: ['some'] },
+  { id: 'FD_S2', field: 'federal_answers.why_no_win', label: 'Why didn\'t you win? Your honest read.',
+    type: 'textarea', tiers: ['deep'], federalPath: ['some'] },
+  { id: 'FD_S3', field: 'federal_answers.blocker', label: 'What\'s stopping you from going harder at federal?',
+    type: 'radio', tiers: ['deep'], federalPath: ['some'],
     options: [
       { value: 'capital', label: 'Capital' },
       { value: 'knowledge', label: 'Knowledge' },
@@ -188,10 +239,13 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'other', label: 'Other' },
     ] },
 
-  // PATH C: Sub
-  { id: 'Q2C1', field: 'federal_answers.primes_subbed_under', label: 'Names of primes you\'ve subbed under in the last 3 years.', type: 'textarea', required: true, section: '2', federalPath: ['sub'] },
-  { id: 'Q2C2', field: 'federal_answers.why_not_prime', label: 'Why haven\'t you become a prime yet? Your honest read.', type: 'textarea', section: '2', federalPath: ['sub'] },
-  { id: 'Q2C4', field: 'federal_answers.ceiling', label: 'What\'s the ceiling holding you back?', type: 'radio', section: '2', federalPath: ['sub'],
+  // PATH: sub
+  { id: 'FD_C1', field: 'federal_answers.primes_subbed_under', label: 'Primes you\'ve subbed under in the last 3 years.',
+    type: 'textarea', tiers: ['deep'], federalPath: ['sub'] },
+  { id: 'FD_C2', field: 'federal_answers.why_not_prime', label: 'Why haven\'t you become a prime yet?',
+    type: 'textarea', tiers: ['deep'], federalPath: ['sub'] },
+  { id: 'FD_C3', field: 'federal_answers.ceiling', label: 'What\'s the ceiling holding you back?',
+    type: 'radio', tiers: ['deep'], federalPath: ['sub'],
     options: [
       { value: 'past_performance', label: 'Past performance' },
       { value: 'bonding', label: 'Bonding' },
@@ -200,17 +254,12 @@ const ALL_QUESTIONS: Question[] = [
       { value: 'relationships', label: 'Relationships' },
       { value: 'other', label: 'Other' },
     ] },
-  { id: 'Q2C5', field: 'federal_answers.prime_promise_followthrough', label: 'If a prime promised to "help you become a prime," have they followed through?', type: 'radio', section: '2', federalPath: ['sub'],
-    options: [
-      { value: 'yes', label: 'Yes' },
-      { value: 'sort_of', label: 'Sort of' },
-      { value: 'no', label: 'No' },
-      { value: 'never_promised', label: 'Never been promised' },
-    ] },
 
-  // PATH D: Limited prime
-  { id: 'Q2D1', field: 'federal_answers.contracts_held', label: 'What contracts do you currently hold, and what agencies?', type: 'textarea', section: '2', federalPath: ['limited_prime'] },
-  { id: 'Q2D2', field: 'federal_answers.largest_contract', label: 'Largest contract value you\'ve ever held?', type: 'select', section: '2', federalPath: ['limited_prime'],
+  // PATH: limited_prime
+  { id: 'FD_L1', field: 'federal_answers.contracts_held', label: 'Contracts currently held + agencies?',
+    type: 'textarea', tiers: ['deep'], federalPath: ['limited_prime'] },
+  { id: 'FD_L2', field: 'federal_answers.largest_contract', label: 'Largest contract value ever held?',
+    type: 'select', tiers: ['deep'], federalPath: ['limited_prime'],
     options: [
       { value: 'under_100k', label: 'Under $100k' },
       { value: '100k_500k', label: '$100k - $500k' },
@@ -218,17 +267,12 @@ const ALL_QUESTIONS: Question[] = [
       { value: '2m_10m', label: '$2M - $10M' },
       { value: '10m_plus', label: '$10M+' },
     ] },
-  { id: 'Q2D3', field: 'federal_answers.biggest_risk_18mo', label: 'Largest single risk to your federal book in the next 18 months?', type: 'textarea', section: '2', federalPath: ['limited_prime'] },
-  { id: 'Q2D4', field: 'federal_answers.next_capability_or_contract', label: 'What capability or contract do you want next?', type: 'textarea', section: '2', federalPath: ['limited_prime'] },
-  { id: 'Q2D5', field: 'federal_answers.past_performance_type', label: 'Past performance type?', type: 'radio', section: '2', federalPath: ['limited_prime'],
-    options: [
-      { value: 'set_aside_only', label: 'Small business set-aside only' },
-      { value: 'full_open_only', label: 'Full and open only' },
-      { value: 'both', label: 'Both' },
-    ] },
+  { id: 'FD_L3', field: 'federal_answers.next_capability_or_contract', label: 'What capability or contract do you want next?',
+    type: 'textarea', tiers: ['deep'], federalPath: ['limited_prime'] },
 
-  // PATH E: Established prime
-  { id: 'Q2E1', field: 'federal_answers.federal_revenue_range', label: 'Approximate annual federal revenue range?', type: 'select', section: '2', federalPath: ['established_prime'],
+  // PATH: established_prime
+  { id: 'FD_E1', field: 'federal_answers.federal_revenue_range', label: 'Annual federal revenue range?',
+    type: 'select', tiers: ['deep'], federalPath: ['established_prime'],
     options: [
       { value: 'under_2m', label: 'Under $2M' },
       { value: '2m_10m', label: '$2M - $10M' },
@@ -236,10 +280,12 @@ const ALL_QUESTIONS: Question[] = [
       { value: '25m_75m', label: '$25M - $75M' },
       { value: '75m_plus', label: '$75M+' },
     ] },
-  { id: 'Q2E2', field: 'federal_answers.top_3_agencies', label: 'Top 3 federal customers (agencies)?', type: 'textarea', section: '2', federalPath: ['established_prime'] },
-  { id: 'Q2E3', field: 'federal_answers.largest_contract_or_vehicle', label: 'Largest single contract or vehicle?', type: 'textarea', section: '2', federalPath: ['established_prime'] },
-  { id: 'Q2E4', field: 'federal_answers.market_change_2yrs', label: 'What\'s changing in your federal market that wasn\'t true two years ago?', type: 'textarea', section: '2', federalPath: ['established_prime'] },
-  { id: 'Q2E5', field: 'federal_answers.actively_pivoting', label: 'Are you actively pivoting toward a new vertical or capability?', type: 'radio', section: '2', federalPath: ['established_prime'],
+  { id: 'FD_E2', field: 'federal_answers.top_3_agencies', label: 'Top 3 federal customers?',
+    type: 'textarea', tiers: ['deep'], federalPath: ['established_prime'] },
+  { id: 'FD_E3', field: 'federal_answers.market_change_2yrs', label: 'What\'s changing in your federal market that wasn\'t true two years ago?',
+    type: 'textarea', tiers: ['deep'], federalPath: ['established_prime'] },
+  { id: 'FD_E4', field: 'federal_answers.actively_pivoting', label: 'Pivoting toward a new vertical or capability?',
+    type: 'radio', tiers: ['deep'], federalPath: ['established_prime'],
     options: [
       { value: 'yes_describe', label: 'Yes - I\'ll describe live' },
       { value: 'no_defending', label: 'No - defending current position' },
@@ -267,17 +313,14 @@ function setValue(form: FormData, field: string, value: any): FormData {
   return { ...form, [field]: value }
 }
 
-function getActiveQuestions(form: FormData): Question[] {
+function getActiveQuestions(form: FormData, tier: TimeTier): Question[] {
   return ALL_QUESTIONS.filter(q => {
-    if (q.section === 'contact') return true
-    if (q.section === '0') return true
-    if (q.section === '1') return true
-    if (q.section === '2') {
-      if (!q.federalPath) return true  // Q20 is the gate, no federalPath
+    if (!q.tiers.includes(tier)) return false
+    if (q.federalPath) {
       if (!form.federal_path) return false
       return q.federalPath.includes(form.federal_path)
     }
-    return false
+    return true
   })
 }
 
@@ -290,13 +333,12 @@ function isValid(question: Question, value: any): boolean {
 }
 
 // =============================================================================
-// SUNSTONE PALETTE STYLES
+// STYLES
 // =============================================================================
 
 const palette = {
   cream: '#FBF7F0',
   espresso: '#2A2622',
-  espressoSoft: '#3D3631',
   amber: '#F0A742',
   amberHover: '#E69828',
   hairline: '#E8E1D5',
@@ -394,7 +436,7 @@ const optionButtonStyle = (selected: boolean): CSSProperties => ({
   fontSize: '16px',
   fontFamily: 'inherit',
   background: selected ? palette.amber : 'white',
-  color: selected ? palette.espresso : palette.espresso,
+  color: palette.espresso,
   border: `2px solid ${selected ? palette.amber : palette.hairline}`,
   borderRadius: '8px',
   cursor: 'pointer',
@@ -411,6 +453,7 @@ const optionButtonStyle = (selected: boolean): CSSProperties => ({
 
 export function PublicIntakeForm() {
   const [section, setSection] = useState<Section>('welcome')
+  const [tier, setTier] = useState<TimeTier | null>(null)
   const [questionIndex, setQuestionIndex] = useState(0)
   const [form, setForm] = useState<FormData>(INITIAL_FORM)
   const [error, setError] = useState<string | null>(null)
@@ -423,6 +466,7 @@ export function PublicIntakeForm() {
         const parsed = JSON.parse(saved)
         if (parsed.form) setForm(parsed.form)
         if (parsed.section) setSection(parsed.section)
+        if (parsed.tier) setTier(parsed.tier)
         if (parsed.questionIndex !== undefined) setQuestionIndex(parsed.questionIndex)
       }
     } catch {
@@ -430,33 +474,28 @@ export function PublicIntakeForm() {
     }
   }, [])
 
-  // Persist on every change (except submitted state)
+  // Persist on every change (except submitted)
   useEffect(() => {
     if (section === 'submitted' || section === 'submitting') return
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ form, section, questionIndex }))
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify({ form, section, tier, questionIndex }))
     } catch {
       // ignore
     }
-  }, [form, section, questionIndex])
+  }, [form, section, tier, questionIndex])
 
-  const activeQuestions = getActiveQuestions(form)
-  const sectionQuestions = activeQuestions.filter(q => {
-    if (section === 'contact') return q.section === 'contact'
-    if (section === 'section0') return q.section === '0'
-    if (section === 'section1') return q.section === '1'
-    if (section === 'section2') return q.section === '2'
-    return false
-  })
-  const currentQuestion = sectionQuestions[questionIndex]
-  const totalSectionQuestions = sectionQuestions.length
-
-  // Overall progress
+  const activeQuestions = tier ? getActiveQuestions(form, tier) : []
+  const currentQuestion = activeQuestions[questionIndex]
   const totalQuestions = activeQuestions.length
-  const questionsCompletedBefore = activeQuestions.findIndex(q => q.id === currentQuestion?.id)
   const overallProgress = currentQuestion
-    ? Math.round(((questionsCompletedBefore + 1) / totalQuestions) * 100)
+    ? Math.round(((questionIndex + 1) / totalQuestions) * 100)
     : section === 'submitted' ? 100 : 0
+
+  function handleStart(chosenTier: TimeTier) {
+    setTier(chosenTier)
+    setSection('questions')
+    setQuestionIndex(0)
+  }
 
   function handleNext() {
     setError(null)
@@ -466,14 +505,10 @@ export function PublicIntakeForm() {
       setError('This question is required.')
       return
     }
-    if (questionIndex < sectionQuestions.length - 1) {
+    if (questionIndex < activeQuestions.length - 1) {
       setQuestionIndex(questionIndex + 1)
     } else {
-      // End of section - advance
-      if (section === 'contact') { setSection('section0'); setQuestionIndex(0) }
-      else if (section === 'section0') { setSection('section1'); setQuestionIndex(0) }
-      else if (section === 'section1') { setSection('section2'); setQuestionIndex(0) }
-      else if (section === 'section2') { handleSubmit() }
+      handleSubmit()
     }
   }
 
@@ -482,34 +517,17 @@ export function PublicIntakeForm() {
     if (questionIndex > 0) {
       setQuestionIndex(questionIndex - 1)
     } else {
-      if (section === 'contact') setSection('welcome')
-      else if (section === 'section0') {
-        setSection('contact')
-        const contactQs = activeQuestions.filter(q => q.section === 'contact')
-        setQuestionIndex(contactQs.length - 1)
-      }
-      else if (section === 'section1') {
-        setSection('section0')
-        const s0Qs = activeQuestions.filter(q => q.section === '0')
-        setQuestionIndex(s0Qs.length - 1)
-      }
-      else if (section === 'section2') {
-        setSection('section1')
-        const s1Qs = activeQuestions.filter(q => q.section === '1')
-        setQuestionIndex(s1Qs.length - 1)
-      }
+      setSection('welcome')
+      setTier(null)
     }
   }
 
   function handleSkip() {
     if (currentQuestion?.required) return
-    if (questionIndex < sectionQuestions.length - 1) {
+    if (questionIndex < activeQuestions.length - 1) {
       setQuestionIndex(questionIndex + 1)
     } else {
-      if (section === 'contact') { setSection('section0'); setQuestionIndex(0) }
-      else if (section === 'section0') { setSection('section1'); setQuestionIndex(0) }
-      else if (section === 'section1') { setSection('section2'); setQuestionIndex(0) }
-      else if (section === 'section2') { handleSubmit() }
+      handleSubmit()
     }
   }
 
@@ -517,7 +535,6 @@ export function PublicIntakeForm() {
     setSection('submitting')
     setError(null)
     try {
-      // Capture UTM and referrer
       const params = new URLSearchParams(window.location.search)
       const submission = {
         full_name: form.full_name.trim(),
@@ -545,7 +562,7 @@ export function PublicIntakeForm() {
         user_agent: navigator.userAgent,
       }
 
-      const { data, error: insertError } = await supabasePublic
+      const { data, error: insertError } = await supabase
         .from('public_intake_submission')
         .insert(submission)
         .select()
@@ -555,7 +572,6 @@ export function PublicIntakeForm() {
 
       localStorage.removeItem(LOCAL_STORAGE_KEY)
 
-      // Fire notification email (best-effort)
       try {
         await fetch('/.netlify/functions/notify-public-intake', {
           method: 'POST',
@@ -563,22 +579,20 @@ export function PublicIntakeForm() {
           body: JSON.stringify({ submission_id: data?.id }),
         })
       } catch {
-        // notification failure is non-fatal
+        // notification failure non-fatal
       }
 
       setSection('submitted')
     } catch (e: any) {
-      setError(`Submission failed: ${e?.message || 'unknown error'}. Please try again or email zack@sunstoneadvisory.co directly.`)
-      setSection('section2')
+      setError(`Submission failed: ${e?.message || 'unknown'}. Please try again or email zack@sunstoneadvisory.co directly.`)
+      setSection('questions')
     }
   }
 
-  // ==========================================
   // RENDER
-  // ==========================================
 
   if (section === 'welcome') {
-    return <Welcome onStart={() => { setSection('contact'); setQuestionIndex(0) }} />
+    return <Welcome onStart={handleStart} />
   }
 
   if (section === 'submitting') {
@@ -593,15 +607,13 @@ export function PublicIntakeForm() {
   }
 
   if (section === 'submitted') {
-    return <Submitted form={form} />
+    return <Submitted firstName={form.full_name.split(' ')[0] || 'there'} email={form.email} tier={tier} />
   }
 
   if (!currentQuestion) {
     return (
       <div style={containerStyle}>
-        <div style={innerStyle}>
-          <h1>Loading...</h1>
-        </div>
+        <div style={innerStyle}><h1>Loading...</h1></div>
       </div>
     )
   }
@@ -609,9 +621,10 @@ export function PublicIntakeForm() {
   return (
     <div style={containerStyle}>
       <ProgressBar progress={overallProgress} />
-      <SectionLabel section={section} />
       <div style={innerStyle}>
-        <QuestionIndicator current={questionIndex + 1} total={totalSectionQuestions} />
+        <div style={{ fontSize: '13px', color: palette.textTertiary, marginBottom: '24px', width: '100%' }}>
+          Question {questionIndex + 1} of {totalQuestions}
+        </div>
         <h1 style={labelStyle}>{currentQuestion.label}</h1>
         {currentQuestion.hint && <p style={hintStyle}>{currentQuestion.hint}</p>}
 
@@ -633,7 +646,7 @@ export function PublicIntakeForm() {
             <button onClick={handleNext} style={primaryButtonStyle}
               onMouseEnter={(e) => (e.currentTarget.style.background = palette.amberHover)}
               onMouseLeave={(e) => (e.currentTarget.style.background = palette.amber)}>
-              {(section === 'section2' && questionIndex === sectionQuestions.length - 1) ? 'Submit' : 'Next'}
+              {questionIndex === activeQuestions.length - 1 ? 'Submit' : 'Next'}
             </button>
           </div>
         </div>
@@ -643,10 +656,10 @@ export function PublicIntakeForm() {
 }
 
 // =============================================================================
-// SUB-COMPONENTS
+// WELCOME
 // =============================================================================
 
-function Welcome({ onStart }: { onStart: () => void }) {
+function Welcome({ onStart }: { onStart: (tier: TimeTier) => void }) {
   return (
     <div style={containerStyle}>
       <div style={innerStyle}>
@@ -656,43 +669,84 @@ function Welcome({ onStart }: { onStart: () => void }) {
         <h1 style={{ fontSize: '40px', fontWeight: 700, lineHeight: 1.15, marginBottom: '24px', color: palette.espresso }}>
           Let's see if federal contracting is right for your business.
         </h1>
-        <p style={{ fontSize: '17px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '32px' }}>
-          Filling this out gets you two things:
+        <p style={{ fontSize: '17px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '20px' }}>
+          You give us your inputs, we give you a free preliminary RECON report. Intelligence we normally charge for. <strong>The longer you spend, the richer the analysis.</strong>
         </p>
-        <ol style={{ fontSize: '17px', color: palette.espresso, lineHeight: 1.7, marginBottom: '32px', paddingLeft: '20px' }}>
-          <li style={{ marginBottom: '12px' }}>
-            <strong>A more specific, tailored conversation</strong> about your market - instead of generic "tell me about your business" Q&amp;A.
-          </li>
-          <li>
-            <strong>A free preliminary RECON report</strong> based on what you share, showing you what your federal market actually looks like for a company like yours. <em>This is intelligence we normally charge for.</em>
-          </li>
-        </ol>
+        <p style={{ fontSize: '15px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '40px' }}>
+          Pick your time investment.
+        </p>
 
-        <div style={{ background: 'white', border: `1px solid ${palette.hairline}`, borderRadius: '8px', padding: '20px 24px', marginBottom: '32px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '8px' }}>What to expect</div>
-          <p style={{ fontSize: '15px', color: palette.espresso, lineHeight: 1.6, margin: 0 }}>
-            About 10 minutes. Two sections - <strong>Commercial</strong> (your business today) and <strong>Federal</strong> (your federal experience and posture). Around 8-12 questions per section. Questions adapt to your answers, so what you see depends on what you tell us.
-          </p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', width: '100%', marginBottom: '32px' }}>
+          <TierCard
+            title="2 minutes"
+            subtitle="Quick Look"
+            description="Just enough for us to tell you whether federal contracting is even a sensible fit for your business. Light report."
+            onClick={() => onStart('quick')}
+          />
+          <TierCard
+            title="5 minutes"
+            subtitle="Standard Profile"
+            description="The sweet spot. Real prelim profile, tailored Zoom intake on the other side, and a customized RECON report."
+            onClick={() => onStart('standard')}
+            recommended
+          />
+          <TierCard
+            title="10 minutes"
+            subtitle="Deep Profile"
+            description="Maximum signal. The richer your inputs, the sharper the recon. Worth it if federal is a real strategic priority."
+            onClick={() => onStart('deep')}
+          />
         </div>
 
-        <div style={{ background: 'white', border: `1px solid ${palette.hairline}`, borderRadius: '8px', padding: '20px 24px', marginBottom: '40px' }}>
-          <div style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '8px' }}>Privacy</div>
-          <p style={{ fontSize: '14px', color: palette.textSecondary, lineHeight: 1.6, margin: 0 }}>
-            Your contact info is used by Sunstone Advisory Group to communicate with you about your RECON report and follow-up. We never sell your data. We never share it with anyone outside Sunstone. Period.
+        <div style={{ background: 'white', border: `1px solid ${palette.hairline}`, borderRadius: '8px', padding: '16px 20px' }}>
+          <div style={{ fontSize: '12px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '6px' }}>Privacy</div>
+          <p style={{ fontSize: '13px', color: palette.textSecondary, lineHeight: 1.6, margin: 0 }}>
+            Your contact info is used by Sunstone to communicate with you about your RECON report and follow-up. We never sell your data. We never share it outside Sunstone.
           </p>
         </div>
-
-        <button onClick={onStart} style={{ ...primaryButtonStyle, fontSize: '17px', padding: '18px 36px' }}
-          onMouseEnter={(e) => (e.currentTarget.style.background = palette.amberHover)}
-          onMouseLeave={(e) => (e.currentTarget.style.background = palette.amber)}>
-          Get started
-        </button>
       </div>
     </div>
   )
 }
 
-function Submitted({ form }: { form: FormData }) {
+function TierCard({ title, subtitle, description, onClick, recommended }: {
+  title: string
+  subtitle: string
+  description: string
+  onClick: () => void
+  recommended?: boolean
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        textAlign: 'left',
+        padding: '20px 24px',
+        background: 'white',
+        border: `2px solid ${recommended ? palette.amber : palette.hairline}`,
+        borderRadius: '12px',
+        cursor: 'pointer',
+        transition: 'all 0.15s',
+        fontFamily: 'inherit',
+        position: 'relative',
+      }}
+      onMouseEnter={(e) => (e.currentTarget.style.borderColor = palette.amber)}
+      onMouseLeave={(e) => (e.currentTarget.style.borderColor = recommended ? palette.amber : palette.hairline)}>
+      {recommended && (
+        <div style={{ position: 'absolute', top: '-10px', right: '20px', background: palette.amber, color: palette.espresso, fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', padding: '4px 10px', borderRadius: '4px' }}>
+          Recommended
+        </div>
+      )}
+      <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginBottom: '6px' }}>
+        <span style={{ fontSize: '24px', fontWeight: 700, color: palette.espresso }}>{title}</span>
+        <span style={{ fontSize: '15px', fontWeight: 600, color: palette.textSecondary }}>{subtitle}</span>
+      </div>
+      <div style={{ fontSize: '14px', color: palette.textSecondary, lineHeight: 1.5 }}>{description}</div>
+    </button>
+  )
+}
+
+function Submitted({ firstName, email, tier }: { firstName: string; email: string; tier: TimeTier | null }) {
   return (
     <div style={containerStyle}>
       <div style={innerStyle}>
@@ -700,21 +754,23 @@ function Submitted({ form }: { form: FormData }) {
           Submission received
         </div>
         <h1 style={{ fontSize: '36px', fontWeight: 700, lineHeight: 1.2, marginBottom: '20px' }}>
-          Thanks, {form.full_name.split(' ')[0]}.
+          Thanks, {firstName}.
         </h1>
         <p style={{ fontSize: '17px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '24px' }}>
-          We'll get back to you within 2 business days at <strong>{form.email}</strong> with your free preliminary RECON report.
+          We'll get back to you within 2 business days at <strong>{email}</strong> with your free preliminary RECON report.
         </p>
         <p style={{ fontSize: '15px', color: palette.textSecondary, lineHeight: 1.6, marginBottom: '40px' }}>
-          If we have any clarifying questions, we'll email first. No surprise calls.
+          {tier === 'quick' && 'For a richer analysis, you can always come back and complete the longer version.'}
+          {tier === 'standard' && 'If we have any clarifying questions, we\'ll email first. No surprise calls.'}
+          {tier === 'deep' && 'Thanks for the depth - it lets us produce a much sharper recon.'}
         </p>
         <div style={{ background: 'white', border: `1px solid ${palette.hairline}`, borderRadius: '8px', padding: '24px' }}>
           <div style={{ fontSize: '13px', fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase', color: palette.textTertiary, marginBottom: '12px' }}>What happens next</div>
           <ol style={{ fontSize: '15px', color: palette.espresso, lineHeight: 1.7, paddingLeft: '20px', margin: 0 }}>
             <li style={{ marginBottom: '8px' }}>We synthesize your inputs with public data (SAM, USASpending, web).</li>
             <li style={{ marginBottom: '8px' }}>We send you a draft Preliminary Profile to review and edit.</li>
-            <li style={{ marginBottom: '8px' }}>Once you confirm it's accurate, we schedule a 30-min Zoom intake.</li>
-            <li>After the Zoom, your free RECON report is built and delivered.</li>
+            <li style={{ marginBottom: '8px' }}>If it makes sense, we schedule a 30-min Zoom intake.</li>
+            <li>Your free RECON report is built and delivered.</li>
           </ol>
         </div>
       </div>
@@ -726,36 +782,6 @@ function ProgressBar({ progress }: { progress: number }) {
   return (
     <div style={{ position: 'sticky', top: 0, height: '4px', background: palette.hairline, width: '100%', zIndex: 10 }}>
       <div style={{ height: '100%', background: palette.amber, width: `${progress}%`, transition: 'width 0.3s' }} />
-    </div>
-  )
-}
-
-function SectionLabel({ section }: { section: Section }) {
-  const labels: Record<Section, string> = {
-    welcome: '',
-    contact: 'Contact',
-    section0: 'About you',
-    section1: 'Commercial',
-    section2: 'Federal',
-    submitting: '',
-    submitted: '',
-    error: '',
-  }
-  const label = labels[section]
-  if (!label) return null
-  return (
-    <div style={{ width: '100%', maxWidth: '720px', margin: '24px auto 0', padding: '0 24px' }}>
-      <div style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.18em', textTransform: 'uppercase', color: palette.textTertiary }}>
-        {label}
-      </div>
-    </div>
-  )
-}
-
-function QuestionIndicator({ current, total }: { current: number; total: number }) {
-  return (
-    <div style={{ fontSize: '13px', color: palette.textTertiary, marginBottom: '24px', width: '100%' }}>
-      Question {current} of {total}
     </div>
   )
 }
@@ -794,18 +820,7 @@ function QuestionInput({
     )
   }
 
-  if (question.type === 'select') {
-    return (
-      <div style={{ width: '100%' }}>
-        {(question.options || []).map(opt => (
-          <button key={opt.value} onClick={() => { onChange(opt.value); setTimeout(onSubmit, 200) }}
-            style={optionButtonStyle(value === opt.value)}>{opt.label}</button>
-        ))}
-      </div>
-    )
-  }
-
-  if (question.type === 'radio') {
+  if (question.type === 'select' || question.type === 'radio') {
     return (
       <div style={{ width: '100%' }}>
         {(question.options || []).map(opt => (
