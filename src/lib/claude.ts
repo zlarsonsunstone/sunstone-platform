@@ -139,16 +139,21 @@ export function extractJsonBlock(text: string): any | null {
  * to extract all text. Bypasses Netlify function timeout limits.
  */
 export async function extractPdfTextBrowser(
-  fileOrBlob: File | Blob,
+  fileOrBlob: File | Blob | string,
   options: { maxTokens?: number; signal?: AbortSignal } = {}
 ): Promise<string> {
-  const buffer = await fileOrBlob.arrayBuffer()
-  const bytes = new Uint8Array(buffer)
-  let binary = ''
-  for (let i = 0; i < bytes.length; i++) {
-    binary += String.fromCharCode(bytes[i])
+let base64: string
+  if (typeof fileOrBlob === 'string') {
+    base64 = fileOrBlob
+  } else {
+    const buffer = await fileOrBlob.arrayBuffer()
+    const bytes = new Uint8Array(buffer)
+    let binary = ''
+    for (let i = 0; i < bytes.length; i++) {
+      binary += String.fromCharCode(bytes[i])
+    }
+    base64 = btoa(binary)
   }
-  const base64 = btoa(binary)
 
   const userBlocks = [
     {
