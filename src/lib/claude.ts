@@ -1,105 +1,115 @@
 /**
  * Browser-side Claude client.
  *
- * This module talks directly to the Anthropic API from the browser, bypassing
- * the Netlify function layer for any workflow that needs more than 30 seconds
- * of compute or that benefits from streaming UI feedback.
+ * Calls Anthropic's API directly from the browser (bypassing Netlify functions)
+ * so we aren't constrained by Netlify's 10-second sync function timeout.
  *
- * Two key exports:
- *   - callClaudeBrowser: generic chat completion call
- *   - extractPdfTextBrowser: PDF text extraction via Claude's PDF support
+ * Requires: VITE_ANTHROPIC_API_KEY in the environment at build time.
  *
- * Plus helpers for the Stages 0-3 recommendation flow and tokenization.
+ * Security note: the API key IS visible to anyone who inspects the site's JS.
+ * For this admin tool that's acceptable - the app is login-gated and the key
+ * can be rotated if leaked. For a public-facing product we would route through
+ * a proper auth-gated proxy.
  */
 
-const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
+const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined
+const API_URL = 'https://api.anthropic.com/v1/messages'
 
-if (!API_KEY) {
-  console.warn('VITE_ANTHROPIC_API_KEY missing - browser-side Claude calls will fail')
-}
-
-const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
-
-export interface ClaudeBrowserOptions {
+export interface CallClaudeOptions {
   model?: string
   maxTokens?: number
   system?: string
-  temperature?: number
   signal?: AbortSignal
+  /** Enable web_search tool. Claude can choose to search the web before answering. */
+  enableWebSearch?: boolean
+  /** Max web searches per call (server-side limit). Default 5. */
+  maxWebSearches?: number
 }
 
-export interface ClaudeBrowserResponse {
+export interface CallClaudeResult {
   text: string
-  raw: any
+  usage?: { input_tokens: number; output_tokens: number }
+  /** Number of web searches actually performed during the call. */
+  webSearchesUsed?: number
 }
 
-const DEFAULT_MODEL = 'claude-sonnet-4-5'
+// Alias for backward compatibility with newer code
+export type ClaudeBrowserResponse = CallClaudeResult
+export type ClaudeBrowserOptions = CallClaudeOptions
 
-/**
- * Call Claude directly from the browser. Bypasses Netlify function timeouts.
- *
- * Browser-side direct API call requires the 'anthropic-dangerous-direct-browser-access'
- * header. This is fine in our trust model: API key is in env, scoped to this app,
- * and we're not embedding it in user-shared content.
- */
 export async function callClaudeBrowser(
-  userMessage: string | Array<any>,
-  options: ClaudeBrowserOptions = {}
-): Promise<ClaudeBrowserResponse> {
+  prompt: string | Array<any>,
+  options: CallClaudeOptions = {}
+): Promise<CallClaudeResult> {
   if (!API_KEY) {
     throw new Error(
-      'Anthropic API key not configured. Set VITE_ANTHROPIC_API_KEY in your environment.'
+      'VITE_ANTHROPIC_API_KEY not configured. Add it to Netlify env vars and redeploy.'
     )
   }
 
-  const messages = typeof userMessage === 'string'
-    ? [{ role: 'user', content: userMessage }]
-    : [{ role: 'user', content: userMessage }]
+  const messages = typeof prompt === 'string'
+    ? [{ role: 'user', content: prompt }]
+    : [{ role: 'user', content: prompt }]
 
   const body: any = {
-    model: options.model || DEFAULT_MODEL,
-    max_tokens: options.maxTokens ?? 4096,
+    model: options.model || 'claude-sonnet-4-5',
+    max_tokens: options.maxTokens || 4096,
     messages,
   }
   if (options.system) body.system = options.system
-  if (typeof options.temperature === 'number') body.temperature = options.temperature
 
-  const response = await fetch(ANTHROPIC_API_URL, {
+  // Server-side web search tool. Only attached when explicitly requested so
+  // deterministic calls (keyword extraction, etc.) aren't accidentally paying
+  // for search turns.
+  if (options.enableWebSearch) {
+    body.tools = [
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: options.maxWebSearches || 5,
+      },
+    ]
+  }
+
+  const resp = await fetch(API_URL, {
     method: 'POST',
     headers: {
-      'content-type': 'application/json',
+      'Content-Type': 'application/json',
       'x-api-key': API_KEY,
       'anthropic-version': '2023-06-01',
+      // Required to allow browser-direct calls
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify(body),
     signal: options.signal,
   })
 
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '')
-    throw new Error(`Claude API error ${response.status}: ${errBody.slice(0, 500)}`)
+  if (!resp.ok) {
+    let errBody = ''
+    try {
+      errBody = await resp.text()
+    } catch {}
+    throw new Error(`Anthropic API ${resp.status}: ${errBody.slice(0, 500) || 'no body'}`)
   }
 
-  const data = await response.json()
-  const text = (data?.content || [])
+  const data = await resp.json()
+  const text = (data.content || [])
     .filter((b: any) => b.type === 'text')
     .map((b: any) => b.text)
     .join('\n')
-    .trim()
 
-  return { text, raw: data }
+  // Count web_search_tool_result blocks to track actual usage
+  const webSearchesUsed = (data.content || []).filter(
+    (b: any) => b.type === 'web_search_tool_result'
+  ).length
+
+  return { text, usage: data.usage, webSearchesUsed: webSearchesUsed || undefined }
 }
 
-/**
- * Extract a JSON block from Claude output. Returns null if no parseable JSON found.
- *
- * Looks for ```json ... ``` first, then bare JSON, then any { ... } block.
- */
 export function extractJsonBlock(text: string): any | null {
   if (!text) return null
 
-  // Try fenced json block
+  // Try fenced json block first
   const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
   if (fencedMatch && fencedMatch[1]) {
     try {
@@ -109,7 +119,7 @@ export function extractJsonBlock(text: string): any | null {
     }
   }
 
-  // Try first {...} block
+  // Fallback: try first {...} block
   const braceMatch = text.match(/\{[\s\S]*\}/)
   if (braceMatch) {
     try {
@@ -126,11 +136,7 @@ export function extractJsonBlock(text: string): any | null {
  * Browser-side PDF text extraction via Claude.
  *
  * Reads the PDF as base64, sends it as a document content block, asks Claude
- * to extract all text. Bypasses Netlify function timeout limits because some
- * PDFs (especially large or poorly-OCR'd ones) take longer than 30 seconds.
- *
- * Returns the extracted text as a single string. Returns empty string on
- * failure (caller decides how to handle).
+ * to extract all text. Bypasses Netlify function timeout limits.
  */
 export async function extractPdfTextBrowser(
   fileOrBlob: File | Blob,
@@ -175,18 +181,10 @@ If the PDF has multiple sections, separate them with double newlines. Preserve t
 // =============================================================================
 // STAGE-AWARE RECOMMENDATION HELPERS
 // =============================================================================
-//
-// These helpers feed the consultant-recommends-client-confirms flow. Each one
-// reads structured profile state and returns a recommendation with reasoning.
-// The consultant reviews/edits, then sends to client for confirmation.
-//
-// All return shapes are JSON-typed so the UI can render the recommendation
-// + reasoning + editable fields without re-parsing.
-// =============================================================================
 
 interface ProfileSnapshot {
   profile_name?: string
-  reconciled_summary?: string  // pulled from commercial + federal + understanding
+  reconciled_summary?: string
   claims?: Array<{ claim_text: string; status?: string; tier?: number }>
   evidence?: Array<{ evidence_text: string; tier?: number }>
   market_understanding?: any
