@@ -562,11 +562,10 @@ export function PublicIntakeForm() {
         user_agent: navigator.userAgent,
       }
 
-      const { data, error: insertError } = await supabase
+      const { error: insertError } = await supabase
+        .schema('v2')
         .from('public_intake_submission')
         .insert(submission)
-        .select()
-        .single()
 
       if (insertError) throw new Error(insertError.message)
 
@@ -576,7 +575,7 @@ export function PublicIntakeForm() {
         await fetch('/.netlify/functions/notify-public-intake', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ submission_id: data?.id }),
+          body: JSON.stringify({ email: submission.email }),
         })
       } catch {
         // notification failure non-fatal
