@@ -13,7 +13,7 @@
  *
  * Saves progress to localStorage on every step. Refresh recovers.
  */
-import { useState, useEffect, CSSProperties, ReactNode } from 'react'
+import { useState, useEffect, CSSProperties } from 'react'
 import { createClient } from '@supabase/supabase-js'
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string
@@ -414,7 +414,6 @@ export function PublicIntakeForm() {
   const [questionIndex, setQuestionIndex] = useState(0)
   const [form, setForm] = useState<FormData>(INITIAL_FORM)
   const [error, setError] = useState<string | null>(null)
-  const [submissionId, setSubmissionId] = useState<string | null>(null)
 
   // Restore from localStorage on mount
   useEffect(() => {
@@ -554,7 +553,6 @@ export function PublicIntakeForm() {
 
       if (insertError) throw new Error(insertError.message)
 
-      setSubmissionId(data?.id || null)
       localStorage.removeItem(LOCAL_STORAGE_KEY)
 
       // Fire notification email (best-effort)
