@@ -374,13 +374,15 @@ export function PrelimReview({ submissionId: propSubmissionId, onApproved }: Pre
         const { data: { user } } = await supabase.auth.getUser()
 
         // Public intake submissions don't carry a tenant_id, so we route them
-        // into a default 'sunstone' tenant per the project decision. Adjust
-        // here later if multi-tenant prospect routing is added.
+        // into the dedicated 'prospects' tenant. Each submission becomes a
+        // strategic_profile inside that tenant with client_status='prospect'.
+        // When a prospect converts to a real client, their strategic_profile
+        // gets migrated to a dedicated tenant at that point.
         const { data: rpcResult, error: rpcErr } = await supabase
           .schema('v2')
           .rpc('convert_intake_to_profile', {
             p_submission_id: id,
-            p_tenant_id: 'sunstone',
+            p_tenant_id: 'prospects',
             p_reviewer_id: user?.id || null,
           })
 
