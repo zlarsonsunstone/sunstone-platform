@@ -1,12 +1,115 @@
+/**
+ * Browser-side Claude client.
+ *
+ * Calls Anthropic's API directly from the browser (bypassing Netlify functions)
+ * so we aren't constrained by Netlify's 10-second sync function timeout.
+ *
+ * Requires: VITE_ANTHROPIC_API_KEY in the environment at build time.
+ *
+ * Security note: the API key IS visible to anyone who inspects the site's JS.
+ * For this admin tool that's acceptable - the app is login-gated and the key
+ * can be rotated if leaked. For a public-facing product we would route through
+ * a proper auth-gated proxy.
+ */
+
+const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined
+const API_URL = 'https://api.anthropic.com/v1/messages'
+
+export interface CallClaudeOptions {
+  model?: string
+  maxTokens?: number
+  system?: string
+  signal?: AbortSignal
+  /** Enable web_search tool. Claude can choose to search the web before answering. */
+  enableWebSearch?: boolean
+  /** Max web searches per call (server-side limit). Default 5. */
+  maxWebSearches?: number
+}
+
+export interface CallClaudeResult {
+  text: string
+  usage?: { input_tokens: number; output_tokens: number }
+  /** Number of web searches actually performed during the call. */
+  webSearchesUsed?: number
+}
+
+export async function callClaudeBrowser(
+  prompt: string,
+  options: CallClaudeOptions = {}
+): Promise<CallClaudeResult> {
+  if (!API_KEY) {
+    throw new Error(
+      'VITE_ANTHROPIC_API_KEY not configured. Add it to Netlify env vars and redeploy.'
+    )
+  }
+
+  const body: any = {
+    model: options.model || 'claude-sonnet-4-5',
+    max_tokens: options.maxTokens || 4096,
+    messages: [{ role: 'user', content: prompt }],
+  }
+  if (options.system) body.system = options.system
+
+  // Server-side web search tool. Only attached when explicitly requested so
+  // deterministic calls (keyword extraction, etc.) aren't accidentally paying
+  // for search turns.
+  if (options.enableWebSearch) {
+    body.tools = [
+      {
+        type: 'web_search_20250305',
+        name: 'web_search',
+        max_uses: options.maxWebSearches || 5,
+      },
+    ]
+  }
+
+  const resp = await fetch(API_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': API_KEY,
+      'anthropic-version': '2023-06-01',
+      // Required to allow browser-direct calls
+      'anthropic-dangerous-direct-browser-access': 'true',
+    },
+    body: JSON.stringify(body),
+    signal: options.signal,
+  })
+
+  if (!resp.ok) {
+    let errBody = ''
+    try {
+      errBody = await resp.text()
+    } catch {}
+    throw new Error(`Anthropic API ${resp.status}: ${errBody.slice(0, 500) || 'no body'}`)
+  }
+
+  const data = await resp.json()
+  const text = (data.content || [])
+    .filter((b: any) => b.type === 'text')
+    .map((b: any) => b.text)
+    .join('\n')
+
+  // Count web_search_tool_result blocks to track actual usage
+  const webSearchesUsed = (data.content || []).filter(
+    (b: any) => b.type === 'web_search_tool_result'
+  ).length
+
+  return { text, usage: data.usage, webSearchesUsed: webSearchesUsed || undefined }
+}
+
+export function extractJsonBlock(text: string): any | null {
+  const match = text.match(/```json\s*([\s\S]*?)```/i)
+  if (!match) return null
+  try {
+    return JSON.parse(match[1].trim())
+  } catch {
+    return null
+  }
+}
+
 // =============================================================================
 // INTAKE PERSONALIZATION HELPERS
-// =============================================================================
-//
-// These helpers take a public_intake_submission row + prelim_profile row
-// and generate a ScriptPersonalization payload for the IntakeRunner UI.
-//
-// To be added to /src/lib/claude.ts (do NOT replace the file - APPEND these
-// functions and types at the end).
 // =============================================================================
 
 export interface IntakeFormSnapshot {
@@ -85,10 +188,8 @@ export interface ScriptPersonalization {
 
 /**
  * Generate the script personalization payload for an intake session.
- *
  * Reads the public intake submission + cleaned prelim profile, asks Claude to
- * recommend branch modules and personalize foundation + branch questions
- * based on what the prospect has already told us.
+ * recommend branch modules and personalize foundation + branch questions.
  */
 export async function recommendIntakeBranches(
   submission: IntakeFormSnapshot,
@@ -123,60 +224,21 @@ Based on the form data, recommend 1-2 branch modules with reasoning. Use these d
 PART 2 - PERSONALIZE FOUNDATION QUESTIONS
 For each foundation question (F1, F2, F3, F4), produce a personalized version that references what the prospect already told us in the form. If the form didn't supply useful context for a question, set personalized_text to null and recommend 'use_original'.
 
-F1 (Catalyst): If form catalyst is non-empty, personalize to reference it. "You wrote: '[catalyst]'. Walk me through what's happened since you wrote that..."
+F1 (Catalyst): If form catalyst is non-empty, personalize to reference it.
 F2 (Mirror): If customers field has named companies (not generic types), personalize to reference them.
-F3 (Money Reality): If form has budget signals (Q2.A3 or revenue range), personalize to reference them.
+F3 (Money Reality): If form has budget signals, personalize to reference them.
 F4 (Decision): Always use_original. Decision authority is an in-call signal.
 
 PART 3 - CONVERSATIONAL INTEL
-Provide a brief synthesis of what the consultant should know going in:
-- catalyst_summary: 1-sentence summary of what's prompting this
-- pre_known_pain_points: array of things they've already named as struggles
-- pre_known_blockers: array of things they've already named as blocking them
-- revenue_band, budget_band, federal_posture: what we already know
-- persona_hypothesis: pre-call guess at which Sunstone persona fits (Subcontractor Stuck in the Middle, Successful and Skeptical, Brand New, Compliance-maintaining non-participant, Recently Re-Energized, Sub-Prime Plateau, Disruptive Entrant, Mature Player Pivoting, Adjacent Market Crossover)
+Provide a brief synthesis of what the consultant should know going in.
 
-Return ONLY valid JSON in a json fenced block. Example structure:
-
-\`\`\`json
+Return ONLY valid JSON in a json fenced block with structure:
 {
-  "recommended_branches": [
-    {"branch": "branch_naive_capitalized", "confidence": "high", "reasoning": "..."}
-  ],
-  "foundation_personalizations": {
-    "F1": {
-      "question_id": "F1",
-      "original_text": "Walk me through how we ended up on this call today...",
-      "personalized_text": "You wrote: '...'. Walk me through what's happened since...",
-      "form_context": [{"field": "catalyst", "value": "..."}],
-      "recommendation": "use_personalized"
-    },
-    "F2": {...},
-    "F3": {...},
-    "F4": {...}
-  },
-  "branch_personalizations": {
-    "branch_naive_capitalized": [
-      {
-        "question_id": "A1",
-        "original_text": "Two years from now, you've won your first federal contract...",
-        "personalized_text": null,
-        "form_context": [],
-        "recommendation": "use_original"
-      }
-    ]
-  },
-  "conversational_intel": {
-    "catalyst_summary": "...",
-    "pre_known_pain_points": ["..."],
-    "pre_known_blockers": ["..."],
-    "revenue_band": "...",
-    "budget_band": "...",
-    "federal_posture": "...",
-    "persona_hypothesis": "..."
-  }
-}
-\`\`\``
+  "recommended_branches": [{"branch": "...", "confidence": "high|medium|low", "reasoning": "..."}],
+  "foundation_personalizations": {"F1": {...}, "F2": {...}, "F3": {...}, "F4": {...}},
+  "branch_personalizations": {"branch_X": [{...}]},
+  "conversational_intel": {...}
+}`
 
   const userMessage = `PUBLIC INTAKE FORM SUBMISSION:
 
@@ -212,7 +274,7 @@ Path: ${submission.federal_path || 'unknown'}
 Federal answers:
 ${JSON.stringify(submission.federal_answers || {}, null, 2)}
 
-${prelim ? `\nCLEANED PRELIM PROFILE (from consultant):\n${JSON.stringify(prelim, null, 2)}` : '\n(No prelim profile yet - just form data)'}
+${prelim ? `\nCLEANED PRELIM PROFILE:\n${JSON.stringify(prelim, null, 2)}` : '\n(No prelim profile yet - just form data)'}
 
 Generate the personalization payload.`
 
@@ -232,10 +294,6 @@ Generate the personalization payload.`
 /**
  * Cross-reference engine - INTERNAL ONLY.
  * Compares prelim profile + intake transcript + signal scores.
- * Returns structured findings (contradictions, confirmations, extensions, new_insights).
- *
- * Output rows go into v2.intake_cross_reference with internal_only=true.
- * Prospects NEVER see these.
  */
 export interface CrossReferenceFindings {
   findings: Array<{
@@ -253,37 +311,33 @@ export async function generateCrossReferenceFindings(
 ): Promise<CrossReferenceFindings> {
   const system = `You are a federal market analyst for Sunstone Advisory Group.
 
-Your job: cross-reference what a prospect TOLD us in their prelim profile against what they SAID in the 30-min Zoom intake, plus the consultant's signal scoring rubric.
+Cross-reference what a prospect TOLD us in their prelim profile against what they SAID in the 30-min Zoom intake.
 
 Look for these four types of findings:
-
-1. CONTRADICTION - prelim claims X, intake reveals not-X (or different X)
+1. CONTRADICTION - prelim claims X, intake reveals not-X
 2. CONFIRMATION - prelim claims X, intake provides specific evidence for X
 3. EXTENSION - prelim is silent on something, intake adds new dimension
-4. NEW_INSIGHT - intake reveals something not in prelim that materially changes our framing
+4. NEW_INSIGHT - intake reveals something materially changing our framing
 
-CRITICAL: This is INTERNAL framing only. Prospects MAY NOT see these findings. Be candid. Note delusion, defensiveness, evasion, or contradictions you'd never say to the prospect's face. The cross-reference is the consultant's private analytical tool.
+CRITICAL: This is INTERNAL framing only. Prospects MAY NOT see these findings.
 
-Return ONLY valid JSON:
-
-\`\`\`json
+Return ONLY valid JSON in a json fenced block:
 {
   "findings": [
     {
       "finding_type": "contradiction|confirmation|extension|new_insight",
-      "prelim_claim": "what the prelim said",
-      "intake_statement": "what they said in the call",
-      "consultant_interpretation": "what this means for our framing"
+      "prelim_claim": "...",
+      "intake_statement": "...",
+      "consultant_interpretation": "..."
     }
   ]
-}
-\`\`\``
+}`
 
-  const userMessage = `PRELIM PROFILE (cleaned by consultant):
+  const userMessage = `PRELIM PROFILE:
 ${JSON.stringify(prelim, null, 2)}
 
 INTAKE TRANSCRIPT:
-${transcriptText.slice(0, 30000)}${transcriptText.length > 30000 ? '\n[transcript truncated]' : ''}
+${transcriptText.slice(0, 30000)}${transcriptText.length > 30000 ? '\n[truncated]' : ''}
 
 CONSULTANT'S SIGNAL SCORING:
 ${JSON.stringify(signalScores, null, 2)}
