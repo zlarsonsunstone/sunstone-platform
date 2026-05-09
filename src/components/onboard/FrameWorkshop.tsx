@@ -2,18 +2,9 @@
  * FrameWorkshop - Stage 2 of the recon journey
  *
  * Consultant reviews system recommendations for:
- *   1. Analytical frame (doppelganger vs lambs)
+ *   1. Analytical frame (lions vs lambs)
  *   2. Persona
  *   3. Purpose
- *
- * Each recommendation can be edited before sending to client. Once consultant
- * commits "Send to client for confirmation", a tokenized link is generated
- * and the strategic_profile.engagement_stage advances to
- * 'stage_3_frame_confirmation'.
- *
- * Auto-saves drafts as the consultant edits. The send-to-client action
- * locks the recommendation snapshot into client_confirmations rows
- * (sequence_position 1, 2, 3 - frame, persona, purpose).
  */
 import { useState, useEffect, CSSProperties } from 'react'
 import { supabase } from '@/lib/supabase'
@@ -62,13 +53,11 @@ export function FrameWorkshop({
   const [error, setError] = useState<string | null>(null)
   const [statusMessage, setStatusMessage] = useState<string>('')
 
-  // Recommendations + edits
   const [frameRec, setFrameRec] = useState<FrameRecommendation | null>(null)
   const [personaRec, setPersonaRec] = useState<PersonaRecommendation | null>(null)
   const [purposeRec, setPurposeRec] = useState<PurposeRecommendation | null>(null)
 
-  // Editable overrides
-  const [framePick, setFramePick] = useState<'doppelganger' | 'lambs'>('doppelganger')
+  const [framePick, setFramePick] = useState<'lions' | 'lambs'>('lions')
   const [frameReasoning, setFrameReasoning] = useState('')
   const [frameClientText, setFrameClientText] = useState('')
 
@@ -80,7 +69,6 @@ export function FrameWorkshop({
   const [purposeReasoning, setPurposeReasoning] = useState('')
   const [purposeClientText, setPurposeClientText] = useState('')
 
-  // Existing confirmations (if re-opening this stage)
   const [existingTokenUrl, setExistingTokenUrl] = useState<string | null>(null)
 
   useEffect(() => {
@@ -89,7 +77,6 @@ export function FrameWorkshop({
   }, [strategicProfileId])
 
   async function initialize() {
-    // Check if confirmations already exist for this profile
     const { data: existing } = await supabase
       .from('client_confirmations')
       .select('*')
@@ -98,7 +85,6 @@ export function FrameWorkshop({
       .order('sequence_position', { ascending: true })
 
     if (existing && existing.length === 3) {
-      // Already sent to client. Just show the existing recommendations + token URL.
       const frameC = existing.find(c => c.confirmation_type === 'analytical_frame')
       const personaC = existing.find(c => c.confirmation_type === 'persona')
       const purposeC = existing.find(c => c.confirmation_type === 'purpose')
@@ -125,7 +111,6 @@ export function FrameWorkshop({
         setPurposeClientText(r.what_we_would_show_client)
       }
 
-      // Find the token
       const { data: tokens } = await supabase
         .from('prospect_view_tokens')
         .select('*')
@@ -142,10 +127,8 @@ export function FrameWorkshop({
       return
     }
 
-    // Generate fresh recommendations
     setStage('loading_recs')
     try {
-      // Build profile snapshot
       setStatusMessage('Reading reconciled profile...')
       const snapshot = await loadProfileSnapshot(strategicProfileId)
 
@@ -188,7 +171,6 @@ export function FrameWorkshop({
     setStage('sending')
 
     try {
-      // 1. Insert client_confirmations (3 rows, sequential)
       const baseRow = {
         tenant_id: tenantId,
         strategic_profile_id: strategicProfileId,
@@ -239,7 +221,6 @@ export function FrameWorkshop({
         .select()
       if (insertErr) throw insertErr
 
-      // 2. Generate token
       const token = generateProspectViewToken()
       const expiresAt = new Date()
       expiresAt.setDate(expiresAt.getDate() + 90)
@@ -252,7 +233,6 @@ export function FrameWorkshop({
         expires_at: expiresAt.toISOString(),
       })
 
-      // 3. Log the send event
       await supabase.from('confirmation_change_log').insert({
         tenant_id: tenantId,
         strategic_profile_id: strategicProfileId,
@@ -264,7 +244,6 @@ export function FrameWorkshop({
         },
       })
 
-      // 4. Advance engagement stage
       await supabase
         .from('strategic_profiles')
         .update({ engagement_stage: 'stage_3_frame_confirmation' })
@@ -273,8 +252,6 @@ export function FrameWorkshop({
       const url = buildTokenUrl(token)
       setExistingTokenUrl(url)
       setStage('sent')
-
-      // Bubble the URL up to the parent so it can offer copy / paste / email helpers
       onCompleted(url)
     } catch (e: any) {
       setError(`Send failed: ${e.message || 'unknown error'}`)
@@ -285,10 +262,6 @@ export function FrameWorkshop({
   function buildTokenUrl(token: string): string {
     return `${window.location.origin}/prospect/${token}`
   }
-
-  // -------------------------------------------------------------------------
-  // Loading states
-  // -------------------------------------------------------------------------
 
   if (stage === 'loading_recs') {
     return (
@@ -304,10 +277,6 @@ export function FrameWorkshop({
       </Modal>
     )
   }
-
-  // -------------------------------------------------------------------------
-  // Sent state
-  // -------------------------------------------------------------------------
 
   if (stage === 'sent' && existingTokenUrl) {
     return (
@@ -340,7 +309,7 @@ export function FrameWorkshop({
           </div>
 
           <div style={summaryBoxStyle}>
-            <SummaryRow label="Frame" value={framePick === 'doppelganger' ? 'Doppelganger (competing)' : 'Lambs (disrupting)'} />
+            <SummaryRow label="Frame" value={framePick === 'lions' ? 'Lions (competing for territory)' : 'Lambs (disrupting)'} />
             <SummaryRow label="Persona" value={personaPick} />
             <SummaryRow label="Purpose" value={purposePick.replace(/_/g, ' ')} />
           </div>
@@ -353,10 +322,6 @@ export function FrameWorkshop({
     )
   }
 
-  // -------------------------------------------------------------------------
-  // Editing state
-  // -------------------------------------------------------------------------
-
   return (
     <Modal open={true} onClose={onClose} title={`Frame Workshop - ${profileName}`} size="full">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
@@ -368,26 +333,25 @@ export function FrameWorkshop({
 
         {error && <div style={errorStyle}>{error}</div>}
 
-        {/* FRAME CARD */}
         <RecommendationCard
           number="01"
           title="Analytical Frame"
           systemRecommendation={frameRec}
           editor={
             <>
-              <Label>Frame Selection</Label>
+              <Label>Frame Selection - Lions or Lambs?</Label>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
                 <FrameButton
-                  active={framePick === 'doppelganger'}
-                  onClick={() => setFramePick('doppelganger')}
-                  title="Doppelganger"
-                  subtitle="Competing - find peers who won, become them"
+                  active={framePick === 'lions'}
+                  onClick={() => setFramePick('lions')}
+                  title="Lions"
+                  subtitle="Competing for territory - Serengeti pride taking turf from other prides"
                 />
                 <FrameButton
                   active={framePick === 'lambs'}
                   onClick={() => setFramePick('lambs')}
                   title="Lambs"
-                  subtitle="Disrupting - identify obsolete incumbents to displace"
+                  subtitle="Disrupting - obsolete incumbents about to be slaughtered"
                 />
               </div>
               <Label>Reasoning</Label>
@@ -408,13 +372,13 @@ export function FrameWorkshop({
                 <details style={{ marginTop: '8px', fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
                   <summary style={{ cursor: 'pointer' }}>System signals (read-only)</summary>
                   <div style={{ marginTop: '8px' }}>
-                    <strong>Doppelganger signals:</strong>
+                    <strong>Lions signals:</strong>
                     <ul style={{ margin: '4px 0', paddingLeft: '18px' }}>
-                      {(frameRec.signals_for_doppelganger || []).map((s, i) => <li key={i}>{s}</li>)}
+                      {(frameRec.signals_for_lions || []).map((s: string, i: number) => <li key={i}>{s}</li>)}
                     </ul>
                     <strong>Lambs signals:</strong>
                     <ul style={{ margin: '4px 0', paddingLeft: '18px' }}>
-                      {(frameRec.signals_for_lambs || []).map((s, i) => <li key={i}>{s}</li>)}
+                      {(frameRec.signals_for_lambs || []).map((s: string, i: number) => <li key={i}>{s}</li>)}
                     </ul>
                     <div>System confidence: <strong>{frameRec.confidence}</strong></div>
                   </div>
@@ -423,8 +387,6 @@ export function FrameWorkshop({
             </>
           }
         />
-
-        {/* PERSONA CARD */}
         <RecommendationCard
           number="02"
           title="Persona"
@@ -467,7 +429,6 @@ export function FrameWorkshop({
           }
         />
 
-        {/* PURPOSE CARD */}
         <RecommendationCard
           number="03"
           title="Brief Purpose"
@@ -503,7 +464,6 @@ export function FrameWorkshop({
           }
         />
 
-        {/* Footer */}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', paddingTop: '8px' }}>
           <button onClick={onClose} style={{ padding: "8px 16px", background: "transparent", border: "1px solid var(--color-hairline)", borderRadius: "var(--radius-input)", color: "var(--color-text-secondary)", cursor: "pointer", fontFamily: "inherit", fontSize: "13px" }}>Cancel</button>
           <Button onClick={sendToClient} disabled={stage === 'sending'}>
@@ -515,15 +475,7 @@ export function FrameWorkshop({
   )
 }
 
-// -----------------------------------------------------------------------------
-// Helpers and subcomponents
-// -----------------------------------------------------------------------------
-
 async function loadProfileSnapshot(profileId: string) {
-  // Defensive: each query wrapped in try/catch so a single missing table or
-  // column doesn't break the whole snapshot. The recommendation engine can
-  // work with partial data.
-
   let profile: { data: any } = { data: null }
   try {
     profile = await supabase.from('strategic_profiles').select('*').eq('id', profileId).single()
@@ -537,7 +489,6 @@ async function loadProfileSnapshot(profileId: string) {
     if (result.data) claims = result.data
   } catch {
     try {
-      // Fallback: if status column doesn't exist, try without it
       const result = await supabase.from('profile_claims').select('claim_text, source_tier').eq('strategic_profile_id', profileId)
       if (result.data) claims = result.data
     } catch {
@@ -560,8 +511,6 @@ async function loadProfileSnapshot(profileId: string) {
     // Skip if not available
   }
 
-  // Build a reconciled summary string from federal_profile + commercial_profile
-  // (best-effort - just stitch what we have)
   const tenantId = profile.data?.tenant_id
   let reconciledSummary = ''
   if (tenantId) {
