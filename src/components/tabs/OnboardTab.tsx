@@ -1,7 +1,7 @@
 import { useEffect, useState, CSSProperties } from 'react'
 import { useStore } from '@/store/useStore'
 import { supabase } from '@/lib/supabase'
-import { callClaudeBrowser, extractJsonBlock, extractPdfTextBrowser } from '@/lib/claude'
+import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 import { resetTenantDownstream } from '@/lib/tenantReset'
 import { logMethodology } from '@/lib/methodologyLog'
 import { fetchAllActivePscCodes, fetchAllNaicsCodes } from '@/lib/referenceData'
@@ -23,8 +23,6 @@ import { StrategicProfileEditor } from '@/components/onboard/StrategicProfileEdi
 import { StonesMapEditor } from '@/components/onboard/StonesMapEditor'
 import { FramingTheFrame } from '@/components/onboard/FramingTheFrame'
 import { SurfaceResearch } from '@/components/onboard/SurfaceResearch'
-import { ConversionHypothesis } from '@/components/onboard/ConversionHypothesis'
-import { MarketResearch } from '@/components/onboard/MarketResearch'
 import { loadReadiness, ReadinessState } from '@/lib/recon'
 import { GenerateBriefButton as ReconBriefGenerator } from '@/components/onboard/GenerateBriefButton'
 import { EngagementInit } from '@/components/onboard/EngagementInit'
@@ -50,11 +48,9 @@ export function OnboardTab() {
   >(null)
   const [stonesEditorProfile, setStonesEditorProfile] = useState<StrategicProfile | null>(null)
   const [frameProfile, setFrameProfile] = useState<StrategicProfile | null>(null)
-    const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
-  import { EngagementInit } from '@/components/onboard/EngagementInit'
-import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
-  const [hypothesisProfile, setHypothesisProfile] = useState<StrategicProfile | null>(null)
-  const [marketResearchProfile, setMarketResearchProfile] = useState<StrategicProfile | null>(null)
+  const [researchProfile, setResearchProfile] = useState<StrategicProfile | null>(null)
+  const [engagementInitProfile, setEngagementInitProfile] = useState<StrategicProfile | null>(null)
+  const [frameWorkshopProfile, setFrameWorkshopProfile] = useState<StrategicProfile | null>(null)
   const [readinessMap, setReadinessMap] = useState<Record<string, ReadinessState>>({})
   const [viewingProfile, setViewingProfile] = useState<{
     title: string
@@ -69,9 +65,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
     loadSources()
   }, [activeTenant?.id])
 
-  // Load readiness state for every strategic profile.
-  // Refreshed when profiles change, when CBP completeness changes, and on demand
-  // (e.g., after a Frame is completed or a corpus entry is added).
   useEffect(() => {
     if (!activeTenant || strategicProfiles.length === 0) {
       setReadinessMap({})
@@ -141,54 +134,13 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         .select('prompt_template')
         .eq('id', 'source_digest_v1')
         .single()
-      if (!variant) throw new Error('source_digest_v1 prompt not found — run migration 0004')
+      if (!variant) throw new Error('source_digest_v1 prompt not found - run migration 0004')
 
-      // Fill in the prompt template. PDF sources not yet supported via browser direct
-      // call (would need multimodal content blocks). For now, text digests only.
       const meta = src.metadata as any
-      // If the source still needs extraction (PDF where extract-pdf-text failed
-      // on initial upload), download the file from storage and re-run extraction
-      // before proceeding with digest.
-      if (meta?.needs_extraction && meta?.storage_path && meta?.storage_bucket) {
-        const { data: fileBlob, error: dlErr } = await supabase.storage
-          .from(meta.storage_bucket)
-          .download(meta.storage_path)
-        if (dlErr || !fileBlob) {
-          throw new Error(`Could not download stored file: ${dlErr?.message || 'no blob'}`)
-        }
-        // Read blob as base64
-        const base64 = await new Promise<string>((resolve, reject) => {
-          const reader = new FileReader()
-          reader.onload = () => {
-            const result = reader.result as string
-            const idx = result.indexOf('base64,')
-            if (idx === -1) {
-              reject(new Error('FileReader returned unexpected format'))
-              return
-            }
-            resolve(result.slice(idx + 7))
-          }
-          reader.onerror = () => reject(new Error('Failed to read stored file'))
-          reader.readAsDataURL(fileBlob)
-        })
-       const extractedText = await extractPdfTextBrowser(base64, meta.filename || src.label)
-        const extractData = { text: extractedText }
-        // Persist extracted_text + clear needs_extraction so we don't re-run next time
-        await supabase
-          .from('profile_sources')
-          .update({
-            extracted_text: extractData.text,
-            metadata: {
-              ...meta,
-              needs_extraction: false,
-              extraction_error: null,
-              extraction_length: extractData.text.length,
-              extracted_via_retry_at: new Date().toISOString(),
-            },
-          })
-          .eq('id', sourceId)
-        // Mutate src so the rest of digestOne sees the new text
-        src.extracted_text = extractData.text
+      if (meta?.needs_extraction) {
+        throw new Error(
+          'PDF digesting via browser not yet supported. Paste the PDF text manually for now.'
+        )
       }
 
       const sourceContent = src.extracted_text || src.raw_content || ''
@@ -241,7 +193,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
     if (pending.length === 0) return
     setDigesting(bucket)
     try {
-      // Run sequentially to be kind to the API. Could parallelize with p-limit later.
       for (const src of pending) {
         await digestOne(src.id)
       }
@@ -270,7 +221,7 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         .select('prompt_template')
         .eq('id', variantId)
         .single()
-      if (!variant) throw new Error(`Prompt variant ${variantId} not found — run migration 0002`)
+      if (!variant) throw new Error(`Prompt variant ${variantId} not found - run migration 0002`)
 
       const bucketSources = sources.filter((s) => s.bucket === bucket)
       if (bucketSources.length === 0) throw new Error('Add at least one source first')
@@ -297,9 +248,8 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         }
       }
 
-      setBuildProgress(`Synthesizing profile from ${usableSources.length} sources…`)
+      setBuildProgress(`Synthesizing profile from ${usableSources.length} sources...`)
 
-      // Build the sources blob from digests
       const sourcesBlob = usableSources
         .map((s, i) => {
           const content =
@@ -320,7 +270,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         prompt = prompt.replace(/\{\{tenant_website\}\}/g, web?.url || '(not provided)')
       }
 
-      // Call Claude directly from the browser — no Netlify function proxy, no timeout
       const { text } = await callClaudeBrowser(prompt, {
         model: 'claude-sonnet-4-5',
         maxTokens: 8192,
@@ -364,7 +313,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
 
-      // === METHODOLOGY LOG: profile built ===
       await logMethodology({
         tenantId: activeTenant.id,
         eventType: bucket === 'commercial' ? 'commercial_profile_built' : 'federal_profile_built',
@@ -412,7 +360,7 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
     if (!activeTenant) return
     setBuilding('reconcile')
     setBuildError(null)
-    setBuildProgress('Loading PSC + NAICS reference data…')
+    setBuildProgress('Loading PSC + NAICS reference data...')
     try {
       const isFramework = activeTenant.federal_posture === 'no_federal'
       const variantId = isFramework ? 'federal_entry_framework_v1' : 'reconciliation_v1'
@@ -424,11 +372,9 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         .single()
       if (!variant)
         throw new Error(
-          `Prompt variant ${variantId} not found — run migration ${isFramework ? '0003' : '0002'}`
+          `Prompt variant ${variantId} not found - run migration ${isFramework ? '0003' : '0002'}`
         )
 
-      // === Load PSC + NAICS reference data (authoritative, not hallucinated) ===
-      // Same pattern as generateSearchScopes — ground Claude in real taxonomy.
       let pscReference = ''
       let naicsReference = ''
       let pscCount = 0
@@ -448,7 +394,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         pscCount = pscCodes.length
         naicsCount = naicsCodes.length
 
-        // Build PSC reference organized by Level 1 category
         const pscByL1 = new Map<string, any[]>()
         for (const p of pscCodes) {
           const l1 = p.level_1_name || 'Uncategorized'
@@ -458,12 +403,11 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         pscReference = Array.from(pscByL1.entries())
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([l1, codes]) => {
-            const lines = codes.slice(0, 100).map((c: any) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
+            const lines = codes.slice(0, 100).map((c: any) => `  ${c.code} - ${c.name || c.full_name || '(no name)'}`)
             return `### ${l1}\n${lines.join('\n')}`
           })
           .join('\n\n')
 
-        // NAICS grouped by 2-digit sector
         const naicsBySector = new Map<string, any[]>()
         for (const n of naicsCodes) {
           const sector = n.code.substring(0, 2)
@@ -473,7 +417,7 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         naicsReference = Array.from(naicsBySector.entries())
           .sort(([a], [b]) => a.localeCompare(b))
           .map(([sector, codes]) => {
-            const lines = codes.map((c: any) => `  ${c.code} — ${c.title}`)
+            const lines = codes.map((c: any) => `  ${c.code} - ${c.title}`)
             return `### Sector ${sector}\n${lines.join('\n')}`
           })
           .join('\n\n')
@@ -481,8 +425,8 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
 
       setBuildProgress(
         isFramework
-          ? `Generating Federal Entry Framework grounded in ${pscCount} PSC + ${naicsCount} NAICS codes…`
-          : 'Running reconciliation…'
+          ? `Generating Federal Entry Framework grounded in ${pscCount} PSC + ${naicsCount} NAICS codes...`
+          : 'Running reconciliation...'
       )
 
       const prompt = variant.prompt_template
@@ -500,11 +444,8 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
       const structured = extractJsonBlock(text)
       const cleaned = text.replace(/```json[\s\S]*?```/i, '').trim()
 
-      // Split into alignment / divergence / suggestions sections
       const sections = splitReconciliationSections(cleaned)
 
-      // Load the prompt template version so we can tell if a reconciliation/
-      // framework was generated with an outdated prompt (e.g., pre-PSC-reference).
       const { data: variantMeta } = await supabase
         .from('prompt_variants')
         .select('version')
@@ -530,7 +471,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
 
-      // === METHODOLOGY LOG: reconciliation complete ===
       await logMethodology({
         tenantId: activeTenant.id,
         eventType: 'reconciliation_built',
@@ -595,12 +535,9 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
     }
     setBuilding('reconcile')
     setBuildError(null)
-    setBuildProgress('Loading PSC + NAICS reference data…')
+    setBuildProgress('Loading PSC + NAICS reference data...')
     const startedAt = new Date()
     try {
-      // === STEP 1: Pull canonical PSC + NAICS reference data ===
-      // We pass Claude the REAL active codes as authoritative input rather than
-      // letting it hallucinate stale codes from training data.
       const pscCodes = await fetchAllActivePscCodes()
       const naicsCodes = await fetchAllNaicsCodes()
 
@@ -611,8 +548,6 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
         throw new Error('NAICS reference table is empty. Run migration 0015 + seed SQL in Supabase.')
       }
 
-      // Build compact PSC reference organized by Level 1 category.
-      // For each PSC we show: code | name | parent_name. Level 1 groups organize the list.
       const pscByL1 = new Map<string, any[]>()
       for (const p of pscCodes) {
         const l1 = p.level_1_name || 'Uncategorized'
@@ -623,12 +558,11 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
       const pscReference = Array.from(pscByL1.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([l1, codes]) => {
-          const lines = codes.slice(0, 100).map((c) => `  ${c.code} — ${c.name || c.full_name || '(no name)'}`)
+          const lines = codes.slice(0, 100).map((c) => `  ${c.code} - ${c.name || c.full_name || '(no name)'}`)
           return `### ${l1}\n${lines.join('\n')}`
         })
         .join('\n\n')
 
-      // NAICS is simpler — flat list organized by 2-digit sector
       const naicsBySector = new Map<string, any[]>()
       for (const n of naicsCodes) {
         const sector = n.code.substring(0, 2)
@@ -639,26 +573,26 @@ import { FrameWorkshop } from '@/components/onboard/FrameWorkshop'
       const naicsReference = Array.from(naicsBySector.entries())
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([sector, codes]) => {
-          const lines = codes.map((c) => `  ${c.code} — ${c.title}`)
+          const lines = codes.map((c) => `  ${c.code} - ${c.title}`)
           return `### Sector ${sector}\n${lines.join('\n')}`
         })
         .join('\n\n')
 
-      setBuildProgress(`Generating Round 1 search scopes from ${pscCodes.length} PSC + ${naicsCodes.length} NAICS codes…`)
+      setBuildProgress(`Generating Round 1 search scopes from ${pscCodes.length} PSC + ${naicsCodes.length} NAICS codes...`)
 
       const prompt = `You are generating Round 1 federal search scopes for ${activeTenant.name} based on their commercial company profile.
 
-A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement — the same NAICS code can have very different markets depending on which PSC prefix the work falls under.
+A "search scope" is a NAICS + PSC code combination that represents one shape of federal procurement - the same NAICS code can have very different markets depending on which PSC prefix the work falls under.
 
 COMMERCIAL PROFILE:
 ${commercialProfile.synthesized_text}
 
-## AUTHORITATIVE PSC REFERENCE (April 2025 GSA Manual — currently active codes only)
-You MUST pick PSC codes from this list. Do NOT use codes outside this list. Do NOT use deprecated codes like D3xx, 7030, 7045 — those have been retired and replaced by the DA/DB/DC/DD/DE/DF/DG/DH/DJ service codes and 7A/7B/7C/7D/7E/7F/7G/7H/7J product codes.
+## AUTHORITATIVE PSC REFERENCE (April 2025 GSA Manual - currently active codes only)
+You MUST pick PSC codes from this list. Do NOT use codes outside this list. Do NOT use deprecated codes like D3xx, 7030, 7045 - those have been retired and replaced by the DA/DB/DC/DD/DE/DF/DG/DH/DJ service codes and 7A/7B/7C/7D/7E/7F/7G/7H/7J product codes.
 
 ${pscReference}
 
-## AUTHORITATIVE NAICS REFERENCE (2022 revision — 6-digit codes)
+## AUTHORITATIVE NAICS REFERENCE (2022 revision - 6-digit codes)
 You MUST pick NAICS codes from this list.
 
 ${naicsReference}
@@ -667,13 +601,13 @@ ${naicsReference}
 
 Generate 6-10 search scopes that together cover the company's realistic federal pursuit surface.
 
-RULES — NON-NEGOTIABLE:
+RULES - NON-NEGOTIABLE:
 - Use ONLY PSC codes and NAICS codes from the authoritative reference lists above. Do not invent codes.
-- Each scope MUST combine NAICS + PSC — never NAICS alone, never PSC alone.
+- Each scope MUST combine NAICS + PSC - never NAICS alone, never PSC alone.
 - For PSC prefixes, use either full codes (e.g. "DB01", "7B22") OR 2-character prefixes (e.g. "DA", "7B") when you want to match a whole category. NEVER use retired formats like "D3" or "R-".
 - Prefer BROAD scopes that will actually return hits (hundreds to thousands of opportunities per year in federal contracting) over narrow scopes that perfectly describe the company's tech stack but return zero results.
 - Each scope should have a clear strategic rationale.
-- Include at least one EXPLORATORY scope — adjacent/unexpected where the company's core capability could credibly apply.
+- Include at least one EXPLORATORY scope - adjacent/unexpected where the company's core capability could credibly apply.
 
 FOR EACH SCOPE PROVIDE:
 - name: short memorable label (3-5 words)
@@ -682,13 +616,13 @@ FOR EACH SCOPE PROVIDE:
 - naics_codes: array of 1-4 NAICS codes (6 digits each) FROM THE REFERENCE LIST
 - psc_prefixes: array of 1-4 PSC codes or 2-char prefixes FROM THE REFERENCE LIST
 - rationale: 1-2 sentences on why this scope fits
-- correlation_score: integer 1-10 — how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match.
+- correlation_score: integer 1-10 - how strongly does this scope match the company's ACTUAL capability (not aspiration)? 10 = direct capability match. 5 = partial match or requires meaningful pivot. 1 = very weak match.
 - correlation_rationale: 1 sentence explaining the score
 - estimated_annual_awards: rough integer estimate for this NAICS+PSC combo across all agencies
 - estimated_annual_dollars: rough integer dollar volume per year
 - estimated_size_label: "large" | "medium" | "small" | "niche"
-- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) — real SOW language
-- strategic_angle: 1 sentence — "displace incumbent X", "subcontract under primes", "capture emerging Z demand"
+- keyword_layers: OPTIONAL 2-5 short phrases (1-3 words each) - real SOW language
+- strategic_angle: 1 sentence - "displace incumbent X", "subcontract under primes", "capture emerging Z demand"
 
 Don't inflate correlation scores. A score below 5 is a signal that the scope is a stretch.
 
@@ -716,7 +650,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 }
 \`\`\``
 
-      // === METHODOLOGY LOG: scope generation start ===
       await logMethodology({
         tenantId: activeTenant.id,
         eventType: 'scope_generation_start',
@@ -742,10 +675,9 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
 
       const parsed = extractJsonBlock(text)
       if (!parsed?.scopes || !Array.isArray(parsed.scopes)) {
-        throw new Error('No scopes returned from Claude — try again')
+        throw new Error('No scopes returned from Claude - try again')
       }
 
-      // Clear prior NON-PINNED scopes for this tenant before inserting new ones
       await supabase
         .from('search_scopes')
         .delete()
@@ -783,7 +715,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         if (insertError) throw new Error(`Failed to save scopes: ${insertError.message}`)
       }
 
-      // === METHODOLOGY LOG: scope generation complete ===
       const runtimeMs = Date.now() - startedAt.getTime()
       await logMethodology({
         tenantId: activeTenant.id,
@@ -826,7 +757,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
       setBuildProgress(null)
       await loadProfileData(activeTenant.id)
     } catch (err: any) {
-      // === METHODOLOGY LOG: scope generation failed ===
       if (activeTenant) {
         await logMethodology({
           tenantId: activeTenant.id,
@@ -860,7 +790,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         tenantId: activeTenant.id,
         eventType: 'scope_deleted',
         actor: 'user',
-        summary: `User deleted scope "${scope.name}" (#${scope.scope_tag}) — correlation ${scope.correlation_score}/10`,
+        summary: `User deleted scope "${scope.name}" (#${scope.scope_tag}) - correlation ${scope.correlation_score}/10`,
         details: {
           scope_id: scopeId,
           name: scope.name,
@@ -899,7 +829,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
   async function setFederalPosture(posture: 'unknown' | 'has_federal' | 'no_federal') {
     if (!activeTenant) return
     await supabase.from('tenants').update({ federal_posture: posture }).eq('id', activeTenant.id)
-    // Trigger tenant re-fetch so the UI reflects the new posture
     await useStore.getState().setActiveTenant(activeTenant.id)
   }
 
@@ -940,14 +869,13 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
               alert(
                 `Reset complete.\n\n` +
                   `Deleted:\n` +
-                  `  • ${result.summary.search_scopes || 0} search scopes\n` +
-                  `  • ${result.summary.enrichment_sessions || 0} sessions\n` +
-                  `  • ${result.summary.enrichment_records || 0} contract records\n` +
-                  `  • ${result.summary.round_1_keywords || 0} saved keywords\n` +
-                  `  • ${result.summary.methodology_log_cleared || 0} prior log entries\n\n` +
+                  `  - ${result.summary.search_scopes || 0} search scopes\n` +
+                  `  - ${result.summary.enrichment_sessions || 0} sessions\n` +
+                  `  - ${result.summary.enrichment_records || 0} contract records\n` +
+                  `  - ${result.summary.round_1_keywords || 0} saved keywords\n` +
+                  `  - ${result.summary.methodology_log_cleared || 0} prior log entries\n\n` +
                   `Profile evidence preserved. Methodology log restarted with Step 1 summary.`
               )
-              // Reload everything
               await loadProfileData(activeTenant.id)
               window.location.reload()
             } else {
@@ -990,7 +918,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
             gap: '10px',
           }}
         >
-          <span style={{ display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }}>●</span>
+          <span style={{ display: 'inline-block', animation: 'pulse 1.5s ease-in-out infinite' }}>*</span>
           {buildProgress}
         </div>
       )}
@@ -1014,7 +942,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           onSkipDigest={skipDigest}
           onViewProfile={() =>
             setViewingProfile({
-              title: 'Commercial profile — ' + activeTenant.name,
+              title: 'Commercial profile - ' + activeTenant.name,
               text: commercialProfile?.synthesized_text || '',
               structured: commercialProfile?.structured_data,
               builtAt: commercialProfile?.last_built_at || null,
@@ -1041,7 +969,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           onSkipDigest={skipDigest}
           onViewProfile={() =>
             setViewingProfile({
-              title: 'Federal profile — ' + activeTenant.name,
+              title: 'Federal profile - ' + activeTenant.name,
               text: federalProfile?.synthesized_text || '',
               structured: federalProfile?.structured_data,
               builtAt: federalProfile?.last_built_at || null,
@@ -1063,7 +991,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           onBuild={runReconciliation}
           building={building === 'reconcile'}
           onCreateStrategicFromFramework={() => {
-            // Pre-fill strategic profile editor with framework suggestions
             const s = reconciliation?.structured_data as any
             if (!s) {
               setStratEditor({ mode: 'new' })
@@ -1074,7 +1001,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
               profile: {
                 id: '',
                 tenant_id: activeTenant.id,
-                name: 'Federal entry — ' + (s.wedge_capability || 'Framework'),
+                name: 'Federal entry - ' + (s.wedge_capability || 'Framework'),
                 description: s.narrative_summary || null,
                 positioning: s.narrative_summary || null,
                 target_agencies: s.target_agencies || null,
@@ -1091,18 +1018,16 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         />
       </div>
 
-      {/* Round 1 Search Scopes */}
       {commercialProfile?.synthesized_text && (
         <SearchScopesCard
           scopes={searchScopes}
           onGenerate={generateSearchScopes}
           onDelete={deleteScope}
           onTogglePin={togglePinScope}
-          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search scopes…'}
+          generating={building === 'reconcile' && buildProgress === 'Generating Round 1 search scopes...'}
         />
       )}
 
-      {/* Strategic Profiles */}
       <div
         style={{
           marginTop: '64px',
@@ -1140,7 +1065,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
               }}
             >
               Different hunts, different lanes. Each profile represents a distinct federal
-              pursuit strategy. Create as many as make sense — one per lane you want to work.
+              pursuit strategy. Create as many as make sense - one per lane you want to work.
             </p>
           </div>
           <Button onClick={() => setStratEditor({ mode: 'new' })}>+ New strategic profile</Button>
@@ -1179,8 +1104,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
                 onConfigureStones={() => setStonesEditorProfile(sp)}
                 onInitEngagement={() => setEngagementInitProfile(sp)}
                 onOpenFrameWorkshop={() => setFrameWorkshopProfile(sp)}
-                onConfigureHypothesis={() => setHypothesisProfile(sp)}
-                onOpenMarketResearch={() => setMarketResearchProfile(sp)}
               />
             ))}
           </div>
@@ -1217,7 +1140,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         <Modal
           open={true}
           onClose={() => setStonesEditorProfile(null)}
-          title={`Configure Stones · ${stonesEditorProfile.name}`}
+          title={`Configure Stones - ${stonesEditorProfile.name}`}
           size="full"
         >
           <StonesMapEditor
@@ -1260,34 +1183,6 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
         />
       )}
 
-      {hypothesisProfile && (
-        <ConversionHypothesis
-          strategicProfileId={hypothesisProfile.id}
-          tenantId={activeTenant.id}
-          profileName={hypothesisProfile.name}
-          onClose={() => {
-            const id = hypothesisProfile.id
-            setHypothesisProfile(null)
-            refreshReadinessFor(id)
-          }}
-          onCompleted={() => refreshReadinessFor(hypothesisProfile.id)}
-        />
-      )}
-      
-      {marketResearchProfile && (
-        <MarketResearch
-          strategicProfileId={marketResearchProfile.id}
-          tenantId={activeTenant.id}
-          profileName={marketResearchProfile.name}
-          onClose={() => {
-            const id = marketResearchProfile.id
-            setMarketResearchProfile(null)
-            refreshReadinessFor(id)
-          }}
-          onCompleted={() => refreshReadinessFor(marketResearchProfile.id)}
-        />
-      )}
-      
       {engagementInitProfile && (
         <EngagementInit
           strategicProfileId={engagementInitProfile.id}
@@ -1315,7 +1210,7 @@ Return ONLY valid JSON in a \`\`\`json block, no other text:
           }}
         />
       )}
-      
+
       {viewingProfile && (
         <ProfileViewModal
           title={viewingProfile.title}
@@ -1389,7 +1284,6 @@ function ProfileColumn({
       </div>
       <p style={{ fontSize: '12px', color: 'var(--color-text-tertiary)', margin: '0 0 12px' }}>{subtitle}</p>
 
-      {/* Digest progress bar */}
       {sources.length > 0 && (
         <div
           style={{
@@ -1404,9 +1298,9 @@ function ProfileColumn({
             color: 'var(--color-text-secondary)',
           }}
         >
-          <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
-          {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
-          {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
+          <span style={{ color: 'var(--color-success)' }}>* {ready} ready</span>
+          {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>* {pending} pending</span>}
+          {running > 0 && <span style={{ color: 'var(--color-accent)' }}>* {running} running</span>}
         </div>
       )}
 
@@ -1449,7 +1343,7 @@ function ProfileColumn({
           disabled={digesting}
           style={{ width: '100%', marginBottom: '8px' }}
         >
-          {digesting ? `Digesting…` : `Digest all (${pending + running})`}
+          {digesting ? `Digesting...` : `Digest all (${pending + running})`}
         </Button>
       )}
 
@@ -1459,7 +1353,7 @@ function ProfileColumn({
         disabled={!buildReady || building}
         style={{ width: '100%' }}
       >
-        {building ? 'Building…' : buildLabel}
+        {building ? 'Building...' : buildLabel}
       </Button>
 
       {profileBuilt && (
@@ -1474,7 +1368,7 @@ function ProfileColumn({
               marginBottom: '8px',
             }}
           >
-            <span style={{ color: 'var(--color-success)' }}>●</span>
+            <span style={{ color: 'var(--color-success)' }}>*</span>
             Built {lastBuiltAt ? new Date(lastBuiltAt).toLocaleString() : ''}
           </div>
           <div
@@ -1488,7 +1382,7 @@ function ProfileColumn({
             }}
           >
             {profileText?.slice(0, 500)}
-            {(profileText?.length || 0) > 500 ? '…' : ''}
+            {(profileText?.length || 0) > 500 ? '...' : ''}
           </div>
           <Button
             variant="secondary"
@@ -1527,7 +1421,7 @@ function SourceRow({
   }
   const statusLabel: Record<string, string> = {
     pending: 'Not digested',
-    running: 'Digesting…',
+    running: 'Digesting...',
     ready: 'Ready',
     error: 'Error',
     skipped: 'Skipped',
@@ -1591,11 +1485,10 @@ function SourceRow({
             lineHeight: 1,
           }}
         >
-          ×
+          x
         </button>
       </div>
 
-      {/* Action buttons based on digest state */}
       {(status === 'pending' || status === 'error') && hasContent && (
         <div style={{ display: 'flex', gap: '6px' }}>
           <button
@@ -1724,14 +1617,8 @@ function ReconciliationColumn({
     ? 'Re-run reconciliation'
     : 'Run reconciliation'
 
-  // Has this reconciliation row actually been rendered for this mode?
-  // If posture flipped between runs, we might have a reconcile row but be in framework mode.
   const recMatchesMode = reconciliation && reconciliation.mode === mode
 
-  // Is the framework/reconciliation up-to-date with the current prompt template?
-  // v1 = pre-PSC-reference (stale D3xx/7030 codes)
-  // v2+ = grounded in GSA April 2025 + NAICS 2022 reference tables
-  // Must bump this when migrations update prompt_variants.version further.
   const CURRENT_PROMPT_VERSION = 2
   const promptIsCurrent =
     (reconciliation?.prompt_template_version ?? 1) >= CURRENT_PROMPT_VERSION
@@ -1765,7 +1652,7 @@ function ReconciliationColumn({
           >
             This tenant has <strong>no existing federal presence</strong>. The framework will
             propose NAICS, PSC codes, certifications to pursue, keywords, and a narrative for
-            federal market entry — built purely from the commercial profile.
+            federal market entry - built purely from the commercial profile.
           </div>
         )}
 
@@ -1780,7 +1667,7 @@ function ReconciliationColumn({
               lineHeight: 1.5,
             }}
           >
-            No federal profile yet → reconciliation operates in <strong>suggestions mode</strong>,
+            No federal profile yet -&gt; reconciliation operates in <strong>suggestions mode</strong>,
             proposing what the federal profile <em>should</em> look like.
           </div>
         )}
@@ -1790,7 +1677,7 @@ function ReconciliationColumn({
             <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)' }}>
               v{reconciliation.version}
               {reconciliation.last_built_at &&
-                ' · ' + new Date(reconciliation.last_built_at).toLocaleString()}
+                ' - ' + new Date(reconciliation.last_built_at).toLocaleString()}
             </div>
 
             {isFramework ? (
@@ -1831,7 +1718,7 @@ function ReconciliationColumn({
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '16px' }}>
         <Button size="small" onClick={onBuild} disabled={!canBuild || building} style={{ width: '100%' }}>
-          {building ? 'Running…' : buildLabel}
+          {building ? 'Running...' : buildLabel}
         </Button>
         {isFramework && recMatchesMode && reconciliation?.structured_data && (
           <>
@@ -1911,7 +1798,7 @@ function FrameworkStructuredPreview({ data }: { data: any }) {
               .filter((c: any) => c.recommendation !== 'SKIP')
               .slice(0, 8)
               .map((c: any) =>
-                typeof c === 'string' ? c : `${c.name}${c.recommendation ? ` · ${c.recommendation}` : ''}`
+                typeof c === 'string' ? c : `${c.name}${c.recommendation ? ` - ${c.recommendation}` : ''}`
               )}
           />
         </MiniSection>
@@ -2021,7 +1908,6 @@ function FederalColumnWithPosture({
         What exists in federal systems of record
       </p>
 
-      {/* Posture selector */}
       <div style={{ marginBottom: '16px' }}>
         <div
           style={{
@@ -2060,13 +1946,12 @@ function FederalColumnWithPosture({
           >
             Pick <strong>Has federal</strong> if the company has a SAM.gov entity, federal awards,
             or a capability statement. Pick <strong>No federal yet</strong> if they're a purely
-            commercial company — the Reconciliation column will build a federal entry framework
+            commercial company - the Reconciliation column will build a federal entry framework
             instead.
           </div>
         )}
       </div>
 
-      {/* If no_federal, hide source adder and show a different empty state */}
       {posture === 'no_federal' ? (
         <div
           style={{
@@ -2094,7 +1979,6 @@ function FederalColumnWithPosture({
         </div>
       ) : (
         <>
-          {/* Digest progress */}
           {sources.length > 0 && (
             <div
               style={{
@@ -2109,9 +1993,9 @@ function FederalColumnWithPosture({
                 color: 'var(--color-text-secondary)',
               }}
             >
-              <span style={{ color: 'var(--color-success)' }}>● {ready} ready</span>
-              {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>● {pending} pending</span>}
-              {running > 0 && <span style={{ color: 'var(--color-accent)' }}>● {running} running</span>}
+              <span style={{ color: 'var(--color-success)' }}>* {ready} ready</span>
+              {pending > 0 && <span style={{ color: 'var(--color-warning)' }}>* {pending} pending</span>}
+              {running > 0 && <span style={{ color: 'var(--color-accent)' }}>* {running} running</span>}
             </div>
           )}
 
@@ -2153,7 +2037,7 @@ function FederalColumnWithPosture({
               disabled={digesting}
               style={{ width: '100%', marginBottom: '8px' }}
             >
-              {digesting ? 'Digesting…' : `Digest all (${pending + running})`}
+              {digesting ? 'Digesting...' : `Digest all (${pending + running})`}
             </Button>
           )}
           <Button
@@ -2162,7 +2046,7 @@ function FederalColumnWithPosture({
             disabled={!buildReady || building}
             style={{ width: '100%' }}
           >
-            {building ? 'Building…' : 'Build federal profile'}
+            {building ? 'Building...' : 'Build federal profile'}
           </Button>
 
           {profileBuilt && (
@@ -2177,7 +2061,7 @@ function FederalColumnWithPosture({
                   marginBottom: '8px',
                 }}
               >
-                <span style={{ color: 'var(--color-success)' }}>●</span>
+                <span style={{ color: 'var(--color-success)' }}>*</span>
                 Built {lastBuiltAt ? new Date(lastBuiltAt).toLocaleString() : ''}
               </div>
               <div
@@ -2191,7 +2075,7 @@ function FederalColumnWithPosture({
                 }}
               >
                 {profileText?.slice(0, 500)}
-                {(profileText?.length || 0) > 500 ? '…' : ''}
+                {(profileText?.length || 0) > 500 ? '...' : ''}
               </div>
               <Button
                 variant="secondary"
@@ -2306,8 +2190,6 @@ function StrategicProfileCard({
   onConfigureStones,
   onInitEngagement,
   onOpenFrameWorkshop,
-  onConfigureHypothesis,
-  onOpenMarketResearch,
 }: {
   profile: StrategicProfile
   readiness?: ReadinessState
@@ -2318,16 +2200,12 @@ function StrategicProfileCard({
   onConfigureStones: () => void
   onInitEngagement: () => void
   onOpenFrameWorkshop: () => void
-  onConfigureHypothesis: () => void
-  onOpenMarketResearch: () => void
 }) {
   const r = readiness || {
     cbp_ready: false,
     frame_ready: false,
     research_ready: false,
     stones_ready: false,
-    hypothesis_ready: false,
-    market_research_ready: false,
     generate_ready: false,
   }
 
@@ -2346,8 +2224,8 @@ function StrategicProfileCard({
           )}
         </div>
         <div style={{ display: 'flex', gap: '4px' }}>
-          <ActionIcon onClick={onEdit} label="Edit">✎</ActionIcon>
-          <ActionIcon onClick={onDelete} label="Delete" danger>×</ActionIcon>
+          <ActionIcon onClick={onEdit} label="Edit">e</ActionIcon>
+          <ActionIcon onClick={onDelete} label="Delete" danger>x</ActionIcon>
         </div>
       </div>
       {profile.positioning && (
@@ -2375,7 +2253,6 @@ function StrategicProfileCard({
         ))}
       </div>
 
-      {/* Recon Engine workflow */}
       <div
         style={{
           marginTop: '14px',
@@ -2436,18 +2313,6 @@ function StrategicProfileCard({
             onClick={onConfigureStones}
             number="03"
           />
-          <WorkflowButton
-            ready={r.hypothesis_ready === true}
-            label="Conversion Hypothesis"
-            onClick={onConfigureHypothesis}
-            number="04"
-          />
-          <WorkflowButton
-            ready={r.market_research_ready === true}
-            label="Market Research"
-            onClick={onOpenMarketResearch}
-            number="05"
-          />
           <ReconBriefGenerator
             strategicProfileId={profile.id}
             tenantId={profile.tenant_id}
@@ -2465,8 +2330,6 @@ function ReadinessChips({ r }: { r: ReadinessState }) {
     { ready: r.frame_ready, label: 'Frame' },
     { ready: r.research_ready, label: 'Research' },
     { ready: r.stones_ready, label: 'Stones' },
-    { ready: r.hypothesis_ready === true, label: 'Hypothesis' },
-    { ready: r.market_research_ready === true, label: 'Market' },
   ]
   return (
     <div style={{ display: 'flex', gap: '4px' }}>
@@ -2547,7 +2410,7 @@ function WorkflowButton({
           fontWeight: 600,
         }}
       >
-        {ready ? '✓ Ready' : 'Open'}
+        {ready ? 'Ready' : 'Open'}
       </span>
     </button>
   )
@@ -2616,7 +2479,6 @@ function ProfileViewModal({
 
   return (
     <Modal open={true} onClose={onClose} title={title} size="xl">
-      {/* Meta row */}
       <div
         style={{
           display: 'flex',
@@ -2634,11 +2496,10 @@ function ProfileViewModal({
             Built from <strong>{sourceCount}</strong> source{sourceCount !== 1 ? 's' : ''}
           </span>
         )}
-        {builtAt && <span>·</span>}
+        {builtAt && <span>-</span>}
         {builtAt && <span>{new Date(builtAt).toLocaleString()}</span>}
       </div>
 
-      {/* Tab switcher */}
       <div
         style={{
           display: 'flex',
@@ -2660,7 +2521,6 @@ function ProfileViewModal({
         </TabButton>
       </div>
 
-      {/* Tab content */}
       <div
         style={{
           maxHeight: '60vh',
@@ -2705,7 +2565,6 @@ function ProfileViewModal({
         )}
       </div>
 
-      {/* Footer */}
       <div
         style={{
           marginTop: '16px',
@@ -2789,17 +2648,15 @@ function StructuredField({ label, value }: { label: string; value: any }) {
     marginBottom: '4px',
   }
 
-  // Null / undefined / empty
   if (value === null || value === undefined || value === '') {
     return (
       <div>
         <div style={labelStyle}>{prettyLabel}</div>
-        <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>—</div>
+        <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>-</div>
       </div>
     )
   }
 
-  // Array of strings
   if (Array.isArray(value) && value.every((v) => typeof v === 'string' || typeof v === 'number')) {
     return (
       <div>
@@ -2813,7 +2670,6 @@ function StructuredField({ label, value }: { label: string; value: any }) {
     )
   }
 
-  // Array of objects
   if (Array.isArray(value)) {
     return (
       <div>
@@ -2838,7 +2694,6 @@ function StructuredField({ label, value }: { label: string; value: any }) {
     )
   }
 
-  // Nested object
   if (typeof value === 'object') {
     return (
       <div>
@@ -2861,7 +2716,6 @@ function StructuredField({ label, value }: { label: string; value: any }) {
     )
   }
 
-  // Scalar string/number/bool
   return (
     <div>
       <div style={labelStyle}>{prettyLabel}</div>
@@ -2873,7 +2727,7 @@ function StructuredField({ label, value }: { label: string; value: any }) {
 }
 
 /* ========================================================================== */
-/* Search Scopes card (Round 1 NAICS + PSC)                                   */
+/* Search Scopes card                                                         */
 /* ========================================================================== */
 
 type ScopeSortKey = 'correlation' | 'dollars' | 'awards' | 'tier' | 'name'
@@ -2902,7 +2756,6 @@ function SearchScopesCard({
   const tierRank: Record<string, number> = { primary: 0, secondary: 1, exploratory: 2 }
 
   const sorted = [...visibleScopes].sort((a, b) => {
-    // Pinned always on top
     if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
     switch (sortKey) {
       case 'correlation':
@@ -2962,14 +2815,14 @@ function SearchScopesCard({
               maxWidth: '720px',
             }}
           >
-            Real federal taxonomy — NAICS codes cross-pollinated with PSC prefixes. Each scope
-            carries a correlation score (1–10) and a market-size estimate. Search the highest
-            correlation × dollar-volume first; stop when marginal return falls off.
+            Real federal taxonomy - NAICS codes cross-pollinated with PSC prefixes. Each scope
+            carries a correlation score (1-10) and a market-size estimate. Search the highest
+            correlation x dollar-volume first; stop when marginal return falls off.
           </p>
         </div>
         {anyScopes && (
           <Button size="small" onClick={onGenerate} disabled={generating}>
-            {generating ? 'Regenerating…' : 'Regenerate'}
+            {generating ? 'Regenerating...' : 'Regenerate'}
           </Button>
         )}
       </div>
@@ -2987,17 +2840,16 @@ function SearchScopesCard({
             }}
           >
             <div style={{ fontSize: '14px', color: 'var(--color-text-secondary)', maxWidth: '560px' }}>
-              No scopes generated yet. Click below and the system will propose 6–10 NAICS+PSC
+              No scopes generated yet. Click below and the system will propose 6-10 NAICS+PSC
               combinations scored by correlation to the company and sized by estimated market.
             </div>
             <Button onClick={onGenerate} disabled={generating}>
-              {generating ? 'Generating…' : 'Generate Round 1 scopes'}
+              {generating ? 'Generating...' : 'Generate Round 1 scopes'}
             </Button>
           </div>
         </Card>
       ) : (
         <>
-          {/* Controls */}
           <div
             style={{
               display: 'flex',
@@ -3046,7 +2898,6 @@ function SearchScopesCard({
             </label>
           </div>
 
-          {/* Scope list */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             {sorted.length === 0 ? (
               <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', padding: '20px', textAlign: 'center' }}>
@@ -3130,7 +2981,7 @@ function ScopeRow({
             border: '1px solid rgba(212, 146, 10, 0.2)',
           }}
         >
-          ⚠ Low correlation ({scope.correlation_score}/10) — consider before searching.
+          ! Low correlation ({scope.correlation_score}/10) - consider before searching.
         </div>
       )}
 
@@ -3164,10 +3015,10 @@ function ScopeRow({
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
           <CorrelationBadge score={scope.correlation_score} />
           <IconBtn onClick={onTogglePin} title={scope.pinned ? 'Unpin' : 'Pin'}>
-            {scope.pinned ? '★' : '☆'}
+            {scope.pinned ? '*' : 'o'}
           </IconBtn>
           <IconBtn onClick={onDelete} title="Delete" danger>
-            ×
+            x
           </IconBtn>
         </div>
       </div>
@@ -3178,7 +3029,6 @@ function ScopeRow({
         </div>
       )}
 
-      {/* Metrics row */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '10px', flexWrap: 'wrap', padding: '8px 10px', background: 'var(--color-bg-subtle)', borderRadius: 'var(--radius-input)' }}>
         <Metric
           label={hasActual ? 'Actual awards' : 'Est. awards/yr'}
@@ -3206,13 +3056,12 @@ function ScopeRow({
         )}
       </div>
 
-      {/* NAICS + PSC chips */}
       <div style={{ display: 'flex', gap: '16px', marginBottom: '10px', flexWrap: 'wrap' }}>
         <div>
           <div style={miniLabelStyle}>NAICS</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
             {scope.naics_codes.length === 0 ? (
-              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
+              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>-</span>
             ) : (
               scope.naics_codes.map((code) => <Badge key={code}>{code}</Badge>)
             )}
@@ -3222,7 +3071,7 @@ function ScopeRow({
           <div style={miniLabelStyle}>PSC</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
             {scope.psc_prefixes.length === 0 ? (
-              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>—</span>
+              <span style={{ fontSize: '12px', color: 'var(--color-text-tertiary)' }}>-</span>
             ) : (
               scope.psc_prefixes.map((p) => <Badge key={p}>{p}</Badge>)
             )}
@@ -3254,7 +3103,7 @@ function ScopeRow({
 
       <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
         <a href={higherGovUrl} target="_blank" rel="noopener noreferrer" style={extLinkStyle}>
-          Search on HigherGov →
+          Search on HigherGov
         </a>
       </div>
     </Card>
@@ -3286,7 +3135,7 @@ function CorrelationBadge({ score }: { score: number | null }) {
           borderRadius: 'var(--radius-input)',
         }}
       >
-        —
+        -
       </div>
     )
   }
@@ -3375,12 +3224,12 @@ function IconBtn({
 }
 
 function formatInt(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
+  if (n === null || n === undefined) return '-'
   return n.toLocaleString()
 }
 
 function formatDollars(n: number | null | undefined): string {
-  if (n === null || n === undefined) return '—'
+  if (n === null || n === undefined) return '-'
   if (n >= 1_000_000_000) return `$${(n / 1_000_000_000).toFixed(1)}B`
   if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`
   if (n >= 1_000) return `$${(n / 1_000).toFixed(0)}K`
