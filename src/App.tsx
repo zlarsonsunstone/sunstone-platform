@@ -8,6 +8,7 @@ import { NavBar } from '@/components/NavBar'
 import { Banner } from '@/components/Banner'
 import { Dashboard } from '@/components/Dashboard'
 import { AdminPanel } from '@/components/AdminPanel'
+import { PrelimReview } from '@/components/PrelimReview'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 
 export default function App() {
@@ -17,6 +18,15 @@ export default function App() {
   if (prospectMatch) {
     return <ProspectConfirmation token={prospectMatch[1]} />
   }
+
+  // /prelim/review path is the consultant-facing prelim cleanup tool.
+  // Auth-gated. We detect it here and render below once the user is signed-in
+  // with a role (so it's protected by Supabase auth + RLS).
+  // Note: /prelim/<token> (anon prospect sign-off) is intercepted in main.tsx
+  // BEFORE App ever loads.
+  const isPrelimReviewPath = window.location.pathname === '/prelim/review'
+    || window.location.pathname === '/prelim/review/'
+
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
   const [adminOpen, setAdminOpen] = useState(false)
@@ -102,7 +112,7 @@ export default function App() {
           fontSize: '14px',
         }}
       >
-        Loading…
+        Loading...
       </div>
     )
   }
@@ -162,7 +172,14 @@ export default function App() {
     )
   }
 
-  // Signed in with role — show the main app
+  // /prelim/review - consultant prelim cleanup tool. Auth-gated; tenant-agnostic
+  // (operates on prelim_profile rows directly, not tied to a specific tenant).
+  // Renders without NavBar / Dashboard chrome to keep it focused.
+  if (isPrelimReviewPath) {
+    return <PrelimReview />
+  }
+
+  // Signed in with role - show the main app
   return (
     <div style={{ minHeight: '100vh', background: 'var(--color-bg-primary)' }}>
       <div
@@ -183,7 +200,7 @@ export default function App() {
       {/* Tenant picker blocks UI if needed (State B or C) */}
       <TenantPickerModal />
 
-      {/* Main content — only renders when tenant is resolved */}
+      {/* Main content - only renders when tenant is resolved */}
       {tenantResolutionState === 'ready' && activeTenant && (
         <Dashboard activeTab={activeTab} />
       )}
@@ -199,7 +216,7 @@ export default function App() {
             fontSize: '14px',
           }}
         >
-          Resolving tenant…
+          Resolving tenant...
         </div>
       )}
     </div>
