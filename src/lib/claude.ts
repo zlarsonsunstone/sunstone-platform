@@ -1,188 +1,173 @@
 /**
  * Browser-side Claude client.
  *
- * Calls Anthropic's API directly from the browser (bypassing Netlify functions)
- * so we aren't constrained by Netlify's 10-second sync function timeout.
+ * This module talks directly to the Anthropic API from the browser, bypassing
+ * the Netlify function layer for any workflow that needs more than 30 seconds
+ * of compute or that benefits from streaming UI feedback.
  *
- * Requires: VITE_ANTHROPIC_API_KEY in the environment at build time.
+ * Two key exports:
+ *   - callClaudeBrowser: generic chat completion call
+ *   - extractPdfTextBrowser: PDF text extraction via Claude's PDF support
  *
- * Security note: the API key IS visible to anyone who inspects the site's JS.
- * For this admin tool that's acceptable - the app is login-gated and the key
- * can be rotated if leaked. For a public-facing product we would route through
- * a proper auth-gated proxy.
+ * Plus helpers for the Stages 0-3 recommendation flow and tokenization.
  */
 
-const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string | undefined
-const API_URL = 'https://api.anthropic.com/v1/messages'
+const API_KEY = import.meta.env.VITE_ANTHROPIC_API_KEY as string
 
-export interface CallClaudeOptions {
+if (!API_KEY) {
+  console.warn('VITE_ANTHROPIC_API_KEY missing - browser-side Claude calls will fail')
+}
+
+const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages'
+
+export interface ClaudeBrowserOptions {
   model?: string
   maxTokens?: number
   system?: string
+  temperature?: number
   signal?: AbortSignal
-  /** Enable web_search tool. Claude can choose to search the web before answering. */
-  enableWebSearch?: boolean
-  /** Max web searches per call (server-side limit). Default 5. */
-  maxWebSearches?: number
 }
 
-export interface CallClaudeResult {
+export interface ClaudeBrowserResponse {
   text: string
-  usage?: { input_tokens: number; output_tokens: number }
-  /** Number of web searches actually performed during the call. */
-  webSearchesUsed?: number
+  raw: any
 }
 
+const DEFAULT_MODEL = 'claude-sonnet-4-5'
+
+/**
+ * Call Claude directly from the browser. Bypasses Netlify function timeouts.
+ *
+ * Browser-side direct API call requires the 'anthropic-dangerous-direct-browser-access'
+ * header. This is fine in our trust model: API key is in env, scoped to this app,
+ * and we're not embedding it in user-shared content.
+ */
 export async function callClaudeBrowser(
-  prompt: string,
-  options: CallClaudeOptions = {}
-): Promise<CallClaudeResult> {
+  userMessage: string | Array<any>,
+  options: ClaudeBrowserOptions = {}
+): Promise<ClaudeBrowserResponse> {
   if (!API_KEY) {
     throw new Error(
-      'VITE_ANTHROPIC_API_KEY not configured. Add it to Netlify env vars and redeploy.'
+      'Anthropic API key not configured. Set VITE_ANTHROPIC_API_KEY in your environment.'
     )
   }
 
+  const messages = typeof userMessage === 'string'
+    ? [{ role: 'user', content: userMessage }]
+    : [{ role: 'user', content: userMessage }]
+
   const body: any = {
-    model: options.model || 'claude-sonnet-4-5',
-    max_tokens: options.maxTokens || 4096,
-    messages: [{ role: 'user', content: prompt }],
+    model: options.model || DEFAULT_MODEL,
+    max_tokens: options.maxTokens ?? 4096,
+    messages,
   }
   if (options.system) body.system = options.system
+  if (typeof options.temperature === 'number') body.temperature = options.temperature
 
-  // Server-side web search tool. Only attached when explicitly requested so
-  // deterministic calls (keyword extraction, etc.) aren't accidentally paying
-  // for search turns.
-  if (options.enableWebSearch) {
-    body.tools = [
-      {
-        type: 'web_search_20250305',
-        name: 'web_search',
-        max_uses: options.maxWebSearches || 5,
-      },
-    ]
-  }
-
-  const resp = await fetch(API_URL, {
+  const response = await fetch(ANTHROPIC_API_URL, {
     method: 'POST',
     headers: {
-      'Content-Type': 'application/json',
+      'content-type': 'application/json',
       'x-api-key': API_KEY,
       'anthropic-version': '2023-06-01',
-      // Required to allow browser-direct calls
       'anthropic-dangerous-direct-browser-access': 'true',
     },
     body: JSON.stringify(body),
     signal: options.signal,
   })
 
-  if (!resp.ok) {
-    let errBody = ''
-    try {
-      errBody = await resp.text()
-    } catch {}
-    throw new Error(`Anthropic API ${resp.status}: ${errBody.slice(0, 500) || 'no body'}`)
+  if (!response.ok) {
+    const errBody = await response.text().catch(() => '')
+    throw new Error(`Claude API error ${response.status}: ${errBody.slice(0, 500)}`)
   }
 
-  const data = await resp.json()
-  const text = (data.content || [])
+  const data = await response.json()
+  const text = (data?.content || [])
     .filter((b: any) => b.type === 'text')
     .map((b: any) => b.text)
     .join('\n')
+    .trim()
 
-  // Count web_search_tool_result blocks to track actual usage
-  const webSearchesUsed = (data.content || []).filter(
-    (b: any) => b.type === 'web_search_tool_result'
-  ).length
-
-  return { text, usage: data.usage, webSearchesUsed: webSearchesUsed || undefined }
-}
-
-export function extractJsonBlock(text: string): any | null {
-  const match = text.match(/```json\s*([\s\S]*?)```/i)
-  if (!match) return null
-  try {
-    return JSON.parse(match[1].trim())
-  } catch {
-    return null
-  }
+  return { text, raw: data }
 }
 
 /**
- * Extract text from a PDF directly in the browser via Anthropic's document API.
+ * Extract a JSON block from Claude output. Returns null if no parseable JSON found.
  *
- * Bypasses Netlify functions entirely - no timeout cap, no upload-roundtrip
- * to a serverless function. The browser sends the base64 PDF straight to
- * Anthropic and gets text back.
+ * Looks for ```json ... ``` first, then bare JSON, then any { ... } block.
+ */
+export function extractJsonBlock(text: string): any | null {
+  if (!text) return null
+
+  // Try fenced json block
+  const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i)
+  if (fencedMatch && fencedMatch[1]) {
+    try {
+      return JSON.parse(fencedMatch[1].trim())
+    } catch {
+      // fall through
+    }
+  }
+
+  // Try first {...} block
+  const braceMatch = text.match(/\{[\s\S]*\}/)
+  if (braceMatch) {
+    try {
+      return JSON.parse(braceMatch[0])
+    } catch {
+      // fall through
+    }
+  }
+
+  return null
+}
+
+/**
+ * Browser-side PDF text extraction via Claude.
  *
- * @param pdfBase64 base64-encoded PDF bytes (no data: prefix)
- * @param filename optional filename for context
- * @returns extracted text
+ * Reads the PDF as base64, sends it as a document content block, asks Claude
+ * to extract all text. Bypasses Netlify function timeout limits because some
+ * PDFs (especially large or poorly-OCR'd ones) take longer than 30 seconds.
+ *
+ * Returns the extracted text as a single string. Returns empty string on
+ * failure (caller decides how to handle).
  */
 export async function extractPdfTextBrowser(
-  pdfBase64: string,
-  filename?: string
+  fileOrBlob: File | Blob,
+  options: { maxTokens?: number; signal?: AbortSignal } = {}
 ): Promise<string> {
-  if (!API_KEY) {
-    throw new Error(
-      'VITE_ANTHROPIC_API_KEY not configured. Add it to Netlify env vars and redeploy.'
-    )
+  const buffer = await fileOrBlob.arrayBuffer()
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  for (let i = 0; i < bytes.length; i++) {
+    binary += String.fromCharCode(bytes[i])
   }
+  const base64 = btoa(binary)
 
-  const body = {
-    model: 'claude-sonnet-4-5',
-    max_tokens: 8192,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: {
-              type: 'base64',
-              media_type: 'application/pdf',
-              data: pdfBase64,
-            },
-          },
-          {
-            type: 'text',
-            text: filename
-              ? `Extract ALL text content from this PDF (${filename}). Preserve the structure with headings and sections. Output only the extracted text - no commentary, no meta-description, no summary. Just the text as it appears in the document.`
-              : 'Extract ALL text content from this PDF. Preserve the structure with headings and sections. Output only the extracted text - no commentary, no meta-description, no summary. Just the text as it appears in the document.',
-          },
-        ],
+  const userBlocks = [
+    {
+      type: 'document',
+      source: {
+        type: 'base64',
+        media_type: 'application/pdf',
+        data: base64,
       },
-    ],
-  }
-
-  const resp = await fetch(API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': API_KEY,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
     },
-    body: JSON.stringify(body),
+    {
+      type: 'text',
+      text: `Extract ALL the text from this PDF, preserving structure (headings, lists, paragraphs, table contents).
+
+Output ONLY the extracted text - no preamble, no commentary, no summary. Just the raw text content of the document, formatted for readability.
+
+If the PDF has multiple sections, separate them with double newlines. Preserve the original order.`,
+    },
+  ]
+
+  const { text } = await callClaudeBrowser(userBlocks as any, {
+    model: 'claude-sonnet-4-5',
+    maxTokens: options.maxTokens ?? 16384,
+    signal: options.signal,
   })
-
-  if (!resp.ok) {
-    let errBody = ''
-    try {
-      errBody = await resp.text()
-    } catch {}
-    throw new Error(`Anthropic API ${resp.status}: ${errBody.slice(0, 500) || 'no body'}`)
-  }
-
-  const data = await resp.json()
-  const text = (data.content || [])
-    .filter((b: any) => b.type === 'text')
-    .map((b: any) => b.text)
-    .join('\n')
-
-  if (!text || text.trim().length === 0) {
-    throw new Error('Extraction returned no text')
-  }
 
   return text
 }
@@ -209,10 +194,10 @@ interface ProfileSnapshot {
 }
 
 export interface FrameRecommendation {
-  frame: 'doppelganger' | 'lambs'
+  frame: 'lions' | 'lambs'
   reasoning: string
   confidence: 'high' | 'medium' | 'low'
-  signals_for_doppelganger: string[]
+  signals_for_lions: string[]
   signals_for_lambs: string[]
   what_we_would_show_client: string
 }
@@ -246,7 +231,7 @@ const KNOWN_PERSONAS = [
 ]
 
 /**
- * Recommend whether the engagement should run in doppelganger frame
+ * Recommend whether the engagement should run in lions frame
  * (competing) or lambs frame (disrupting).
  */
 export async function recommendAnalyticalFrame(
@@ -254,10 +239,11 @@ export async function recommendAnalyticalFrame(
 ): Promise<FrameRecommendation> {
   const system = `You are a federal market analyst for Sunstone Advisory Group.
 
-Your job: read the prospect's reconciled profile and recommend whether their recon should run in DOPPELGANGER frame (competing) or LAMBS frame (disrupting).
+Your job: read the prospect's reconciled profile and recommend whether their recon should run in LIONS frame (competing) or LAMBS frame (disrupting).
 
-DOPPELGANGER frame is correct when:
-- The market exists, vendors exist, the prospect wants to compete on the same field
+LIONS frame is correct when:
+- The market exists, vendors exist, the prospect wants to compete on the same territory
+- Picture lions on the Serengeti: established prides have territory, the prospect wants to take some
 - Question: "Who else won this work, and how do I become them?"
 - Bullseye = vendors who look like the prospect and won
 - Persona fits: established companies, mature markets, "Successful and Skeptical", "Subcontractor Stuck in the Middle"
@@ -270,17 +256,17 @@ LAMBS frame is correct when:
 - Persona fits: novel offerings, displacement thesis players, "Brand New", "Disruptive Entrant"
 
 Look for these signals:
-- Doppelganger signals: established capability, mature NAICS, prior contracting under primes, certification stack, "we want to win contracts our peers win"
-- Lamb signals: novel technology, paradigm shift language, statutory/policy change, "we will displace [incumbent type]", emerging or recently-legislated market
+- Lions signals: established capability, mature NAICS, prior contracting under primes, certification stack, "we want to win contracts our peers win"
+- Lambs signals: novel technology, paradigm shift language, statutory/policy change, "we will displace [incumbent type]", emerging or recently-legislated market
 
 Return ONLY a JSON block in this exact shape, no preamble:
 
 \`\`\`json
 {
-  "frame": "doppelganger|lambs",
+  "frame": "lions|lambs",
   "reasoning": "2-3 sentence explanation of why this frame fits",
   "confidence": "high|medium|low",
-  "signals_for_doppelganger": ["specific evidence from the profile that suggests doppelganger"],
+  "signals_for_lions": ["specific evidence from the profile that suggests lions"],
   "signals_for_lambs": ["specific evidence from the profile that suggests lambs"],
   "what_we_would_show_client": "1-2 sentence framing of how we'd present this recommendation to the client for their confirmation"
 }
@@ -322,7 +308,7 @@ Recommend the analytical frame.`
  */
 export async function recommendPersona(
   profile: ProfileSnapshot,
-  frame: 'doppelganger' | 'lambs'
+  frame: 'lions' | 'lambs'
 ): Promise<PersonaRecommendation> {
   const system = `You are a federal market analyst for Sunstone Advisory Group.
 
@@ -389,7 +375,7 @@ Recommend the persona.`
  */
 export async function recommendPurpose(
   profile: ProfileSnapshot,
-  frame: 'doppelganger' | 'lambs',
+  frame: 'lions' | 'lambs',
   persona: string
 ): Promise<PurposeRecommendation> {
   const system = `You are a federal market analyst for Sunstone Advisory Group.
