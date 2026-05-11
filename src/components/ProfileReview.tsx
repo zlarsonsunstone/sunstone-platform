@@ -297,6 +297,9 @@ export function ProfileReview({ strategicProfileId: propStrategicProfileId }: Pr
 
   const [activeTab, setActiveTab] = useState<TabKey>('reconciliation')
   const [hoveredClaimId, setHoveredClaimId] = useState<string | null>(null)
+  const [expandedClaimId, setExpandedClaimId] = useState<string | null>(null)
+  const [savingClaimId, setSavingClaimId] = useState<string | null>(null)
+  const [rowError, setRowError] = useState<{ claimId: string; message: string } | null>(null)
 
   const strategicProfileId = propStrategicProfileId || (() => {
     if (typeof window === 'undefined') return null
@@ -386,6 +389,113 @@ export function ProfileReview({ strategicProfileId: propStrategicProfileId }: Pr
     } catch (e: any) {
       setError(e?.message || 'Unknown error')
       setStage('error')
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // UPDATE / DELETE CLAIM HANDLERS
+  // -------------------------------------------------------------------------
+
+  /**
+   * Update one or more fields on a claim. Optimistic UI - patches local state
+   * first, then writes to DB. Rolls back on error.
+   */
+  async function updateClaim(claimId: string, patch: Partial<ProfileClaim>): Promise<boolean> {
+    setSavingClaimId(claimId)
+    setRowError(null)
+
+    // Optimistic update of local state
+    const original = claims.find(c => c.id === claimId)
+    if (!original) {
+      setSavingClaimId(null)
+      return false
+    }
+    setClaims(prev => prev.map(c => c.id === claimId ? { ...c, ...patch } : c))
+
+    try {
+      // Build the DB patch - exclude joined fields like surface_research
+      const dbPatch: Record<string, any> = {}
+      const allowedFields: (keyof ProfileClaim)[] = [
+        'claim_text',
+        'claim_category',
+        'status',
+        'status_reason',
+        'confidence_level',
+        'is_brief_critical',
+        'interpretation_attestation',
+        'attested_at',
+        'attested_by',
+        'dispute_reason',
+        'source_label',
+        'source_tier',
+      ]
+      for (const k of allowedFields) {
+        if (k in patch) {
+          dbPatch[k as string] = (patch as any)[k]
+        }
+      }
+      // Always bump updated_at server-side; let DB default handle if missing.
+
+      const { error: updErr } = await supabase
+        .schema('v2')
+        .from('profile_claims')
+        .update(dbPatch)
+        .eq('id', claimId)
+
+      if (updErr) throw new Error(updErr.message)
+
+      setSavingClaimId(null)
+      return true
+    } catch (e: any) {
+      // Rollback local state
+      setClaims(prev => prev.map(c => c.id === claimId ? original : c))
+      setRowError({ claimId, message: e?.message || 'Update failed' })
+      setSavingClaimId(null)
+      return false
+    }
+  }
+
+  /**
+   * Soft-confirm then hard-delete a claim. Optimistic - removes from local
+   * state, restores on failure.
+   */
+  async function deleteClaim(claimId: string): Promise<boolean> {
+    if (!confirm('Delete this claim? This cannot be undone.')) return false
+
+    setSavingClaimId(claimId)
+    setRowError(null)
+
+    const original = claims.find(c => c.id === claimId)
+    const originalIndex = claims.findIndex(c => c.id === claimId)
+    if (!original) {
+      setSavingClaimId(null)
+      return false
+    }
+    setClaims(prev => prev.filter(c => c.id !== claimId))
+
+    try {
+      const { error: delErr } = await supabase
+        .schema('v2')
+        .from('profile_claims')
+        .delete()
+        .eq('id', claimId)
+
+      if (delErr) throw new Error(delErr.message)
+
+      // Also close any open edit drawer for this claim
+      setExpandedClaimId(prev => prev === claimId ? null : prev)
+      setSavingClaimId(null)
+      return true
+    } catch (e: any) {
+      // Restore at original index
+      setClaims(prev => {
+        const next = [...prev]
+        next.splice(originalIndex, 0, original)
+        return next
+      })
+      setRowError({ claimId, message: e?.message || 'Delete failed' })
+      setSavingClaimId(null)
+      return false
     }
   }
 
@@ -502,8 +612,14 @@ export function ProfileReview({ strategicProfileId: propStrategicProfileId }: Pr
                   key={claim.id}
                   claim={claim}
                   hovered={hoveredClaimId === claim.id}
+                  expanded={expandedClaimId === claim.id}
+                  saving={savingClaimId === claim.id}
+                  errorMessage={rowError?.claimId === claim.id ? rowError.message : null}
                   onHoverIn={() => setHoveredClaimId(claim.id)}
                   onHoverOut={() => setHoveredClaimId(prev => prev === claim.id ? null : prev)}
+                  onToggleExpand={() => setExpandedClaimId(prev => prev === claim.id ? null : claim.id)}
+                  onUpdate={(patch) => updateClaim(claim.id, patch)}
+                  onDelete={() => deleteClaim(claim.id)}
                 />
               ))}
             </div>
@@ -586,52 +702,139 @@ function ReconciliationTab({ reconciliation }: { reconciliation: Reconciliation 
 }
 
 // =============================================================================
-// CLAIM ROW with hover citation popover
+// CLAIM ROW - with hover citation popover and expandable edit drawer
 // =============================================================================
 
-function ClaimRow({ claim, hovered, onHoverIn, onHoverOut }: {
+interface ClaimRowProps {
   claim: ProfileClaim
   hovered: boolean
+  expanded: boolean
+  saving: boolean
+  errorMessage: string | null
   onHoverIn: () => void
   onHoverOut: () => void
-}) {
+  onToggleExpand: () => void
+  onUpdate: (patch: Partial<ProfileClaim>) => Promise<boolean>
+  onDelete: () => Promise<boolean>
+}
+
+function ClaimRow({
+  claim, hovered, expanded, saving, errorMessage,
+  onHoverIn, onHoverOut, onToggleExpand, onUpdate, onDelete,
+}: ClaimRowProps) {
   const sr = claim.surface_research || null
   const sourceLabel = sr?.source_label || claim.source_label || 'Unknown source'
   const sourceUrl = sr?.source_url || null
   const tierLabel = sr?.tier_label || (claim.source_tier ? `Tier ${claim.source_tier}` : '-')
 
+  // Local edit state - mirrors claim, flushed on save
+  const [draftText, setDraftText] = useState(claim.claim_text)
+  const [draftCategory, setDraftCategory] = useState(claim.claim_category || '')
+  const [draftConfidence, setDraftConfidence] = useState(claim.confidence_level || '')
+  const [draftBriefCritical, setDraftBriefCritical] = useState(!!claim.is_brief_critical)
+  const [draftAttestation, setDraftAttestation] = useState(claim.interpretation_attestation || '')
+  const [draftDispute, setDraftDispute] = useState(claim.dispute_reason || '')
+
+  // Re-sync drafts when claim changes externally (e.g., after a save rollback)
+  useEffect(() => {
+    setDraftText(claim.claim_text)
+    setDraftCategory(claim.claim_category || '')
+    setDraftConfidence(claim.confidence_level || '')
+    setDraftBriefCritical(!!claim.is_brief_critical)
+    setDraftAttestation(claim.interpretation_attestation || '')
+    setDraftDispute(claim.dispute_reason || '')
+  }, [claim.id, claim.claim_text, claim.claim_category, claim.confidence_level,
+      claim.is_brief_critical, claim.interpretation_attestation, claim.dispute_reason])
+
+  // Quick status change - one-click from collapsed view
+  async function handleStatusChange(newStatus: string) {
+    const patch: Partial<ProfileClaim> = { status: newStatus }
+    if (newStatus === 'attested') {
+      patch.attested_at = new Date().toISOString()
+    }
+    await onUpdate(patch)
+  }
+
+  // Save all draft changes
+  async function handleSaveAll() {
+    const patch: Partial<ProfileClaim> = {
+      claim_text: draftText.trim() || claim.claim_text,
+      claim_category: draftCategory.trim() || null,
+      confidence_level: draftConfidence.trim() || null,
+      is_brief_critical: draftBriefCritical,
+      interpretation_attestation: draftAttestation.trim() || null,
+      dispute_reason: draftDispute.trim() || null,
+    }
+    const ok = await onUpdate(patch)
+    if (ok) onToggleExpand()  // collapse after successful save
+  }
+
+  // Cancel - reset drafts and close
+  function handleCancel() {
+    setDraftText(claim.claim_text)
+    setDraftCategory(claim.claim_category || '')
+    setDraftConfidence(claim.confidence_level || '')
+    setDraftBriefCritical(!!claim.is_brief_critical)
+    setDraftAttestation(claim.interpretation_attestation || '')
+    setDraftDispute(claim.dispute_reason || '')
+    onToggleExpand()
+  }
+
   return (
     <div
-      style={{ ...claimRowStyle, position: 'relative' }}
+      style={{ ...claimRowStyle, position: 'relative', display: 'block', padding: 0, overflow: 'visible' }}
       onMouseEnter={onHoverIn}
       onMouseLeave={onHoverOut}
     >
-      <div>
-        <span style={statusBadgeStyle(claim.status)}>{claim.status || 'untested'}</span>
-      </div>
-      <div>
-        <div style={{ color: palette.espresso, marginBottom: '4px', lineHeight: 1.45 }}>{claim.claim_text}</div>
+      {/* COLLAPSED ROW - same grid as before */}
+      <div
+        onClick={onToggleExpand}
+        style={{
+          ...claimRowStyle,
+          cursor: 'pointer',
+          marginBottom: 0,
+          border: 'none',
+          background: expanded ? palette.cream : palette.white,
+          borderBottom: expanded ? `1px solid ${palette.hairline}` : 'none',
+          opacity: saving ? 0.6 : 1,
+          transition: 'background 0.15s, opacity 0.15s',
+        }}
+      >
+        <div>
+          <span style={statusBadgeStyle(claim.status)}>{claim.status || 'untested'}</span>
+        </div>
+        <div>
+          <div style={{ color: palette.espresso, marginBottom: '4px', lineHeight: 1.45 }}>{claim.claim_text}</div>
+          <div style={{ fontSize: '11px', color: palette.textTertiary }}>
+            {claim.claim_category && <span style={{ marginRight: '10px' }}>{claim.claim_category}</span>}
+            {claim.confidence_level && <span style={{ marginRight: '10px' }}>confidence: {claim.confidence_level}</span>}
+            {claim.is_brief_critical && <span style={{ color: palette.danger, fontWeight: 600 }}>brief-critical</span>}
+          </div>
+        </div>
         <div style={{ fontSize: '11px', color: palette.textTertiary }}>
-          {claim.claim_category && <span style={{ marginRight: '10px' }}>{claim.claim_category}</span>}
-          {claim.confidence_level && <span style={{ marginRight: '10px' }}>confidence: {claim.confidence_level}</span>}
-          {claim.is_brief_critical && <span style={{ color: palette.danger, fontWeight: 600 }}>brief-critical</span>}
+          <div style={{ marginBottom: '4px' }}><span style={tierBadgeStyle(claim.source_tier ?? null)}>{tierLabel}</span></div>
+          <div style={{ lineHeight: 1.3 }}>{sourceLabel.length > 60 ? sourceLabel.slice(0, 60) + '...' : sourceLabel}</div>
+        </div>
+        <div style={{ textAlign: 'right' }}>
+          {sourceUrl && !expanded && (
+            <a
+              href={sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              style={{ fontSize: '11px', color: palette.amber, textDecoration: 'underline' }}
+            >
+              view source
+            </a>
+          )}
+          {expanded && (
+            <span style={{ fontSize: '11px', color: palette.textTertiary }}>(open)</span>
+          )}
         </div>
       </div>
-      <div style={{ fontSize: '11px', color: palette.textTertiary }}>
-        <div style={{ marginBottom: '4px' }}><span style={tierBadgeStyle(claim.source_tier ?? null)}>{tierLabel}</span></div>
-        <div style={{ lineHeight: 1.3 }}>{sourceLabel.length > 60 ? sourceLabel.slice(0, 60) + '...' : sourceLabel}</div>
-      </div>
-      <div style={{ textAlign: 'right' }}>
-        {sourceUrl && (
-          <a href={sourceUrl} target="_blank" rel="noopener noreferrer"
-            style={{ fontSize: '11px', color: palette.amber, textDecoration: 'underline' }}>
-            view source
-          </a>
-        )}
-      </div>
 
-      {/* Hover popover - source detail */}
-      {hovered && (sr || claim.source_label) && (
+      {/* HOVER POPOVER - only when collapsed and hovered */}
+      {hovered && !expanded && (sr || claim.source_label) && (
         <div style={{
           position: 'absolute',
           top: '100%',
@@ -647,6 +850,7 @@ function ClaimRow({ claim, hovered, onHoverIn, onHoverOut }: {
           fontSize: '12px',
           lineHeight: 1.5,
           boxShadow: '0 8px 24px rgba(0,0,0,0.18)',
+          pointerEvents: 'none',
         }}>
           <div style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: palette.amber, marginBottom: '6px' }}>
             Source
@@ -665,17 +869,234 @@ function ClaimRow({ claim, hovered, onHoverIn, onHoverOut }: {
             </div>
           )}
           {sourceUrl && (
-            <div style={{ fontSize: '11px', marginTop: '8px' }}>
-              <a href={sourceUrl} target="_blank" rel="noopener noreferrer"
-                style={{ color: palette.amber, textDecoration: 'underline' }}>
-                {sourceUrl}
-              </a>
+            <div style={{ fontSize: '11px', marginTop: '8px', wordBreak: 'break-all' }}>
+              {sourceUrl}
             </div>
           )}
+          <div style={{ fontSize: '10px', color: palette.textTertiary, marginTop: '10px', fontStyle: 'italic' }}>
+            Click row to edit.
+          </div>
+        </div>
+      )}
+
+      {/* EXPANDED EDIT DRAWER */}
+      {expanded && (
+        <div style={{ padding: '20px 16px', background: palette.cream, borderTop: `1px solid ${palette.hairline}` }}>
+
+          {/* Quick status row */}
+          <div style={{ marginBottom: '20px' }}>
+            <label style={{ fontSize: '11px', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: palette.textTertiary, display: 'block', marginBottom: '8px' }}>
+              Status
+            </label>
+            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+              {(['untested', 'assumed', 'attested', 'disputed'] as const).map(s => {
+                const active = (claim.status || 'untested') === s
+                return (
+                  <button
+                    key={s}
+                    onClick={() => handleStatusChange(s)}
+                    disabled={saving}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: '12px',
+                      fontWeight: active ? 700 : 500,
+                      fontFamily: 'inherit',
+                      background: active ? palette.amber : palette.white,
+                      color: palette.espresso,
+                      border: `1.5px solid ${active ? palette.amber : palette.hairline}`,
+                      borderRadius: '6px',
+                      cursor: saving ? 'wait' : 'pointer',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.04em',
+                    }}
+                  >
+                    {s}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+
+          {/* Edit grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={drawerLabelStyle}>Claim text</label>
+              <textarea
+                value={draftText}
+                onChange={(e) => setDraftText(e.target.value)}
+                style={{ ...drawerInputStyle, minHeight: '70px', resize: 'vertical' }}
+              />
+            </div>
+
+            <div>
+              <label style={drawerLabelStyle}>Category</label>
+              <input
+                value={draftCategory}
+                onChange={(e) => setDraftCategory(e.target.value)}
+                style={drawerInputStyle}
+                placeholder="e.g. capability, certification"
+              />
+            </div>
+
+            <div>
+              <label style={drawerLabelStyle}>Confidence</label>
+              <select
+                value={draftConfidence}
+                onChange={(e) => setDraftConfidence(e.target.value)}
+                style={drawerInputStyle}
+              >
+                <option value="">-</option>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+              </select>
+            </div>
+
+            <div style={{ gridColumn: '1 / -1' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', color: palette.espresso }}>
+                <input
+                  type="checkbox"
+                  checked={draftBriefCritical}
+                  onChange={(e) => setDraftBriefCritical(e.target.checked)}
+                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
+                />
+                <span style={{ fontWeight: 600 }}>Brief-critical</span>
+                <span style={{ color: palette.textTertiary, fontSize: '12px' }}>
+                  - flag for recon brief positioning
+                </span>
+              </label>
+            </div>
+          </div>
+
+          {/* Conditional textareas */}
+          {claim.status === 'attested' && (
+            <div style={{ marginBottom: '16px' }}>
+              <label style={drawerLabelStyle}>Attestation note <span style={{ color: palette.textTertiary, fontWeight: 400 }}>(why this is confirmed)</span></label>
+              <textarea
+                value={draftAttestation}
+                onChange={(e) => setDraftAttestation(e.target.value)}
+                style={{ ...drawerInputStyle, minHeight: '60px', resize: 'vertical' }}
+              />
+            </div>
+          )}
+
+          {claim.status === 'disputed' && (
+            <div style={{ marginBottom: '16px' }}>
+              <label style={drawerLabelStyle}>Dispute reason <span style={{ color: palette.danger, fontWeight: 400 }}>(required)</span></label>
+              <textarea
+                value={draftDispute}
+                onChange={(e) => setDraftDispute(e.target.value)}
+                style={{ ...drawerInputStyle, minHeight: '60px', resize: 'vertical' }}
+                placeholder="What's wrong with this claim?"
+              />
+            </div>
+          )}
+
+          {/* Error */}
+          {errorMessage && (
+            <div style={{ padding: '10px 12px', background: '#F7E6E3', border: `1px solid ${palette.danger}`, borderRadius: '6px', fontSize: '12px', color: palette.danger, marginBottom: '16px' }}>
+              {errorMessage}
+            </div>
+          )}
+
+          {/* Action bar */}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', paddingTop: '12px', borderTop: `1px solid ${palette.hairline}` }}>
+            <button
+              onClick={handleSaveAll}
+              disabled={saving}
+              style={{
+                padding: '8px 18px',
+                fontSize: '13px',
+                fontWeight: 600,
+                fontFamily: 'inherit',
+                background: palette.amber,
+                color: palette.espresso,
+                border: 'none',
+                borderRadius: '6px',
+                cursor: saving ? 'wait' : 'pointer',
+              }}
+            >
+              {saving ? 'Saving...' : 'Save changes'}
+            </button>
+            <button
+              onClick={handleCancel}
+              disabled={saving}
+              style={{
+                padding: '8px 18px',
+                fontSize: '13px',
+                fontFamily: 'inherit',
+                background: 'transparent',
+                color: palette.textSecondary,
+                border: `1.5px solid ${palette.hairline}`,
+                borderRadius: '6px',
+                cursor: saving ? 'wait' : 'pointer',
+              }}
+            >
+              Cancel
+            </button>
+            {sourceUrl && (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  padding: '8px 14px',
+                  fontSize: '12px',
+                  color: palette.amber,
+                  textDecoration: 'underline',
+                  marginLeft: '4px',
+                }}
+              >
+                view source
+              </a>
+            )}
+            <button
+              onClick={onDelete}
+              disabled={saving}
+              style={{
+                marginLeft: 'auto',
+                padding: '8px 14px',
+                fontSize: '12px',
+                fontFamily: 'inherit',
+                background: 'transparent',
+                color: palette.danger,
+                border: `1.5px solid ${palette.danger}`,
+                borderRadius: '6px',
+                cursor: saving ? 'wait' : 'pointer',
+              }}
+            >
+              Delete claim
+            </button>
+          </div>
         </div>
       )}
     </div>
   )
+}
+
+// Inline style helpers for the edit drawer
+const drawerLabelStyle: CSSProperties = {
+  display: 'block',
+  fontSize: '11px',
+  fontWeight: 700,
+  letterSpacing: '0.06em',
+  textTransform: 'uppercase',
+  color: palette.textTertiary,
+  marginBottom: '6px',
+}
+
+const drawerInputStyle: CSSProperties = {
+  width: '100%',
+  padding: '8px 10px',
+  fontSize: '13px',
+  fontFamily: 'inherit',
+  border: `1.5px solid ${palette.hairline}`,
+  borderRadius: '6px',
+  background: palette.white,
+  color: palette.espresso,
+  outline: 'none',
+  boxSizing: 'border-box',
+  lineHeight: 1.5,
 }
 
 export default ProfileReview
