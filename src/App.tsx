@@ -10,6 +10,7 @@ import { Dashboard } from '@/components/Dashboard'
 import { AdminPanel } from '@/components/AdminPanel'
 import { PrelimReview } from '@/components/PrelimReview'
 import { AdminSubmissionsPage } from '@/components/AdminSubmissionsPage'
+import { ProfileReview } from '@/components/ProfileReview'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 
 export default function App() {
@@ -32,6 +33,11 @@ export default function App() {
   // Auth-gated. RLS policy added in 0039 lets SuperAdmin/Admin SELECT any row.
   const isAdminSubmissionsPath = window.location.pathname === '/admin/submissions'
     || window.location.pathname === '/admin/submissions/'
+
+  // /profile/review - consultant-facing strategic profile review (federal +
+  // commercial + reconciliation + claims). Auth-gated.
+  const isProfileReviewPath = window.location.pathname === '/profile/review'
+    || window.location.pathname === '/profile/review/'
 
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
@@ -189,6 +195,12 @@ export default function App() {
   // Auth-gated; rendered without NavBar/Dashboard chrome for focus.
   if (isAdminSubmissionsPath) {
     return <AdminSubmissionsPage />
+  }
+
+  // /profile/review - consultant-facing strategic profile viewer.
+  // Reads federal_profile + commercial_profile + reconciliation + profile_claims.
+  if (isProfileReviewPath) {
+    return <ProfileReview />
   }
 
   // Signed in with role - show the main app
