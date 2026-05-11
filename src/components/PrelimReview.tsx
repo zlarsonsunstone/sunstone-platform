@@ -533,6 +533,51 @@ export function PrelimReview({ submissionId: propSubmissionId, onApproved }: Pre
   }
 
   // -------------------------------------------------------------------------
+  // MARK REVIEWED (don't send) - consultant has done their cleanup but does
+  // not need prospect sign-off. Saves edits, stamps the profile as reviewed
+  // internally, and moves on. NO sign_off_token is minted. Prospect never
+  // sees a link. This is the right path when edits are minor or when the
+  // consultant just wants to lock in their version and move forward.
+  // -------------------------------------------------------------------------
+  async function handleMarkReviewed() {
+    if (!prelim) return
+
+    // Save current edits first so they're locked in.
+    const saved = await handleSave()
+    if (!saved) return
+
+    setStage('saving')
+    setError(null)
+
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      const now = new Date()
+
+      const { error: updErr } = await supabase
+        .schema('v2')
+        .from('prelim_profile')
+        .update({
+          status: 'reviewed_internal',
+          // Reuse approved_at/approved_by columns to record the consultant
+          // review timestamp - this is the act of the consultant approving
+          // their own work. No token is minted; no sent_to_prospect_at is set.
+          approved_at: now.toISOString(),
+          approved_by: user?.id || null,
+        })
+        .eq('id', prelim.id)
+
+      if (updErr) throw new Error(`Mark reviewed failed: ${updErr.message}`)
+
+      // Update local prelim state so the UI reflects the new status.
+      setPrelim({ ...prelim, status: 'reviewed_internal', approved_at: now.toISOString(), approved_by: user?.id || null })
+      setStage('ready')
+    } catch (e: any) {
+      setError(e?.message || 'Mark reviewed failed')
+      setStage('ready')
+    }
+  }
+
+  // -------------------------------------------------------------------------
   // REVOKE - if a token was issued in error (Dana incident lesson).
   // Clears the token. Prospect-facing link stops working immediately.
   // -------------------------------------------------------------------------
@@ -818,16 +863,27 @@ export function PrelimReview({ submissionId: propSubmissionId, onApproved }: Pre
                     {stage === 'saving' ? 'Saving...' : 'Save Draft'}
                   </button>
                   <button
+                    onClick={handleMarkReviewed}
+                    disabled={stage === 'saving' || stage === 'approving'}
+                    style={secondaryButtonStyle}
+                    title="Save your edits and move on - prospect does NOT see a link."
+                  >
+                    Mark Reviewed (don't send)
+                  </button>
+                  <button
                     onClick={handleApprove}
                     disabled={stage === 'saving' || stage === 'approving'}
                     style={primaryButtonStyle}
                     onMouseEnter={(e) => (e.currentTarget.style.background = palette.amberHover)}
                     onMouseLeave={(e) => (e.currentTarget.style.background = palette.amber)}
+                    title="Mint a token and send the prospect a link to review + sign off."
                   >
                     {stage === 'approving' ? 'Approving...' : 'Approve & Send to Prospect'}
                   </button>
                   <span style={{ fontSize: '12px', color: palette.textTertiary, marginLeft: 'auto' }}>
-                    No prospect link exists yet.
+                    {prelim.status === 'reviewed_internal'
+                      ? `Reviewed internally${prelim.approved_at ? ' on ' + new Date(prelim.approved_at).toLocaleDateString() : ''}.`
+                      : 'No prospect link exists yet.'}
                   </span>
                 </>
               )}
