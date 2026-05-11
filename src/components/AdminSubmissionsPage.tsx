@@ -191,6 +191,8 @@ export function AdminSubmissionsPage() {
   const [error, setError] = useState<string | null>(null)
   const [submissions, setSubmissions] = useState<Submission[]>([])
   const [filter, setFilter] = useState<StatusFilter>('all')
+  const [convertingId, setConvertingId] = useState<string | null>(null)
+  const [convertError, setConvertError] = useState<{ submissionId: string; message: string } | null>(null)
 
   useEffect(() => {
     void load()
@@ -213,6 +215,35 @@ export function AdminSubmissionsPage() {
     } catch (e: any) {
       setError(e?.message || 'Unknown error')
       setStage('error')
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // CONVERT INTAKE -> STRATEGIC PROFILE
+  // ---------------------------------------------------------------------------
+  // Calls the convert-intake Netlify function, which creates tenant +
+  // strategic_profile + stub federal/commercial profiles. On success, navigates
+  // to the new ProfileReview page so the consultant can start building the
+  // prelim CBP. On failure, shows error inline next to the affected row.
+  async function convertSubmission(submissionId: string) {
+    setConvertingId(submissionId)
+    setConvertError(null)
+    try {
+      const resp = await fetch('/.netlify/functions/convert-intake', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ submission_id: submissionId }),
+      })
+      const result = await resp.json().catch(() => ({}))
+      if (!resp.ok || !result.ok) {
+        const detail = result?.detail || result?.error || `HTTP ${resp.status}`
+        throw new Error(detail)
+      }
+      // Navigate to the new strategic profile review page
+      window.location.href = `/profile/review?strategic_profile_id=${result.strategic_profile_id}`
+    } catch (e: any) {
+      setConvertError({ submissionId, message: e?.message || 'Conversion failed' })
+      setConvertingId(null)
     }
   }
 
@@ -337,12 +368,41 @@ export function AdminSubmissionsPage() {
                       </span>
                     </td>
                     <td style={tdStyle}>
-                      <a
-                        href={`/prelim/review?submission_id=${s.id}`}
-                        style={reviewButtonStyle}
-                      >
-                        Review
-                      </a>
+                      {s.converted_strategic_profile_id ? (
+                        <a
+                          href={`/profile/review?strategic_profile_id=${s.converted_strategic_profile_id}`}
+                          style={reviewButtonStyle}
+                        >
+                          Open profile
+                        </a>
+                      ) : (
+                        <>
+                          <button
+                            onClick={() => convertSubmission(s.id)}
+                            disabled={convertingId === s.id}
+                            style={{
+                              ...reviewButtonStyle,
+                              cursor: convertingId === s.id ? 'wait' : 'pointer',
+                              opacity: convertingId === s.id ? 0.6 : 1,
+                              border: 'none',
+                              fontFamily: 'inherit',
+                            }}
+                          >
+                            {convertingId === s.id ? 'Creating...' : 'Create Prelim CBP'}
+                          </button>
+                          {convertError?.submissionId === s.id && (
+                            <div style={{ marginTop: '6px', fontSize: '11px', color: palette.danger, maxWidth: '200px', lineHeight: 1.3 }}>
+                              {convertError.message}
+                            </div>
+                          )}
+                          <a
+                            href={`/prelim/review?submission_id=${s.id}`}
+                            style={{ ...reviewButtonStyle, background: 'transparent', color: palette.textSecondary, border: `1px solid ${palette.hairline}`, marginLeft: '6px', fontSize: '12px' }}
+                          >
+                            View intake
+                          </a>
+                        </>
+                      )}
                     </td>
                   </tr>
                 ))}
