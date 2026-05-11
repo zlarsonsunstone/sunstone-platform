@@ -105,10 +105,10 @@ export const handler: Handler = async (event) => {
     }
 
     // Idempotency: already converted?
-    if (submission.strategic_profile_id) {
+    if (submission.converted_strategic_profile_id) {
       return json(200, {
         ok: true,
-        strategic_profile_id: submission.strategic_profile_id,
+        strategic_profile_id: submission.converted_strategic_profile_id,
         tenant_id: null,
         already_converted: true,
       })
@@ -254,8 +254,9 @@ export const handler: Handler = async (event) => {
       .schema('v2')
       .from('public_intake_submission')
       .update({
-        strategic_profile_id: strategicProfileId,
+        converted_strategic_profile_id: strategicProfileId,
         converted_at: new Date().toISOString(),
+        status: 'converted_to_profile',
       })
       .eq('id', submissionId)
 
