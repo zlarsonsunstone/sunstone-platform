@@ -461,6 +461,224 @@
     margin-top: 2px;
   }
 
+  /* ===== STAGE BLOCK (video + transcript pipeline, all 12 stages) ===== */
+  .stage-block {
+    margin-top: 40px;
+    padding-top: 32px;
+    border-top: 1px solid var(--hairline);
+  }
+  .stage-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 18px;
+  }
+  .stage-block-eyebrow {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.18em;
+    color: var(--amber);
+    text-transform: uppercase;
+  }
+  .stage-block-title {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--text);
+    margin: 4px 0 16px 0;
+    letter-spacing: -0.01em;
+  }
+
+  .stage-subblock {
+    background: var(--bg-card);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 22px 24px;
+    margin-bottom: 18px;
+  }
+  .stage-subblock h4 {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    color: var(--text-mid);
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .stage-subblock h4 .icon {
+    font-size: 16px;
+  }
+
+  .video-frame {
+    position: relative;
+    width: 100%;
+    aspect-ratio: 16 / 9;
+    background: var(--bg-soft);
+    border: 1px solid var(--hairline);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .video-frame iframe {
+    width: 100%;
+    height: 100%;
+    border: 0;
+  }
+  .video-frame .placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    text-align: center;
+    padding: 24px;
+  }
+  .video-frame .placeholder .icon {
+    font-size: 28px;
+    margin-bottom: 8px;
+    opacity: 0.5;
+  }
+
+  .admin-control {
+    margin-top: 12px;
+    padding: 12px;
+    background: var(--bg-soft);
+    border: 1px dashed var(--hairline);
+    border-radius: 6px;
+    font-size: 12px;
+  }
+  .admin-control label {
+    display: block;
+    font-weight: 600;
+    color: var(--text-mid);
+    margin-bottom: 6px;
+    font-size: 11px;
+    letter-spacing: 0.04em;
+  }
+  .admin-control textarea,
+  .admin-control input[type="text"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--hairline);
+    border-radius: 4px;
+    font-family: 'Consolas', 'Monaco', monospace;
+    font-size: 11px;
+    background: var(--bg-card);
+    color: var(--text);
+    resize: vertical;
+  }
+  .admin-control textarea { min-height: 60px; }
+  .admin-control .btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+    flex-wrap: wrap;
+  }
+  .admin-btn {
+    padding: 6px 14px;
+    background: var(--amber);
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    letter-spacing: 0.04em;
+  }
+  .admin-btn:hover { background: var(--amber-deep); }
+  .admin-btn.secondary {
+    background: transparent;
+    color: var(--text-mid);
+    border: 1px solid var(--hairline);
+  }
+  .admin-btn.danger {
+    background: transparent;
+    color: var(--red);
+    border: 1px solid var(--red);
+  }
+
+  .guidance-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 14px;
+  }
+  .guidance-card {
+    background: var(--bg-card);
+    border: 1px solid var(--hairline);
+    border-left: 3px solid var(--amber);
+    border-radius: 6px;
+    padding: 16px 18px;
+  }
+  .guidance-card h5 {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    color: var(--amber);
+    text-transform: uppercase;
+    margin-bottom: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .guidance-card ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  .guidance-card ul li {
+    font-size: 13px;
+    color: var(--text);
+    padding: 6px 0;
+    border-bottom: 1px solid var(--hairline-soft);
+    line-height: 1.5;
+  }
+  .guidance-card ul li:last-child { border-bottom: none; }
+  .guidance-card ul li::before {
+    content: "·";
+    color: var(--amber);
+    font-weight: 700;
+    margin-right: 8px;
+  }
+
+  .empty-guidance {
+    padding: 24px;
+    text-align: center;
+    color: var(--text-dim);
+    font-size: 13px;
+    font-style: italic;
+    background: var(--bg-soft);
+    border-radius: 6px;
+    border: 1px dashed var(--hairline);
+  }
+
+  .processing-indicator {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: var(--amber);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .processing-indicator::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border: 2px solid var(--amber);
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 800px) {
+    .guidance-grid { grid-template-columns: 1fr; }
+  }
+
   /* ===== RESPONSIVE ===== */
   @media (max-width: 1000px) {
     .app-shell { grid-template-columns: 280px 1fr; }
@@ -635,9 +853,11 @@ const PROSPECT_DATA = {
   headcount: '6-15',
   selfStatedCapabilities: 'Strategic paid media; multicultural multilingual marketing & advertising; creative content (videos, ads, infographics) in multiple languages',
   federalPath: 'some',
-  totalAwards: 1570,
-  totalDollars: '$139.2M',
+  totalAwards: 656,
+  totalDollars: '$1.5B+',
   ringCount: 4,
+  ring1Count: 'Bullseye',
+  ring1Sub: 'plus 3 adjacency rings',
 };
 
 // =============================================================================
@@ -705,10 +925,287 @@ function renderWorkspace() {
 
   html += '<div class="ws-body">';
   html += renderWorkspaceContent(s);
+  html += renderStageBlock(s);
   html += '</div>';
 
   ws.innerHTML = html;
   ws.scrollTop = 0;
+}
+
+// =============================================================================
+// ADMIN MODE — toggle via ?admin=1
+// =============================================================================
+const IS_ADMIN = new URLSearchParams(window.location.search).get('admin') === '1';
+
+// =============================================================================
+// STAGE BLOCK — video + transcript + AI guidance, all 12 stages
+// =============================================================================
+function renderStageBlock(s) {
+  const stageKey = 'stage_' + s.num + '_' + s.workspace;
+  const data = loadStageData(stageKey);
+  const isLocked = s.status === 'locked';
+
+  let html = '<div class="stage-block">';
+  html += '<div class="stage-block-header">';
+  html += '<div>';
+  html += '<div class="stage-block-eyebrow">Stage ' + s.num + ' · Walkthrough & Guidance</div>';
+  html += '<div class="stage-block-title">After the Call</div>';
+  html += '</div>';
+  html += '</div>';
+
+  // ----- VIDEO -----
+  html += '<div class="stage-subblock">';
+  html += '<h4><span class="icon">📹</span> Walkthrough Video</h4>';
+  html += '<div class="video-frame">';
+  if (data.videoEmbed && data.videoEmbed.trim().length > 0) {
+    html += data.videoEmbed;
+  } else {
+    html += '<div class="placeholder">';
+    html += '<div class="icon">🎬</div>';
+    if (isLocked) {
+      html += '<div>Available after Stage ' + s.num + ' session</div>';
+    } else {
+      html += '<div>Video will appear here after the call</div>';
+    }
+    html += '</div>';
+  }
+  html += '</div>';
+  if (IS_ADMIN) {
+    html += '<div class="admin-control">';
+    html += '<label>ADMIN · Wistia iframe embed code</label>';
+    html += '<textarea id="videoInput_' + stageKey + '" placeholder="<iframe src=&quot;https://fast.wistia.net/embed/iframe/...&quot; ...></iframe>">' + escapeHtml(data.videoEmbed || '') + '</textarea>';
+    html += '<div class="btn-row">';
+    html += '<button class="admin-btn" onclick="saveVideo(\'' + stageKey + '\')">Save Video</button>';
+    html += '<button class="admin-btn secondary" onclick="clearVideo(\'' + stageKey + '\')">Clear</button>';
+    html += '</div>';
+    html += '</div>';
+  }
+  html += '</div>';
+
+  // ----- GUIDANCE OUTPUT -----
+  html += '<div class="stage-subblock">';
+  html += '<h4><span class="icon">🧭</span> Tips, Tricks & Guidance</h4>';
+  if (data.guidance && data.guidance.decided) {
+    html += renderGuidance(data.guidance);
+  } else if (isLocked) {
+    html += '<div class="empty-guidance">Available after Stage ' + s.num + ' session.</div>';
+  } else {
+    html += '<div class="empty-guidance">Guidance will appear here after the call transcript is processed.</div>';
+  }
+  html += '</div>';
+
+  // ----- ADMIN: TRANSCRIPT PROCESSOR -----
+  if (IS_ADMIN) {
+    html += '<div class="stage-subblock">';
+    html += '<h4><span class="icon">🎙</span> ADMIN · Process Fireflies Transcript</h4>';
+    html += '<div class="admin-control">';
+    html += '<label>Paste Fireflies transcript (raw)</label>';
+    html += '<textarea id="transcriptInput_' + stageKey + '" placeholder="Paste the full transcript here..." style="min-height:140px;">' + escapeHtml(data.transcript || '') + '</textarea>';
+    html += '<div class="btn-row">';
+    html += '<button class="admin-btn" onclick="processTranscript(\'' + stageKey + '\', ' + s.num + ', \'' + escapeJs(s.name) + '\')">Process with Claude</button>';
+    if (data.guidance && data.guidance.decided) {
+      html += '<button class="admin-btn secondary" onclick="processTranscript(\'' + stageKey + '\', ' + s.num + ', \'' + escapeJs(s.name) + '\', true)">Regenerate</button>';
+    }
+    html += '<button class="admin-btn danger" onclick="clearGuidance(\'' + stageKey + '\')">Clear Guidance</button>';
+    html += '<span id="processStatus_' + stageKey + '"></span>';
+    html += '</div>';
+    html += '</div>';
+    html += '</div>';
+  }
+
+  html += '</div>'; // /stage-block
+  return html;
+}
+
+function renderGuidance(g) {
+  let html = '<div class="guidance-grid">';
+  html += guidanceCard('🎯', 'What We Decided', g.decided);
+  html += guidanceCard('💡', 'Key Insights', g.insights);
+  html += guidanceCard('🛠', 'How to Use This', g.howTo);
+  html += guidanceCard('📋', 'Your Next Steps', g.nextSteps);
+  html += '</div>';
+  return html;
+}
+
+function guidanceCard(icon, title, items) {
+  let html = '<div class="guidance-card">';
+  html += '<h5>' + icon + ' ' + title + '</h5>';
+  html += '<ul>';
+  if (Array.isArray(items) && items.length > 0) {
+    items.forEach(item => { html += '<li>' + escapeHtml(item) + '</li>'; });
+  } else {
+    html += '<li style="font-style:italic;color:var(--text-dim);">No items captured</li>';
+  }
+  html += '</ul>';
+  html += '</div>';
+  return html;
+}
+
+// =============================================================================
+// PERSISTENCE — localStorage per stage
+// =============================================================================
+function loadStageData(stageKey) {
+  try {
+    const raw = localStorage.getItem('cv_wb_' + stageKey);
+    if (!raw) return { videoEmbed: '', transcript: '', guidance: null };
+    return JSON.parse(raw);
+  } catch (e) {
+    return { videoEmbed: '', transcript: '', guidance: null };
+  }
+}
+
+function saveStageData(stageKey, data) {
+  try {
+    localStorage.setItem('cv_wb_' + stageKey, JSON.stringify(data));
+  } catch (e) {
+    alert('Could not save: ' + e.message);
+  }
+}
+
+function saveVideo(stageKey) {
+  const input = document.getElementById('videoInput_' + stageKey);
+  const data = loadStageData(stageKey);
+  data.videoEmbed = input.value.trim();
+  saveStageData(stageKey, data);
+  renderWorkspace();
+}
+
+function clearVideo(stageKey) {
+  const data = loadStageData(stageKey);
+  data.videoEmbed = '';
+  saveStageData(stageKey, data);
+  renderWorkspace();
+}
+
+function clearGuidance(stageKey) {
+  if (!confirm('Clear all guidance for this stage?')) return;
+  const data = loadStageData(stageKey);
+  data.guidance = null;
+  data.transcript = '';
+  saveStageData(stageKey, data);
+  renderWorkspace();
+}
+
+// =============================================================================
+// CLAUDE API — process Fireflies transcript → 4-section guidance
+// =============================================================================
+async function processTranscript(stageKey, stageNum, stageName, isRegenerate) {
+  const input = document.getElementById('transcriptInput_' + stageKey);
+  const statusEl = document.getElementById('processStatus_' + stageKey);
+  const transcript = input.value.trim();
+
+  if (transcript.length < 50) {
+    alert('Transcript too short. Paste the full Fireflies transcript.');
+    return;
+  }
+
+  // Get API key
+  let apiKey = localStorage.getItem('claude_api_key');
+  if (!apiKey) {
+    apiKey = window.prompt('Enter your Anthropic API key (sk-ant-...). It will be cached in this browser.');
+    if (!apiKey) return;
+    localStorage.setItem('claude_api_key', apiKey.trim());
+  }
+
+  statusEl.innerHTML = '<span class="processing-indicator">Processing transcript with Claude...</span>';
+
+  const systemPrompt = 'You are an expert at distilling strategic consulting call transcripts into post-call client guidance. The reader is a federal contracting prospect who just finished a working session with Sunstone Advisory Group. Your output is what they will re-read 7 days later when they have forgotten the call details. Be specific, concrete, and use their actual language where possible. NEVER invent quotes or facts not in the transcript. Output ONLY valid JSON with no preamble, no markdown, no code fences.';
+
+  const userPromptText = 'This is the transcript of "' + stageName + '" (Stage ' + stageNum + ' of 12 in the Crystal Compass journey). Distill it into 4 sections of guidance for the client. Each section should have 3-6 short bullet points (each bullet is one sentence, action-oriented, plain language).\n\nReturn ONLY this JSON shape, no other text:\n{\n  "decided": ["What we agreed to on the call (concrete conclusions)"],\n  "insights": ["Aha moments and learnings the client surfaced"],\n  "howTo": ["Power moves with the recon tool / system they might forget next week"],\n  "nextSteps": ["Concrete actions for the client to take before the next stage"]\n}\n\nTRANSCRIPT:\n\n' + transcript;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 60000);
+
+  try {
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true'
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [ { role: 'user', content: userPromptText } ]
+      }),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const errBody = await response.text();
+      console.error('[Process] API error', response.status, errBody);
+      statusEl.innerHTML = '<span style="color:var(--red);font-size:12px;">Error ' + response.status + ' — check console</span>';
+      if (response.status === 401) {
+        localStorage.removeItem('claude_api_key');
+        alert('API key rejected. Cleared cache — try again and re-enter.');
+      }
+      return;
+    }
+
+    const result = await response.json();
+    console.log('[Process] Response:', result);
+    const textOut = result.content[0].text.trim();
+
+    // Strip code fences if model wrapped them despite instructions
+    let cleaned = textOut.replace(/^```json\s*/i, '').replace(/^```\s*/, '').replace(/\s*```$/, '').trim();
+
+    let guidance;
+    try {
+      guidance = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error('[Process] JSON parse failed:', parseErr, 'Raw:', cleaned);
+      statusEl.innerHTML = '<span style="color:var(--red);font-size:12px;">JSON parse failed — see console</span>';
+      return;
+    }
+
+    // Validate shape
+    if (!guidance.decided || !guidance.insights || !guidance.howTo || !guidance.nextSteps) {
+      statusEl.innerHTML = '<span style="color:var(--red);font-size:12px;">Output missing required sections — see console</span>';
+      console.error('[Process] Bad shape:', guidance);
+      return;
+    }
+
+    // Persist
+    const data = loadStageData(stageKey);
+    data.transcript = transcript;
+    data.guidance = guidance;
+    saveStageData(stageKey, data);
+
+    statusEl.innerHTML = '<span style="color:var(--green);font-size:12px;font-weight:600;">✓ Guidance saved</span>';
+    setTimeout(() => renderWorkspace(), 600);
+
+  } catch (err) {
+    clearTimeout(timeoutId);
+    console.error('[Process] Fetch failed:', err);
+    if (err.name === 'AbortError') {
+      statusEl.innerHTML = '<span style="color:var(--red);font-size:12px;">Timed out after 60s</span>';
+    } else {
+      statusEl.innerHTML = '<span style="color:var(--red);font-size:12px;">Network error — see console</span>';
+    }
+  }
+}
+
+// =============================================================================
+// HTML helpers
+// =============================================================================
+function escapeHtml(str) {
+  if (!str) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function escapeJs(str) {
+  if (!str) return '';
+  return String(str).replace(/\\/g, '\\\\').replace(/'/g, "\\'");
 }
 
 function renderWorkspaceContent(s) {
@@ -874,9 +1371,9 @@ function renderDiscovery() {
         <div class="stat-sub">from bullseye to outer</div>
       </div>
       <div class="stat-card">
-        <div class="stat-label">Ring 1 (Core)</div>
-        <div class="stat-value">1,529</div>
-        <div class="stat-sub">Multilingual / language access</div>
+        <div class="stat-label">Ring Coverage</div>
+        <div class="stat-value">Bullseye</div>
+        <div class="stat-sub">+ 3 adjacency rings</div>
       </div>
     </div>
 
