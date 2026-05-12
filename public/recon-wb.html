@@ -2131,6 +2131,7 @@ function renderDetail(a) {
     html += renderScanResult(scanRec);
   } else if (scanRec && scanRec.error) {
     html += '<div class="synopsis error">' + escHtml(scanRec.error) + '</div>';
+    html += '<button class="scan-btn" style="margin-top:6px" onclick="scanAwardee(\'' + a.id + '\')">Retry scan</button>';
   } else if (webInfo.url) {
     html += '<button class="scan-btn" onclick="scanAwardee(\'' + a.id + '\')">Scan awardee website</button>';
     html += '<div class="synopsis empty" style="margin-top:8px">Click to scan and generate a peer-firm profile.</div>';
@@ -2407,10 +2408,16 @@ async function scanAwardee(awardId) {
     }
   }, 100);
 
-  // Hard 25-second timeout
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('Scan timed out after 25 seconds')), 25000)
-  );
+  // AbortController for hard timeout - actually cancels the fetch
+  const abortController = new AbortController();
+  const abortTimeout = setTimeout(() => {
+    abortController.abort();
+  }, 20000);  // 20s hard cap
+
+  function cleanup() {
+    clearInterval(elapsedInterval);
+    clearTimeout(abortTimeout);
+  }
 
   // SAM-VERIFIED URL ONLY - never fabricate
   const webInfo = lookupWebsite(a);
@@ -2438,7 +2445,7 @@ async function scanAwardee(awardId) {
   // Wicked Bionic profile for doppelganger comparison
   const wbProfile = `Wicked Bionic, LLC - SBA-Certified Women-Owned Small Business (WOSB). LA-based marketing/communications agency. Specialties: multicultural and multilingual marketing, paid media buying, strategic communications, ADA-compliant outreach. 10+ years federal-adjacent work for LA County, LA Public Library, Oregon Dept of Veterans Affairs, CA Citizens Redistricting, CA Service Corp. ~$5M+ in cumulative state/local govt contracts. Multilingual capability: English, Spanish, Tagalog, Chinese, Korean, Armenian, Vietnamese, Russian.`;
 
-  const prompt = `You are analyzing a federal contract awardee and assessing whether they are a competitive peer to Wicked Bionic.
+  const userPrompt = `You are analyzing a federal contract awardee and assessing whether they are a competitive peer to Wicked Bionic.
 
 AWARDEE: ${a.awardee}
 WEBSITE (SAM-verified): ${verifiedUrl}
@@ -2474,8 +2481,9 @@ ${wbProfile}
 
 Score honestly - large multinational ad agencies should be 0-1, small specialty firms doing similar comms/outreach work should be 3-5.`;
 
+  console.log('[Scan] Starting:', a.awardee, 'UEI:', uei, 'URL:', verifiedUrl);
   try {
-    const fetchPromise = fetch('https://api.anthropic.com/v1/messages', {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2486,21 +2494,26 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 1500,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: userPrompt }],
       }),
+      signal: abortController.signal,
     });
-    const resp = await Promise.race([fetchPromise, timeoutPromise]);
-    clearInterval(elapsedInterval);
+    cleanup();
+    console.log('[Scan] Response received:', resp.status, resp.statusText);
     if (!resp.ok) {
       const t = await resp.text();
+      console.error('[Scan] Error body:', t);
       throw new Error('API ' + resp.status + ': ' + t.slice(0, 300));
     }
     const data = await resp.json();
+    console.log('[Scan] Response data:', data);
     const text = data.content?.[0]?.text || '';
+    console.log('[Scan] Extracted text:', text.slice(0, 200));
     let parsed = null;
     try {
       const m = text.match(/\{[\s\S]*\}/);
       parsed = JSON.parse(m ? m[0] : text);
+      console.log('[Scan] Parsed:', parsed);
     } catch (e) {
       throw new Error('Could not parse JSON. Raw: ' + text.slice(0, 200));
     }
@@ -2520,8 +2533,13 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
     saveJSON(LS_DOPPEL, doppelScores);
     render();
   } catch (e) {
-    clearInterval(elapsedInterval);
-    scans[uei] = { error: 'Scan failed: ' + e.message };
+    cleanup();
+    let errMsg = e.message || String(e);
+    if (e.name === 'AbortError') {
+      errMsg = 'Scan exceeded 20s and was cancelled. The API may be slow or blocked.';
+    }
+    console.error('[Scan]', a.awardee, errMsg);
+    scans[uei] = { error: errMsg };
     saveJSON(LS_SCAN, scans);
     render();
   }
