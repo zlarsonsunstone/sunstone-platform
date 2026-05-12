@@ -36,6 +36,25 @@
 [functions."claude-enrich"]
   timeout = 120
 
+# Public static pages served before SPA catch-all
+[[redirects]]
+  from = "/Sunstone_Story.html"
+  to = "/Sunstone_Story.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/Sunstone_Stages.html"
+  to = "/Sunstone_Stages.html"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/Sunstone_Stages_Plain.html"
+  to = "/Sunstone_Stages_Plain.html"
+  status = 200
+  force = true
+
 # SPA routing — all unknown routes fall through to index.html.
 # Netlify handles /.netlify/functions/* natively before this rule is evaluated.
 [[redirects]]
