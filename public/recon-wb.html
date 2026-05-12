@@ -1317,6 +1317,53 @@
     font-size: 13px;
     font-weight: 600;
     z-index: 950;
+    animation: bannerSlideIn 0.3s ease-out;
+  }
+  @keyframes bannerSlideIn {
+    from { opacity: 0; transform: translate(-50%, -10px); }
+    to { opacity: 1; transform: translate(-50%, 0); }
+  }
+
+  /* Scanned-profile badge — appears on every row whose UEI has a cached profile */
+  .scanned-badge {
+    display: inline-block;
+    background: var(--wb-green-light);
+    color: var(--wb-green-deep);
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 2px 7px;
+    border-radius: 10px;
+    margin-right: 6px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    border: 1px solid var(--wb-green);
+  }
+  .scanned-badge.with-score {
+    background: var(--wb-green);
+    color: var(--white);
+    border-color: var(--wb-green-deep);
+  }
+
+  /* Admin re-scan button (only shows when ?admin=1 in URL) */
+  .rescan-btn {
+    background: transparent;
+    color: var(--sun-text-dim);
+    border: 1px dashed var(--sun-hairline);
+    padding: 5px 11px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 10px;
+    font-weight: 600;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    margin-top: 6px;
+  }
+  .rescan-btn:hover {
+    background: #FAF5E6;
+    color: var(--wb-orange-deep);
+    border-color: var(--wb-orange);
   }
 
   /* =========================================================================
@@ -1671,6 +1718,20 @@ let showColdStorage = false;
 let pendingMisalignedModal = null;   // { awardId, sessionStack: [phraseKeys] } when modal is open
 let pendingSimilarPanel = null;      // { sourceAwardId, similarIds: [] }
 
+// Admin mode — toggle via ?admin=1 URL param. Unlocks per-row Re-scan buttons.
+const IS_ADMIN = new URLSearchParams(window.location.search).get('admin') === '1';
+
+// Toast banner — fires after a scan completes, shows propagation count.
+function showBanner(message, ms) {
+  const existing = document.querySelector('.banner-notify');
+  if (existing) existing.remove();
+  const el = document.createElement('div');
+  el.className = 'banner-notify';
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => { if (el.parentNode) el.parentNode.removeChild(el); }, ms || 3500);
+}
+
 let feedback = loadJSON(LS_KEY, {});       // { awardId: { fit, doppel, note } }
 let scans = loadJSON(LS_SCAN, {});         // { uei: { synopsis, scannedAt } }
 let doppelScores = loadJSON(LS_DOPPEL, {});// { uei: { score, reason } }
@@ -1879,10 +1940,24 @@ function renderRow(a, isIdv) {
     ? '<span class="idv-type-badge">' + escHtml(a.idvType) + '</span>'
     : '';
 
+  // Scanned-profile badge — appears on every row whose UEI has a cached profile.
+  // This is how Dana visually sees the propagation: scan one Crosby award,
+  // every other Crosby row instantly shows the badge.
+  let scannedBadge = '';
+  if (a.uei && scans[a.uei] && (scans[a.uei].bluf || scans[a.uei].synopsis)) {
+    const doppelRec = doppelScores[a.uei];
+    if (doppelRec && doppelRec.score !== null && doppelRec.score !== undefined) {
+      scannedBadge = '<span class="scanned-badge with-score" title="Peer-firm profile cached · match score ' + doppelRec.score + '/5">✓ Profile · ' + doppelRec.score + '/5</span>';
+    } else {
+      scannedBadge = '<span class="scanned-badge" title="Peer-firm profile cached for this awardee">✓ Profile available</span>';
+    }
+  }
+
   let html = '<div class="' + rowCls + '">';
   html += '<div class="row-top" onclick="toggle(\'' + a.id + '\')">';
   html += '<div class="row-desc"><span class="ring-pill">Ring ' + a.ring + '</span>' +
           idvBadge +
+          scannedBadge +
           (a.description.length > 240 ? a.description.slice(0,240) + '...' : a.description) +
           '</div>';
   html += '<div class="row-meta-cell"><strong>' + (a.naics || '-') + '</strong>' +
@@ -2129,6 +2204,9 @@ function renderDetail(a) {
   html += '<div id="syn-' + a.id + '">';
   if (scanRec && (scanRec.bluf || scanRec.synopsis)) {
     html += renderScanResult(scanRec);
+    if (IS_ADMIN) {
+      html += '<button class="rescan-btn" onclick="rescanAwardee(\'' + a.id + '\')" title="Force a fresh scan, replacing the cached profile">↻ Re-scan (admin)</button>';
+    }
   } else if (scanRec && scanRec.error) {
     html += '<div class="synopsis error">' + escHtml(scanRec.error) + '</div>';
     html += '<button class="scan-btn" style="margin-top:6px" onclick="scanAwardee(\'' + a.id + '\')">Retry scan</button>';
@@ -2531,6 +2609,16 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
     };
     saveJSON(LS_SCAN, scans);
     saveJSON(LS_DOPPEL, doppelScores);
+
+    // PROPAGATION BANNER — count how many other awards by this UEI just inherited the profile.
+    // This is the "feels magical on the call" part: scan once, every Crosby row lights up.
+    const otherAwardsCount = AWARDS.filter(x => x.uei === uei && x.id !== awardId).length;
+    if (otherAwardsCount > 0) {
+      showBanner('✓ Profile saved for ' + a.awardee + ' — applied to ' + otherAwardsCount + ' other award' + (otherAwardsCount === 1 ? '' : 's') + ' by this company.', 4000);
+    } else {
+      showBanner('✓ Profile saved for ' + a.awardee + '.', 2500);
+    }
+
     render();
   } catch (e) {
     cleanup();
@@ -2543,6 +2631,18 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
     saveJSON(LS_SCAN, scans);
     render();
   }
+}
+
+// Force a fresh scan, replacing the cached profile. Admin-only.
+function rescanAwardee(awardId) {
+  const a = AWARDS.find(x => x.id === awardId);
+  if (!a || !a.uei) return;
+  if (!confirm('Re-scan ' + a.awardee + '?\n\nThis replaces the cached profile and re-applies to all awards by this company. Costs ~$0.01 in API usage.')) return;
+  delete scans[a.uei];
+  delete doppelScores[a.uei];
+  saveJSON(LS_SCAN, scans);
+  saveJSON(LS_DOPPEL, doppelScores);
+  scanAwardee(awardId);
 }
 
 // =============================================================================
