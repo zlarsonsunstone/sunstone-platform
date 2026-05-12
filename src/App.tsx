@@ -130,8 +130,21 @@ export default function App() {
   }
 
   if (authState === 'signed-out') {
-    return <LoginScreen />
-  }
+     const path = window.location.pathname
+     if (path === '/signin' || path === '/signin/') {
+       return <LoginScreen />
+     }
+     if (path === '/journey' || path === '/journey/') {
+       window.location.replace('/Sunstone_Stages.html')
+       return null
+     }
+     if (path === '/journey/plain' || path === '/journey/plain/') {
+       window.location.replace('/Sunstone_Stages_Plain.html')
+       return null
+     }
+     window.location.replace('/Sunstone_Story.html')
+     return null
+   }
 
   if (!currentUser) {
     // Signed in but no role provisioned
