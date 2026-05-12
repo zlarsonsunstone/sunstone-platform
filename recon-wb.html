@@ -2445,7 +2445,7 @@ async function scanAwardee(awardId) {
   // Wicked Bionic profile for doppelganger comparison
   const wbProfile = `Wicked Bionic, LLC - SBA-Certified Women-Owned Small Business (WOSB). LA-based marketing/communications agency. Specialties: multicultural and multilingual marketing, paid media buying, strategic communications, ADA-compliant outreach. 10+ years federal-adjacent work for LA County, LA Public Library, Oregon Dept of Veterans Affairs, CA Citizens Redistricting, CA Service Corp. ~$5M+ in cumulative state/local govt contracts. Multilingual capability: English, Spanish, Tagalog, Chinese, Korean, Armenian, Vietnamese, Russian.`;
 
-  const prompt = `You are analyzing a federal contract awardee and assessing whether they are a competitive peer to Wicked Bionic.
+  const userPrompt = `You are analyzing a federal contract awardee and assessing whether they are a competitive peer to Wicked Bionic.
 
 AWARDEE: ${a.awardee}
 WEBSITE (SAM-verified): ${verifiedUrl}
@@ -2494,7 +2494,7 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
       body: JSON.stringify({
         model: 'claude-sonnet-4-5',
         max_tokens: 1500,
-        messages: [{ role: 'user', content: prompt }],
+        messages: [{ role: 'user', content: userPrompt }],
       }),
       signal: abortController.signal,
     });
