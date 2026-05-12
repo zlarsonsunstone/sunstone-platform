@@ -2389,47 +2389,28 @@ async function scanAwardee(awardId) {
           '<div class="scan-spinner"></div>' +
           '<div class="scan-loading-text">' +
             '<div class="scan-loading-primary">Scanning <strong>' + escHtml(a.awardee) + '</strong></div>' +
-            '<div class="scan-loading-secondary" id="scan-status-' + awardId + '">Fetching site<span class="scan-dots"><span></span><span></span><span></span></span></div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="scan-progress-bar">' +
-          '<div class="scan-progress-fill" id="scan-progress-' + awardId + '"></div>' +
-        '</div>' +
-        '<div class="scan-stages">' +
-          '<div class="scan-stage active" id="scan-stage-fetch-' + awardId + '">' +
-            '<div class="scan-stage-dot"></div><div class="scan-stage-label">Fetch site</div>' +
-          '</div>' +
-          '<div class="scan-stage" id="scan-stage-analyze-' + awardId + '">' +
-            '<div class="scan-stage-dot"></div><div class="scan-stage-label">Analyze content</div>' +
-          '</div>' +
-          '<div class="scan-stage" id="scan-stage-score-' + awardId + '">' +
-            '<div class="scan-stage-dot"></div><div class="scan-stage-label">Score &amp; reason</div>' +
+            '<div class="scan-loading-secondary"><span id="scan-elapsed-' + awardId + '">0.0s</span> elapsed</div>' +
           '</div>' +
         '</div>' +
       '</div>';
-
-    // Training-data scans are fast (~5-8 sec). Advance progress accordingly.
-    setTimeout(() => {
-      const status = document.getElementById('scan-status-' + awardId);
-      const progress = document.getElementById('scan-progress-' + awardId);
-      const stageFetch = document.getElementById('scan-stage-fetch-' + awardId);
-      const stageAnalyze = document.getElementById('scan-stage-analyze-' + awardId);
-      if (status) status.innerHTML = 'Analyzing<span class="scan-dots"><span></span><span></span><span></span></span>';
-      if (progress) progress.style.width = '50%';
-      if (stageFetch) stageFetch.classList.add('done');
-      if (stageAnalyze) stageAnalyze.classList.add('active');
-    }, 1500);
-    setTimeout(() => {
-      const status = document.getElementById('scan-status-' + awardId);
-      const progress = document.getElementById('scan-progress-' + awardId);
-      const stageAnalyze = document.getElementById('scan-stage-analyze-' + awardId);
-      const stageScore = document.getElementById('scan-stage-score-' + awardId);
-      if (status) status.innerHTML = 'Scoring<span class="scan-dots"><span></span><span></span><span></span></span>';
-      if (progress) progress.style.width = '85%';
-      if (stageAnalyze) stageAnalyze.classList.add('done');
-      if (stageScore) stageScore.classList.add('active');
-    }, 4000);
   }
+
+  // Real elapsed-time counter
+  const scanStartTime = Date.now();
+  const elapsedInterval = setInterval(() => {
+    const el = document.getElementById('scan-elapsed-' + awardId);
+    if (el) {
+      const sec = ((Date.now() - scanStartTime) / 1000).toFixed(1);
+      el.textContent = sec + 's';
+    } else {
+      clearInterval(elapsedInterval);
+    }
+  }, 100);
+
+  // Hard 25-second timeout
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('Scan timed out after 25 seconds')), 25000)
+  );
 
   // SAM-VERIFIED URL ONLY - never fabricate
   const webInfo = lookupWebsite(a);
@@ -2494,7 +2475,7 @@ ${wbProfile}
 Score honestly - large multinational ad agencies should be 0-1, small specialty firms doing similar comms/outreach work should be 3-5.`;
 
   try {
-    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+    const fetchPromise = fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2508,6 +2489,8 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
         messages: [{ role: 'user', content: prompt }],
       }),
     });
+    const resp = await Promise.race([fetchPromise, timeoutPromise]);
+    clearInterval(elapsedInterval);
     if (!resp.ok) {
       const t = await resp.text();
       throw new Error('API ' + resp.status + ': ' + t.slice(0, 300));
@@ -2537,6 +2520,7 @@ Score honestly - large multinational ad agencies should be 0-1, small specialty 
     saveJSON(LS_DOPPEL, doppelScores);
     render();
   } catch (e) {
+    clearInterval(elapsedInterval);
     scans[uei] = { error: 'Scan failed: ' + e.message };
     saveJSON(LS_SCAN, scans);
     render();
