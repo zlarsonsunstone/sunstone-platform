@@ -11,6 +11,7 @@
  */
 
 import { useState, useEffect, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
 
@@ -161,7 +162,9 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
   const [showTooltip, setShowTooltip] = useState(false)
   const [showModal, setShowModal] = useState(false)
   const [description, setDescription] = useState<CodeDescription | null | undefined>(undefined)
+  const [tooltipPos, setTooltipPos] = useState<{ top: number; left: number } | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const chipRef = useRef<HTMLSpanElement | null>(null)
 
   // Lazy-load full description on first hover OR click
   const ensureLoaded = async () => {
@@ -193,6 +196,15 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
   const handleMouseEnter = () => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     hoverTimer.current = setTimeout(() => {
+      // Compute tooltip position from chip's bounding rect (viewport coords).
+      // Tooltip renders via portal at document.body, so position is fixed.
+      if (chipRef.current) {
+        const r = chipRef.current.getBoundingClientRect()
+        setTooltipPos({
+          top: r.top,                 // anchor to top of chip; tooltip drawn above
+          left: r.left + r.width / 2, // center horizontally on chip
+        })
+      }
       setShowTooltip(true)
       ensureLoaded()
     }, 300)
@@ -201,6 +213,7 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
   const handleMouseLeave = () => {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     setShowTooltip(false)
+    setTooltipPos(null)
   }
 
   const handleClick = (e: React.MouseEvent) => {
@@ -213,6 +226,7 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
   return (
     <>
       <span
+        ref={chipRef}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
         onClick={handleClick}
@@ -224,7 +238,6 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
           fontFamily: 'var(--font-mono, monospace)',
           fontWeight: 600,
           cursor: 'pointer',
-          position: 'relative',
           display: 'inline-block',
         }}
       >
@@ -234,53 +247,54 @@ export function CodeChip({ code, codeType, highlight, count, share, compact }: C
             — {description.title}
           </span>
         )}
-
-        {/* TOOLTIP */}
-        {showTooltip && !showModal && (
-          <span
-            style={{
-              position: 'absolute',
-              bottom: 'calc(100% + 6px)',
-              left: '50%',
-              transform: 'translateX(-50%)',
-              background: 'rgba(31, 29, 26, 0.96)',
-              color: '#FFFFFF',
-              padding: '8px 10px',
-              borderRadius: '4px',
-              fontSize: '11px',
-              lineHeight: 1.4,
-              minWidth: '220px',
-              maxWidth: '300px',
-              whiteSpace: 'normal',
-              fontFamily: 'var(--font-text, system-ui)',
-              fontWeight: 400,
-              boxShadow: '0 4px 12px rgba(0,0,0,0.2)',
-              zIndex: 100,
-              pointerEvents: 'none',
-            }}
-          >
-            {description === undefined ? (
-              <em style={{ color: '#B5AEA1' }}>Loading...</em>
-            ) : description === null ? (
-              <span style={{ color: '#E07A14' }}>No description available</span>
-            ) : (
-              <>
-                <div style={{ fontWeight: 700, marginBottom: '4px' }}>
-                  {codeType.toUpperCase()} {code} · {description.title}
-                </div>
-                <div style={{ color: '#D5CFC2' }}>
-                  {description.short && description.short.trim() !== ''
-                    ? description.short
-                    : <em style={{ color: '#B5AEA1' }}>Generating market description...</em>}
-                </div>
-                <div style={{ marginTop: '5px', fontSize: '9px', color: '#8B857C', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
-                  Click for full description
-                </div>
-              </>
-            )}
-          </span>
-        )}
       </span>
+
+      {/* TOOLTIP - portal at document.body so it escapes container overflow clipping */}
+      {showTooltip && !showModal && tooltipPos && createPortal(
+        <div
+          style={{
+            position: 'fixed',
+            top: tooltipPos.top - 12,           // sit just above chip (translateY moves it up further)
+            left: tooltipPos.left,
+            transform: 'translate(-50%, -100%)',
+            background: 'rgba(31, 29, 26, 0.96)',
+            color: '#FFFFFF',
+            padding: '8px 10px',
+            borderRadius: '4px',
+            fontSize: '11px',
+            lineHeight: 1.4,
+            minWidth: '220px',
+            maxWidth: '320px',
+            whiteSpace: 'normal',
+            fontFamily: 'var(--font-text, system-ui)',
+            fontWeight: 400,
+            boxShadow: '0 6px 18px rgba(0,0,0,0.25)',
+            zIndex: 10000,
+            pointerEvents: 'none',
+          }}
+        >
+          {description === undefined ? (
+            <em style={{ color: '#B5AEA1' }}>Loading...</em>
+          ) : description === null ? (
+            <span style={{ color: '#E07A14' }}>No description available</span>
+          ) : (
+            <>
+              <div style={{ fontWeight: 700, marginBottom: '4px' }}>
+                {codeType.toUpperCase()} {code} · {description.title}
+              </div>
+              <div style={{ color: '#D5CFC2' }}>
+                {description.short && description.short.trim() !== ''
+                  ? description.short
+                  : <em style={{ color: '#B5AEA1' }}>Generating market description...</em>}
+              </div>
+              <div style={{ marginTop: '5px', fontSize: '9px', color: '#8B857C', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Click for full description
+              </div>
+            </>
+          )}
+        </div>,
+        document.body
+      )}
 
       {/* MODAL */}
       {showModal && (
