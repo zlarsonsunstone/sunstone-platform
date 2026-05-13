@@ -14,6 +14,7 @@ import { useEffect, useState, useCallback, useRef, useMemo } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useStore } from '@/store/useStore'
 import { callClaudeBrowser, extractJsonBlock } from '@/lib/claude'
+import { CodeChip } from '@/components/CodeChip'
 
 // =============================================================================
 // TYPES
@@ -402,25 +403,62 @@ function FullPageMessage({ children, isError }: { children: React.ReactNode; isE
 // =============================================================================
 
 function Dartboard({ stats, activeRing, onRingClick, tenantColor }: { stats: { ring: number; count: number }[]; activeRing: number | null; onRingClick: (r: number) => void; tenantColor: string }) {
-  const radii = [40, 80, 120, 160]
-  const ringOrder = [4, 3, 2, 1]
+  // Ring 1 is bullseye (smallest radius); Ring 4 is outer (largest radius).
+  // Paint outer first, inner last, so the bullseye sits on top.
+  const ringOuterRadius: Record<number, number> = { 1: 50, 2: 95, 3: 135, 4: 170 }
+
+  // Distinct, high-contrast colors so the rings are visually separable.
+  // Darker = higher confidence (Ring 1 bullseye); lighter = outer adjacency.
+  const ringColor: Record<number, string> = {
+    1: tenantColor,             // bullseye: full tenant accent
+    2: '#9CB3AB',               // sage-tinted mid
+    3: '#C9CFC4',               // sage-tinted light
+    4: '#E6E3D9',               // bone (outer)
+  }
+
   return (
     <div style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-card)', padding: '24px', boxShadow: 'var(--shadow-card)' }}>
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-        <svg viewBox="-180 -180 360 360" width="340" height="340">
-          {ringOrder.map((r) => {
-            const outerR = radii[4 - r]
+        <svg viewBox="-190 -190 380 380" width="340" height="340">
+          {/* Paint outermost first, work inward. */}
+          {[4, 3, 2, 1].map((r) => {
             const isActive = activeRing === r
-            return <circle key={r} cx={0} cy={0} r={outerR} fill={isActive ? tenantColor : RING_META[r].color} stroke="white" strokeWidth={2} opacity={activeRing === null ? 1 : isActive ? 1 : 0.35} style={{ cursor: 'pointer', transition: 'opacity 0.2s, fill 0.2s' }} onClick={() => onRingClick(r)} />
+            const isFaded = activeRing !== null && !isActive
+            return (
+              <circle
+                key={r}
+                cx={0} cy={0}
+                r={ringOuterRadius[r]}
+                fill={ringColor[r]}
+                stroke="white"
+                strokeWidth={2}
+                opacity={isFaded ? 0.35 : 1}
+                style={{ cursor: 'pointer', transition: 'opacity 0.2s' }}
+                onClick={() => onRingClick(r)}
+              />
+            )
           })}
+          {/* Labels: Ring 1 at center, Ring N in its annular zone. */}
           {[1, 2, 3, 4].map((r) => {
-            const idx = 4 - r
-            const labelR = idx === 0 ? 0 : (radii[idx] + (radii[idx - 1] || 0)) / 2
             const s = stats.find((s) => s.ring === r)
+            // Label y-position: center of the annular ring between this ring's
+            // outer edge and the next-inner ring's outer edge.
+            const innerEdge = r === 1 ? 0 : ringOuterRadius[r - 1]
+            const outerEdge = ringOuterRadius[r]
+            const labelR = (innerEdge + outerEdge) / 2
+            // Position above center for all rings (y is negative = up).
+            const yLabel = -labelR
+            // Ring 1 label sits at true center (innermost has no annulus).
+            const adjY = r === 1 ? 0 : yLabel
+            const textColor = r === 1 ? 'white' : '#1F1D1A'  // dark text on light rings
             return (
               <g key={r} style={{ pointerEvents: 'none' }}>
-                <text x={0} y={-labelR + 14} textAnchor="middle" fill="white" fontSize="11" fontWeight="700" fontFamily="var(--font-display)">Ring {r}</text>
-                <text x={0} y={-labelR + 28} textAnchor="middle" fill="white" fontSize="13" fontWeight="600">{s?.count || 0}</text>
+                <text x={0} y={adjY - 4} textAnchor="middle" fill={textColor} fontSize="10" fontWeight="700" fontFamily="var(--font-display)" letterSpacing="0.08em" style={{ textTransform: 'uppercase' }}>
+                  RING {r}
+                </text>
+                <text x={0} y={adjY + 12} textAnchor="middle" fill={textColor} fontSize="14" fontWeight="700" fontFamily="var(--font-display)">
+                  {s?.count || 0}
+                </text>
               </g>
             )
           })}
@@ -499,7 +537,10 @@ function L1ClusterCard(props: L1ClusterCardProps) {
 
   return (
     <div style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-card)', boxShadow: 'var(--shadow-card)', marginBottom: '16px', overflow: 'hidden' }}>
-      <div style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: '76px 1fr 240px', gap: '16px', alignItems: 'center' }}>
+      <div
+        onClick={onToggleExpand}
+        style={{ padding: '18px 20px', display: 'grid', gridTemplateColumns: '76px 1fr 240px', gap: '16px', alignItems: 'center', cursor: 'pointer' }}
+      >
         <MatchScoreBadge score={cluster.match_score} tenantColor={tenantColor} />
         <div>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: '12px', marginBottom: '4px', flexWrap: 'wrap' }}>
@@ -509,12 +550,14 @@ function L1ClusterCard(props: L1ClusterCardProps) {
             </span>
           </div>
           {cluster.description && <p style={{ fontSize: '12px', color: 'var(--color-text-secondary)', margin: '0 0 8px 0', lineHeight: 1.5 }}>{cluster.description}</p>}
-          <CodeChips codePattern={cluster.code_pattern} />
+          <div onClick={(e) => e.stopPropagation()}>
+            <CodeChips codePattern={cluster.code_pattern} />
+          </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
           <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={total} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} />
-          <button onClick={onToggleExpand} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '11px', color: tenantColor, fontWeight: 500, fontFamily: 'inherit' }}>
-            {expanded ? 'Collapse ▴' : `Review individually  ${decided}/${total} ▾`}
+          <button onClick={(e) => { e.stopPropagation(); onToggleExpand() }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '11px', color: tenantColor, fontWeight: 500, fontFamily: 'inherit' }}>
+            {expanded ? 'Collapse ▴' : `Expand  ${decided}/${total} ▾`}
           </button>
         </div>
       </div>
@@ -581,18 +624,23 @@ function L2ClusterCard({ cluster, tenantColor, expanded, onToggle, awards, expan
   const declined = cluster.awards_declined || 0
   return (
     <div style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-hairline)', borderRadius: '8px', marginBottom: '8px', overflow: 'hidden' }}>
-      <div style={{ padding: '10px 14px', display: 'grid', gridTemplateColumns: '52px 1fr 220px', gap: '12px', alignItems: 'center' }}>
+      <div
+        onClick={onToggle}
+        style={{ padding: '10px 14px', display: 'grid', gridTemplateColumns: '52px 1fr 220px', gap: '12px', alignItems: 'center', cursor: 'pointer' }}
+      >
         <MatchScoreBadge score={cluster.match_score} tenantColor={tenantColor} size="small" />
         <div>
           <div style={{ fontWeight: 600, fontSize: '13px', marginBottom: '2px' }}>{cluster.agency_dept}</div>
           <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
             {cluster.award_count} awards · ${(((cluster.total_obligated || 0) + (cluster.total_ceiling || 0)) / 1e6).toFixed(0)}M · {cluster.distinct_awardees} firms
           </div>
-          <div style={{ marginTop: '5px' }}><CodeChips codePattern={cluster.code_pattern} compact /></div>
+          <div style={{ marginTop: '5px' }} onClick={(e) => e.stopPropagation()}>
+            <CodeChips codePattern={cluster.code_pattern} compact />
+          </div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }} onClick={(e) => e.stopPropagation()}>
           <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={cluster.award_count} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} compact />
-          <button onClick={onToggle} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '10px', color: tenantColor, fontFamily: 'inherit' }}>
+          <button onClick={(e) => { e.stopPropagation(); onToggle() }} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '10px', color: tenantColor, fontFamily: 'inherit' }}>
             {expanded ? 'Hide awards ▴' : 'View awards ▾'}
           </button>
         </div>
@@ -658,21 +706,15 @@ function CodeChips({ codePattern, compact }: { codePattern: ReconClusterRow['cod
   const naicsEntries = Object.entries(codePattern.naics || {}).sort((a, b) => b[1].count - a[1].count).slice(0, compact ? 4 : 7)
   const pscEntries = Object.entries(codePattern.psc || {}).sort((a, b) => b[1].count - a[1].count).slice(0, compact ? 4 : 6)
 
-  const chipStyle = (highlight: 'green' | 'black' | 'yellow'): React.CSSProperties => {
-    if (highlight === 'green') return { background: '#E6F4EA', color: '#1B5E20', border: '1px solid #B4DBBE' }
-    if (highlight === 'yellow') return { background: '#FFF8E1', color: '#856404', border: '1px solid #F0D17C' }
-    return { background: 'var(--color-bg-primary)', color: 'var(--color-text-secondary)', border: '1px solid var(--color-hairline)' }
-  }
-
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', gap: '3px', alignItems: 'center' }}>
       <span style={{ fontSize: '8px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, marginRight: '4px' }}>NAICS</span>
       {naicsEntries.map(([code, info]) => (
-        <span key={code} title={`${code}: ${info.count} awards (${Math.round(info.share * 100)}%)`} style={{ ...chipStyle(info.highlight), fontSize: compact ? '9px' : '10px', padding: compact ? '2px 5px' : '2px 7px', borderRadius: '3px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600 }}>{code}</span>
+        <CodeChip key={code} code={code} codeType="naics" highlight={info.highlight} count={info.count} share={info.share} compact={compact} />
       ))}
       <span style={{ fontSize: '8px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, margin: '0 4px 0 6px' }}>PSC</span>
       {pscEntries.map(([code, info]) => (
-        <span key={code} title={`${code}: ${info.count} awards (${Math.round(info.share * 100)}%)`} style={{ ...chipStyle(info.highlight), fontSize: compact ? '9px' : '10px', padding: compact ? '2px 5px' : '2px 7px', borderRadius: '3px', fontFamily: 'var(--font-mono, monospace)', fontWeight: 600 }}>{code}</span>
+        <CodeChip key={code} code={code} codeType="psc" highlight={info.highlight} count={info.count} share={info.share} compact={compact} />
       ))}
     </div>
   )
