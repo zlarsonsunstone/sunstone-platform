@@ -456,7 +456,7 @@ function L1ClusterCard(props: L1ClusterCardProps) {
           <CodeChips codePattern={cluster.code_pattern} />
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', alignItems: 'flex-end' }}>
-          <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={total} tenantColor={tenantColor} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} />
+          <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={total} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} />
           <button onClick={onToggleExpand} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '12px', color: tenantColor, fontWeight: 500, padding: '4px 0', fontFamily: 'inherit' }}>
             {expanded ? 'Collapse ▴' : `Review individually  ${decided}/${total} ▾`}
           </button>
@@ -551,7 +551,7 @@ function L2ClusterCard(props: L2ClusterCardProps) {
           <div style={{ marginTop: '6px' }}><CodeChips codePattern={cluster.code_pattern} compact /></div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-          <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={cluster.award_count} tenantColor={tenantColor} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} compact />
+          <ActionButtonRow cid={cluster.id} accepted={accepted} declined={declined} total={cluster.award_count} onAcceptAll={onAcceptAll} onDeclineAll={onDeclineAll} onClearAll={onClearAll} saving={savingBulk === cluster.id} compact />
           <button onClick={onToggle} style={{ background: 'transparent', border: 'none', cursor: 'pointer', fontSize: '11px', color: tenantColor, padding: '2px 0', fontFamily: 'inherit' }}>
             {expanded ? 'Hide awards ▴' : 'View awards ▾'}
           </button>
@@ -572,7 +572,7 @@ function L2ClusterCard(props: L2ClusterCardProps) {
 // ACTION BUTTONS
 // =============================================================================
 
-function ActionButtonRow({ cid, accepted, declined, total, tenantColor, onAcceptAll, onDeclineAll, onClearAll, saving, compact }: { cid: string; accepted: number; declined: number; total: number; tenantColor: string; onAcceptAll: (cid: string) => void; onDeclineAll: (cid: string) => void; onClearAll: (cid: string) => void; saving: boolean; compact?: boolean }) {
+function ActionButtonRow({ cid, accepted, declined, total, onAcceptAll, onDeclineAll, onClearAll, saving, compact }: { cid: string; accepted: number; declined: number; total: number; onAcceptAll: (cid: string) => void; onDeclineAll: (cid: string) => void; onClearAll: (cid: string) => void; saving: boolean; compact?: boolean }) {
   const allAccepted = accepted === total && total > 0
   const allDeclined = declined === total && total > 0
   const baseBtn: React.CSSProperties = { padding: compact ? '4px 10px' : '6px 14px', fontSize: compact ? '11px' : '12px', fontWeight: 600, border: 'none', cursor: saving ? 'wait' : 'pointer', borderRadius: '4px', fontFamily: 'inherit' }
