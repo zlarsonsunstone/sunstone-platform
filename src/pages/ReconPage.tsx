@@ -696,16 +696,22 @@ function ParentGroupedAwards({
   onScan: (a: ReconAwardRow) => Promise<void>
   scanningId: string | null
 }) {
-  // Bucket awards: with parent IDV vs standalone
+  // Bucket awards:
+  //  1) Child task orders with a parent IDV PIID -> grouped accordion
+  //  2) Standalone IDVs (award_kind=idv with no parent_idv_piid) -> Available IDVs section
+  //  3) Standalone contracts (award_kind=contract, no parent) -> Standalone contracts section
   const byParent = new Map<string, ReconAwardRow[]>()
-  const standalone: ReconAwardRow[] = []
+  const standaloneIdvs: ReconAwardRow[] = []
+  const standaloneContracts: ReconAwardRow[] = []
   for (const a of awards) {
     if (a.parent_idv_piid && a.parent_idv_piid.trim() !== '') {
       const arr = byParent.get(a.parent_idv_piid) || []
       arr.push(a)
       byParent.set(a.parent_idv_piid, arr)
+    } else if (a.award_kind === 'idv') {
+      standaloneIdvs.push(a)
     } else {
-      standalone.push(a)
+      standaloneContracts.push(a)
     }
   }
 
@@ -774,15 +780,39 @@ function ParentGroupedAwards({
         )
       })}
 
-      {/* Standalone awards (no parent IDV) */}
-      {standalone.length > 0 && (
+      {/* Standalone IDVs (vehicles with no current child task orders in this view) */}
+      {standaloneIdvs.length > 0 && (
         <>
           {parentEntries.length > 0 && (
-            <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, marginTop: '10px', marginBottom: '6px' }}>
-              Standalone contracts (no parent IDV)
+            <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, marginTop: '14px', marginBottom: '6px' }}>
+              Available IDVs ({standaloneIdvs.length}) — vehicles without observed child task orders
             </div>
           )}
-          {standalone.map((a) => (
+          {standaloneIdvs.map((a) => (
+            <AwardRow
+              key={a.award_id}
+              award={a}
+              tenantColor={tenantColor}
+              expanded={expandedAwardId === a.award_id}
+              onToggle={() => onToggleAward(a.award_id)}
+              onSaveFeedback={onSaveFeedback}
+              onSaveNote={onSaveNote}
+              onScan={onScan}
+              scanningId={scanningId}
+            />
+          ))}
+        </>
+      )}
+
+      {/* Standalone contracts (purchase orders, definitive contracts, no parent IDV) */}
+      {standaloneContracts.length > 0 && (
+        <>
+          {(parentEntries.length > 0 || standaloneIdvs.length > 0) && (
+            <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, marginTop: '14px', marginBottom: '6px' }}>
+              Standalone contracts ({standaloneContracts.length}) — purchase orders & definitive contracts
+            </div>
+          )}
+          {standaloneContracts.map((a) => (
             <AwardRow
               key={a.award_id}
               award={a}
@@ -882,8 +912,16 @@ function AwardRow({ award, tenantColor, expanded, onToggle, onSaveFeedback, onSa
           )}
           {(award.description || '').slice(0, 180)}
         </div>
-        <div style={{ fontSize: '10px' }}><strong>{award.naics || '-'}</strong></div>
-        <div style={{ fontSize: '10px' }}><strong>{award.psc || '-'}</strong></div>
+        <div style={{ fontSize: '10px' }} onClick={(e) => e.stopPropagation()}>
+          {award.naics
+            ? <CodeChip code={award.naics} codeType="naics" highlight="black" compact />
+            : <strong>-</strong>}
+        </div>
+        <div style={{ fontSize: '10px' }} onClick={(e) => e.stopPropagation()}>
+          {award.psc
+            ? <CodeChip code={award.psc} codeType="psc" highlight="black" compact />
+            : <strong>-</strong>}
+        </div>
         <div style={{ fontSize: '10px' }}><strong>{formatMoney(dollarVal)}</strong></div>
         <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }} onClick={(e) => e.stopPropagation()}>
           <span style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', letterSpacing: '0.1em', textTransform: 'uppercase', marginRight: '3px' }}>Fit:</span>
