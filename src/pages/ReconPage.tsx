@@ -41,6 +41,7 @@ interface ReconAwardRow {
   pop_end: string | null
   fss: string | null
   cluster_id: string | null
+  parent_idv_piid: string | null
   fit_status: 'yes' | 'unsure' | 'no' | null
   similar_status: 'yes' | 'unsure' | 'no' | null
   note: string | null
@@ -588,9 +589,16 @@ function L1ClusterCard(props: L1ClusterCardProps) {
           {l1OnlyAwards.length > 0 && (
             <>
               <h4 style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginTop: cluster.children.length > 0 ? '20px' : '0', marginBottom: '10px', fontWeight: 700 }}>Other awards in this capability</h4>
-              {l1OnlyAwards.map((a) => (
-                <AwardRow key={a.award_id} award={a} tenantColor={tenantColor} expanded={expandedAwardId === a.award_id} onToggle={() => onToggleAward(a.award_id)} onSaveFeedback={onSaveFeedback} onSaveNote={onSaveNote} onScan={onScan} scanningId={scanningId} />
-              ))}
+              <ParentGroupedAwards
+                awards={l1OnlyAwards}
+                tenantColor={tenantColor}
+                expandedAwardId={expandedAwardId}
+                onToggleAward={onToggleAward}
+                onSaveFeedback={onSaveFeedback}
+                onSaveNote={onSaveNote}
+                onScan={onScan}
+                scanningId={scanningId}
+              />
             </>
           )}
         </div>
@@ -647,12 +655,149 @@ function L2ClusterCard({ cluster, tenantColor, expanded, onToggle, awards, expan
       </div>
       {expanded && (
         <div style={{ padding: '10px 14px', borderTop: '1px solid var(--color-hairline)', background: 'var(--color-bg-primary)' }}>
-          {awards.map((a) => (
-            <AwardRow key={a.award_id} award={a} tenantColor={tenantColor} expanded={expandedAwardId === a.award_id} onToggle={() => onToggleAward(a.award_id)} onSaveFeedback={onSaveFeedback} onSaveNote={onSaveNote} onScan={onScan} scanningId={scanningId} />
-          ))}
+          <ParentGroupedAwards
+            awards={awards}
+            tenantColor={tenantColor}
+            expandedAwardId={expandedAwardId}
+            onToggleAward={onToggleAward}
+            onSaveFeedback={onSaveFeedback}
+            onSaveNote={onSaveNote}
+            onScan={onScan}
+            scanningId={scanningId}
+          />
         </div>
       )}
     </div>
+  )
+}
+
+// =============================================================================
+// PARENT-GROUPED AWARDS
+// Groups child task orders under their parent IDV PIID, with accordion expand.
+// Standalone contracts (no parent_idv_piid) render as flat rows below.
+// =============================================================================
+
+function ParentGroupedAwards({
+  awards,
+  tenantColor,
+  expandedAwardId,
+  onToggleAward,
+  onSaveFeedback,
+  onSaveNote,
+  onScan,
+  scanningId,
+}: {
+  awards: ReconAwardRow[]
+  tenantColor: string
+  expandedAwardId: string | null
+  onToggleAward: (id: string) => void
+  onSaveFeedback: (a: ReconAwardRow, patch: any) => Promise<void>
+  onSaveNote: (a: ReconAwardRow, note: string) => void
+  onScan: (a: ReconAwardRow) => Promise<void>
+  scanningId: string | null
+}) {
+  // Bucket awards: with parent IDV vs standalone
+  const byParent = new Map<string, ReconAwardRow[]>()
+  const standalone: ReconAwardRow[] = []
+  for (const a of awards) {
+    if (a.parent_idv_piid && a.parent_idv_piid.trim() !== '') {
+      const arr = byParent.get(a.parent_idv_piid) || []
+      arr.push(a)
+      byParent.set(a.parent_idv_piid, arr)
+    } else {
+      standalone.push(a)
+    }
+  }
+
+  // Sort parents by child count desc
+  const parentEntries = Array.from(byParent.entries()).sort((a, b) => b[1].length - a[1].length)
+
+  const [openParents, setOpenParents] = useState<Set<string>>(new Set())
+  const toggle = (pid: string) => {
+    setOpenParents((prev) => {
+      const next = new Set(prev)
+      if (next.has(pid)) next.delete(pid)
+      else next.add(pid)
+      return next
+    })
+  }
+
+  return (
+    <>
+      {parentEntries.map(([parentPiid, children]) => {
+        const totalDollars = children.reduce((sum, c) => sum + (c.dollars_obligated || 0), 0)
+        const distinctAwardees = new Set(children.map((c) => c.awardee_name).filter(Boolean)).size
+        const isOpen = openParents.has(parentPiid)
+        return (
+          <div key={parentPiid} style={{ background: 'var(--color-bg-elevated)', border: `1px solid ${tenantColor}33`, borderLeft: `3px solid ${tenantColor}`, borderRadius: '6px', marginBottom: '6px', overflow: 'hidden' }}>
+            {/* Parent IDV header */}
+            <div
+              onClick={() => toggle(parentPiid)}
+              style={{ padding: '8px 12px', cursor: 'pointer', display: 'grid', gridTemplateColumns: '1fr auto', gap: '12px', alignItems: 'center' }}
+            >
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
+                  <span style={{ fontSize: '8px', fontWeight: 700, color: 'white', background: tenantColor, padding: '2px 6px', borderRadius: '3px', letterSpacing: '0.06em', textTransform: 'uppercase' }}>
+                    Parent IDV
+                  </span>
+                  <span style={{ fontFamily: 'var(--font-mono, monospace)', fontSize: '12px', fontWeight: 600 }}>
+                    {parentPiid}
+                  </span>
+                </div>
+                <div style={{ fontSize: '10px', color: 'var(--color-text-tertiary)' }}>
+                  {children.length} task order{children.length === 1 ? '' : 's'} · {formatMoney(totalDollars)} obligated · {distinctAwardees} awardee{distinctAwardees === 1 ? '' : 's'}
+                </div>
+              </div>
+              <div style={{ fontSize: '11px', color: tenantColor, fontWeight: 500 }}>
+                {isOpen ? '▴' : '▾'}
+              </div>
+            </div>
+            {/* Children */}
+            {isOpen && (
+              <div style={{ borderTop: '1px solid var(--color-hairline)', background: 'var(--color-bg-primary)', padding: '8px 12px 10px' }}>
+                {children.map((c) => (
+                  <AwardRow
+                    key={c.award_id}
+                    award={c}
+                    tenantColor={tenantColor}
+                    expanded={expandedAwardId === c.award_id}
+                    onToggle={() => onToggleAward(c.award_id)}
+                    onSaveFeedback={onSaveFeedback}
+                    onSaveNote={onSaveNote}
+                    onScan={onScan}
+                    scanningId={scanningId}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )
+      })}
+
+      {/* Standalone awards (no parent IDV) */}
+      {standalone.length > 0 && (
+        <>
+          {parentEntries.length > 0 && (
+            <div style={{ fontSize: '9px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700, marginTop: '10px', marginBottom: '6px' }}>
+              Standalone contracts (no parent IDV)
+            </div>
+          )}
+          {standalone.map((a) => (
+            <AwardRow
+              key={a.award_id}
+              award={a}
+              tenantColor={tenantColor}
+              expanded={expandedAwardId === a.award_id}
+              onToggle={() => onToggleAward(a.award_id)}
+              onSaveFeedback={onSaveFeedback}
+              onSaveNote={onSaveNote}
+              onScan={onScan}
+              scanningId={scanningId}
+            />
+          ))}
+        </>
+      )}
+    </>
   )
 }
 
