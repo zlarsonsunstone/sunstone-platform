@@ -13,6 +13,7 @@ import { AdminSubmissionsPage } from '@/components/AdminSubmissionsPage'
 import { ProfileReview } from '@/components/ProfileReview'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 import { ReconPage } from '@/pages/ReconPage'
+import { StagesPage } from '@/pages/StagesPage'
 
 export default function App() {
   // Intercept prospect-view URLs before auth check.
@@ -34,6 +35,11 @@ export default function App() {
   // Renders without NavBar / Dashboard chrome.
   const isReconPath = window.location.pathname === '/recon'
     || window.location.pathname === '/recon/'
+
+  // /stages - prospect-facing Captain's Log (12-stage accordion). Auth-gated.
+  // Default home for prospect users. Renders without NavBar / Dashboard chrome.
+  const isStagesPath = window.location.pathname === '/stages'
+    || window.location.pathname === '/stages/'
 
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
@@ -197,6 +203,31 @@ export default function App() {
           </button>
         </div>
       </div>
+    )
+  }
+
+  // Prospect auto-redirect: if user is a prospect and lands on the root or
+  // an admin-style path, route them to /stages (their home).
+  // Note: admin/superadmin and clients fall through to the regular Dashboard.
+  const isProspect = currentUser.engagement_state === 'prospect' && currentUser.role === 'user'
+  if (isProspect && !isReconPath && !isStagesPath && !isPrelimReviewPath && !isAdminSubmissionsPath && !isProfileReviewPath) {
+    window.location.replace('/stages')
+    return null
+  }
+
+  // /stages - prospect Captain's Log. Auth-gated, renders standalone.
+  if (isStagesPath) {
+    return (
+      <>
+        <Banner />
+        <TenantPickerModal />
+        {tenantResolutionState === 'ready' && activeTenant && <StagesPage />}
+        {tenantResolutionState === 'loading' && (
+          <div style={{ padding: '64px 48px', color: 'var(--color-text-tertiary)', fontSize: '14px' }}>
+            Resolving tenant...
+          </div>
+        )}
+      </>
     )
   }
 
