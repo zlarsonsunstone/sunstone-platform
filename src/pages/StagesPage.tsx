@@ -504,6 +504,8 @@ function RenderDiscovery({ context, tenantColor }: { context: ProspectContext | 
         </p>
         <a
           href="/recon"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             display: 'inline-block',
             background: tenantColor,
@@ -516,7 +518,7 @@ function RenderDiscovery({ context, tenantColor }: { context: ProspectContext | 
             letterSpacing: '-0.005em',
           }}
         >
-          Open the Dartboard Tool →
+          Open the Dartboard Tool ↗
         </a>
       </Section>
 
