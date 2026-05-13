@@ -47,6 +47,13 @@ export function AdminUsers() {
         u.full_name || u.email,
         tenantName(u.home_tenant_id)
       )
+      // Navigate to the impersonated user's home view.
+      // Prospects: /stages. Clients: dashboard (root). Admins/superadmins: same dashboard.
+      if (u.engagement_state === 'prospect') {
+        window.location.href = '/stages'
+      } else {
+        window.location.href = '/'
+      }
     } catch (e: any) {
       console.error('[Impersonate] error:', e)
       alert('Failed to start impersonation: ' + (e?.message || 'unknown'))
