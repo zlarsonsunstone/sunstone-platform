@@ -64,6 +64,16 @@ interface ProspectContext {
   active_stage: number
 }
 
+interface StageContent {
+  id: string
+  tenant_id: string
+  stage_num: number
+  walkthrough_video_url: string | null
+  walkthrough_video_title: string | null
+  tips_content: string | null
+  tips_title: string | null
+}
+
 interface Stage {
   num: number
   name: string
@@ -107,6 +117,7 @@ export function StagesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeStage, setActiveStage] = useState<number>(6)
+  const [stageContents, setStageContents] = useState<Record<number, StageContent>>({})
 
   // engagement_state determines whether stages 11-12 are unlocked
   const isClient = currentUser?.engagement_state === 'client'
@@ -119,22 +130,27 @@ export function StagesPage() {
     if (!tenant) return
     setLoading(true)
     setError(null)
-    supabase
-      .from('prospect_context')
-      .select('*')
-      .eq('tenant_id', tenant.id)
-      .maybeSingle()
-      .then(({ data, error: err }) => {
-        if (err) {
-          setError('Failed to load stage data: ' + err.message)
-        } else {
-          setContext(data as ProspectContext | null)
-          if (data && (data as ProspectContext).active_stage) {
-            setActiveStage((data as ProspectContext).active_stage)
-          }
+    Promise.all([
+      supabase.from('prospect_context').select('*').eq('tenant_id', tenant.id).maybeSingle(),
+      supabase.from('stage_content').select('*').eq('tenant_id', tenant.id),
+    ]).then(([ctxResult, contentResult]) => {
+      if (ctxResult.error) {
+        setError('Failed to load stage data: ' + ctxResult.error.message)
+      } else {
+        setContext(ctxResult.data as ProspectContext | null)
+        if (ctxResult.data && (ctxResult.data as ProspectContext).active_stage) {
+          setActiveStage((ctxResult.data as ProspectContext).active_stage)
         }
-        setLoading(false)
-      })
+      }
+      if (!contentResult.error && contentResult.data) {
+        const byStage: Record<number, StageContent> = {}
+        for (const row of contentResult.data as StageContent[]) {
+          byStage[row.stage_num] = row
+        }
+        setStageContents(byStage)
+      }
+      setLoading(false)
+    })
   }, [tenant])
 
   if (tenantResolutionState !== 'ready' || !tenant) {
@@ -179,6 +195,7 @@ export function StagesPage() {
           <Workspace
             stage={STAGES.find((s) => s.num === activeStage)!}
             context={context}
+            stageContent={stageContents[activeStage] || null}
             isLocked={activeStage >= lockedAtStage}
             tenantColor={tenantColor}
           />
@@ -252,7 +269,7 @@ function Accordion({ stages, activeStage, setActiveStage, lockedAtStage, tenantC
 // WORKSPACE
 // =============================================================================
 
-function Workspace({ stage, context, isLocked, tenantColor }: { stage: Stage; context: ProspectContext | null; isLocked: boolean; tenantColor: string }) {
+function Workspace({ stage, context, stageContent, isLocked, tenantColor }: { stage: Stage; context: ProspectContext | null; stageContent: StageContent | null; isLocked: boolean; tenantColor: string }) {
   return (
     <div>
       <div style={{ marginBottom: '24px', paddingBottom: '20px', borderBottom: '1px solid var(--color-hairline)' }}>
@@ -270,10 +287,115 @@ function Workspace({ stage, context, isLocked, tenantColor }: { stage: Stage; co
       {isLocked ? (
         <LockedState tenantColor={tenantColor} />
       ) : (
-        <WorkspaceContent stage={stage} context={context} tenantColor={tenantColor} />
+        <>
+          <WorkspaceContent stage={stage} context={context} tenantColor={tenantColor} />
+          <WalkthroughAndGuidance stage={stage} content={stageContent} tenantColor={tenantColor} />
+        </>
       )}
     </div>
   )
+}
+
+// =============================================================================
+// WALKTHROUGH + GUIDANCE
+// Renders below every unlocked stage's workspace content.
+// Reads from v2.stage_content. NULL fields render as placeholders.
+// =============================================================================
+
+function WalkthroughAndGuidance({ stage, content, tenantColor }: { stage: Stage; content: StageContent | null; tenantColor: string }) {
+  return (
+    <div style={{ marginTop: '40px', paddingTop: '32px', borderTop: '1px solid var(--color-hairline)' }}>
+      <div style={{ fontSize: '11px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', marginBottom: '4px' }}>
+        Stage {stage.num} · Walkthrough &amp; Guidance
+      </div>
+      <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '22px', fontWeight: 600, margin: '0 0 20px 0', letterSpacing: '-0.012em' }}>
+        {content?.walkthrough_video_title || 'After the Call'}
+      </h3>
+
+      {/* WALKTHROUGH VIDEO CARD */}
+      <div style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-card)', marginBottom: '14px', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-hairline)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '14px' }}>🎬</span>
+          <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700 }}>
+            Walkthrough Video
+          </span>
+        </div>
+        <div style={{ padding: content?.walkthrough_video_url ? 0 : '60px 24px', background: 'var(--color-bg-primary)' }}>
+          {content?.walkthrough_video_url ? (
+            <div style={{ position: 'relative', paddingBottom: '56.25%', height: 0, overflow: 'hidden' }}>
+              <iframe
+                src={content.walkthrough_video_url}
+                title={content.walkthrough_video_title || `Stage ${stage.num} walkthrough`}
+                allow="autoplay; fullscreen; picture-in-picture"
+                allowFullScreen
+                frameBorder={0}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', border: 0 }}
+              />
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '36px', marginBottom: '12px', opacity: 0.4 }}>🎬</div>
+              <div style={{ fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+                Video will appear here after the call
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* TIPS / GUIDANCE CARD */}
+      <div style={{ background: 'var(--color-bg-elevated)', border: '1px solid var(--color-hairline)', borderRadius: 'var(--radius-card)', overflow: 'hidden' }}>
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--color-hairline)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <span style={{ fontSize: '14px' }}>💡</span>
+          <span style={{ fontSize: '10px', color: 'var(--color-text-tertiary)', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700 }}>
+            {content?.tips_title || 'Tips, Tricks &amp; Guidance'}
+          </span>
+        </div>
+        <div style={{ padding: '20px 24px', background: 'var(--color-bg-primary)' }}>
+          {content?.tips_content ? (
+            <div style={{ fontSize: '14px', color: 'var(--color-text-primary)', lineHeight: 1.65, whiteSpace: 'pre-wrap' }}>
+              {renderTipsMarkdown(content.tips_content, tenantColor)}
+            </div>
+          ) : (
+            <div style={{ textAlign: 'center', fontSize: '13px', color: 'var(--color-text-tertiary)', fontStyle: 'italic' }}>
+              Guidance will appear here after the call transcript is processed.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// Lightweight Markdown renderer for tips: paragraphs split by blank lines,
+// **bold** segments, and bullet items starting with "- " or "* ".
+function renderTipsMarkdown(text: string, _tenantColor: string): React.ReactNode {
+  const blocks = text.split(/\n\s*\n/)
+  return blocks.map((block, bi) => {
+    const lines = block.split('\n')
+    const isList = lines.every((l) => /^\s*[-*]\s/.test(l))
+    if (isList) {
+      return (
+        <ul key={bi} style={{ margin: '0 0 14px 20px', padding: 0 }}>
+          {lines.map((l, li) => {
+            const stripped = l.replace(/^\s*[-*]\s+/, '')
+            return <li key={li} style={{ marginBottom: '6px' }}>{renderInline(stripped)}</li>
+          })}
+        </ul>
+      )
+    }
+    return <p key={bi} style={{ margin: '0 0 14px 0' }}>{renderInline(block)}</p>
+  })
+}
+
+function renderInline(text: string): React.ReactNode {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g)
+  return parts.map((part, i) => {
+    if (part.startsWith('**') && part.endsWith('**')) {
+      return <strong key={i}>{part.slice(2, -2)}</strong>
+    }
+    return <span key={i}>{part}</span>
+  })
 }
 
 function LockedState({ tenantColor: _ }: { tenantColor: string }) {
