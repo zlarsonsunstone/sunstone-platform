@@ -12,32 +12,28 @@ import { PrelimReview } from '@/components/PrelimReview'
 import { AdminSubmissionsPage } from '@/components/AdminSubmissionsPage'
 import { ProfileReview } from '@/components/ProfileReview'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
+import { ReconPage } from '@/pages/ReconPage'
 
 export default function App() {
   // Intercept prospect-view URLs before auth check.
-  // Tokens are generated for clients who don't have platform accounts.
   const prospectMatch = window.location.pathname.match(/^\/prospect\/([A-Za-z0-9_-]+)\/?$/)
   if (prospectMatch) {
     return <ProspectConfirmation token={prospectMatch[1]} />
   }
 
-  // /prelim/review path is the consultant-facing prelim cleanup tool.
-  // Auth-gated. We detect it here and render below once the user is signed-in
-  // with a role (so it's protected by Supabase auth + RLS).
-  // Note: /prelim/<token> (anon prospect sign-off) is intercepted in main.tsx
-  // BEFORE App ever loads.
   const isPrelimReviewPath = window.location.pathname === '/prelim/review'
     || window.location.pathname === '/prelim/review/'
 
-  // /admin/submissions - SuperAdmin / Admin list of all public intake submissions.
-  // Auth-gated. RLS policy added in 0039 lets SuperAdmin/Admin SELECT any row.
   const isAdminSubmissionsPath = window.location.pathname === '/admin/submissions'
     || window.location.pathname === '/admin/submissions/'
 
-  // /profile/review - consultant-facing strategic profile review (federal +
-  // commercial + reconciliation + claims). Auth-gated.
   const isProfileReviewPath = window.location.pathname === '/profile/review'
     || window.location.pathname === '/profile/review/'
+
+  // /recon - prospect-facing Dartboard Tool (clustered opps). Auth-gated.
+  // Renders without NavBar / Dashboard chrome.
+  const isReconPath = window.location.pathname === '/recon'
+    || window.location.pathname === '/recon/'
 
   const [authState, setAuthState] = useState<'loading' | 'signed-in' | 'signed-out'>('loading')
   const [activeTab, setActiveTab] = useState('Overview')
@@ -54,7 +50,6 @@ export default function App() {
     let mounted = true
 
     const loadUser = async (authUserId: string, email: string) => {
-      // Read the app's user record from v2.users
       const { data, error } = await supabase
         .from('users')
         .select('*')
@@ -63,23 +58,26 @@ export default function App() {
 
       if (!mounted) return
 
-      if (error || !data) {
-        // Auth record exists but no corresponding v2.users row.
-        // This is expected for new signups before a SuperAdmin provisions them.
-        console.warn('No v2.users record found for auth user:', authUserId, email)
+      if (error) {
+        console.error('[App] Failed to load user record:', error)
         setCurrentUser(null)
-        setAuthState('signed-in') // still signed in, just no role yet
+        setAuthState('signed-in')
         return
       }
 
-      setCurrentUser(data as User)
+      if (data) {
+        setCurrentUser(data as User)
+      } else {
+        console.warn('[App] Auth user has no v2.users record:', email)
+        setCurrentUser(null)
+      }
       setAuthState('signed-in')
     }
 
-    supabase.auth.getSession().then(({ data }) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
       if (!mounted) return
-      if (data.session?.user) {
-        loadUser(data.session.user.id, data.session.user.email || '')
+      if (session?.user) {
+        loadUser(session.user.id, session.user.email || '')
       } else {
         setAuthState('signed-out')
       }
@@ -142,6 +140,11 @@ export default function App() {
        window.location.replace('/Sunstone_Stages_Plain.html')
        return null
      }
+     // /recon and /stages require auth - redirect to signin
+     if (path === '/recon' || path === '/recon/' || path === '/stages' || path === '/stages/') {
+       window.location.replace('/signin')
+       return null
+     }
      window.location.replace('/Sunstone_Story.html')
      return null
    }
@@ -197,21 +200,31 @@ export default function App() {
     )
   }
 
-  // /prelim/review - consultant prelim cleanup tool. Auth-gated; tenant-agnostic
-  // (operates on prelim_profile rows directly, not tied to a specific tenant).
-  // Renders without NavBar / Dashboard chrome to keep it focused.
+  // /recon - prospect Dartboard Tool. Auth-gated, renders standalone.
+  // Includes Banner so impersonation banner shows; no NavBar / Dashboard.
+  if (isReconPath) {
+    return (
+      <>
+        <Banner />
+        <TenantPickerModal />
+        {tenantResolutionState === 'ready' && activeTenant && <ReconPage />}
+        {tenantResolutionState === 'loading' && (
+          <div style={{ padding: '64px 48px', color: 'var(--color-text-tertiary)', fontSize: '14px' }}>
+            Resolving tenant...
+          </div>
+        )}
+      </>
+    )
+  }
+
   if (isPrelimReviewPath) {
     return <PrelimReview />
   }
 
-  // /admin/submissions - SuperAdmin/Admin list of all public intake submissions.
-  // Auth-gated; rendered without NavBar/Dashboard chrome for focus.
   if (isAdminSubmissionsPath) {
     return <AdminSubmissionsPage />
   }
 
-  // /profile/review - consultant-facing strategic profile viewer.
-  // Reads federal_profile + commercial_profile + reconciliation + profile_claims.
   if (isProfileReviewPath) {
     return <ProfileReview />
   }
@@ -234,15 +247,12 @@ export default function App() {
         />
       </div>
 
-      {/* Tenant picker blocks UI if needed (State B or C) */}
       <TenantPickerModal />
 
-      {/* Main content - only renders when tenant is resolved */}
       {tenantResolutionState === 'ready' && activeTenant && (
         <Dashboard activeTab={activeTab} />
       )}
 
-      {/* Admin panel overlay (SuperAdmin/Admin only) */}
       {adminOpen && <AdminPanel onClose={() => setAdminOpen(false)} />}
 
       {tenantResolutionState === 'loading' && (
