@@ -10,6 +10,15 @@
  * Email is sent via Resend (or whatever SMTP provider is configured).
  * For v1, we'll use a simple webhook to a notification service or just log to
  * the methodology table for Zack to see in the platform.
+ *
+ * Accepts EITHER:
+ *   { submission_id: "<uuid>" }   — preferred; direct lookup by row id
+ *   { email: "<email>" }          — fallback; looks up most recent submission for that email
+ *
+ * The email fallback is necessary because PublicIntakeForm.tsx (current client)
+ * does the insert without a returning SELECT — anon role doesn't have SELECT
+ * permission on v2.public_intake_submission (intentional, per public-form RLS).
+ * So the client can't pass the id back. Function uses service-role to look it up.
  */
 import type { Handler } from '@netlify/functions'
 import { createClient } from '@supabase/supabase-js'
@@ -31,28 +40,49 @@ export const handler: Handler = async (event) => {
   }
 
   let submissionId: string | null = null
+  let email: string | null = null
   try {
     const body = JSON.parse(event.body || '{}')
     submissionId = body.submission_id || null
+    email = (body.email || '').toString().trim().toLowerCase() || null
   } catch {
     return { statusCode: 400, body: JSON.stringify({ error: 'Invalid JSON' }) }
   }
 
-  if (!submissionId) {
-    return { statusCode: 400, body: JSON.stringify({ error: 'submission_id required' }) }
+  if (!submissionId && !email) {
+    return { statusCode: 400, body: JSON.stringify({ error: 'submission_id or email required' }) }
   }
 
   const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
     auth: { persistSession: false },
   })
 
-  // Fetch the submission
-  const { data: submission, error: fetchError } = await supabase
-    .schema('v2')
-    .from('public_intake_submission')
-    .select('*')
-    .eq('id', submissionId)
-    .single()
+  // Fetch the submission: prefer submission_id, fall back to most recent for this email.
+  // Current PublicIntakeForm.tsx sends only `email`, so the email path is the active one.
+  let submission: any = null
+  let fetchError: any = null
+
+  if (submissionId) {
+    const r = await supabase
+      .schema('v2')
+      .from('public_intake_submission')
+      .select('*')
+      .eq('id', submissionId)
+      .maybeSingle()
+    submission = r.data
+    fetchError = r.error
+  } else if (email) {
+    const r = await supabase
+      .schema('v2')
+      .from('public_intake_submission')
+      .select('*')
+      .eq('email', email)
+      .order('submitted_at', { ascending: false })
+      .limit(1)
+      .maybeSingle()
+    submission = r.data
+    fetchError = r.error
+  }
 
   if (fetchError || !submission) {
     console.error('Failed to fetch submission:', fetchError)
@@ -96,7 +126,7 @@ export const handler: Handler = async (event) => {
 
   return {
     statusCode: 200,
-    body: JSON.stringify({ ok: true, submission_id: submissionId }),
+    body: JSON.stringify({ ok: true, submission_id: submission.id }),
   }
 }
 
@@ -105,31 +135,28 @@ function formatNotificationEmail(s: any, reviewUrl: string): string {
   lines.push('NEW PUBLIC INTAKE SUBMISSION')
   lines.push('='.repeat(40))
   lines.push('')
-  lines.push(`Name:    ${s.full_name}`)
-  lines.push(`Email:   ${s.email}`)
-  if (s.phone) lines.push(`Phone:   ${s.phone}`)
+  lines.push(`Name: ${s.full_name}`)
+  lines.push(`Email: ${s.email}`)
+  if (s.phone) lines.push(`Phone: ${s.phone}`)
   if (s.company_name) lines.push(`Company: ${s.company_name}`)
   if (s.company_website) lines.push(`Website: ${s.company_website}`)
   lines.push('')
-
-  if (s.industry_sector) lines.push(`Industry sector:  ${s.industry_sector}`)
-  if (s.referred_by) lines.push(`Referred by:      ${s.referred_by}`)
+  if (s.industry_sector) lines.push(`Industry sector: ${s.industry_sector}`)
+  if (s.referred_by) lines.push(`Referred by: ${s.referred_by}`)
   lines.push('')
-
   if (s.catalyst) {
     lines.push('CATALYST:')
     lines.push(s.catalyst)
     lines.push('')
   }
-
   lines.push('--- COMMERCIAL ---')
-  if (s.year_founded) lines.push(`Founded:   ${s.year_founded}`)
+  if (s.year_founded) lines.push(`Founded: ${s.year_founded}`)
   if (s.headcount) lines.push(`Headcount: ${s.headcount}`)
-  if (s.revenue_range) lines.push(`Revenue:   ${s.revenue_range}`)
+  if (s.revenue_range) lines.push(`Revenue: ${s.revenue_range}`)
   if (s.geographic_footprint && s.geographic_footprint.length > 0) {
     lines.push(`Footprint: ${s.geographic_footprint.join(', ')}`)
   }
-  if (s.linkedin_url) lines.push(`LinkedIn:  ${s.linkedin_url}`)
+  if (s.linkedin_url) lines.push(`LinkedIn: ${s.linkedin_url}`)
   if (s.capabilities) {
     lines.push('')
     lines.push('Capabilities:')
@@ -146,7 +173,6 @@ function formatNotificationEmail(s: any, reviewUrl: string): string {
     lines.push(s.differentiator)
   }
   lines.push('')
-
   lines.push('--- FEDERAL POSTURE ---')
   lines.push(`Path: ${s.federal_path || '(not set)'}`)
   if (s.federal_answers) {
@@ -156,7 +182,6 @@ function formatNotificationEmail(s: any, reviewUrl: string): string {
     })
   }
   lines.push('')
-
   lines.push('--- ACTION ---')
   lines.push(`Review at: ${reviewUrl}`)
   lines.push('')
