@@ -2,19 +2,21 @@ import { useState } from 'react'
 import { useStore } from '@/store/useStore'
 import { AdminTenants } from './admin/AdminTenants'
 import { AdminUsers } from './admin/AdminUsers'
+import { AdminProspects } from './admin/AdminProspects'
 import { AdminVariants } from './admin/AdminVariants'
 import { AdminAuditLog } from './admin/AdminAuditLog'
 import { AdminVendorUniverse } from './admin/AdminVendorUniverse'
 
-type AdminTab = 'tenants' | 'users' | 'variants' | 'audit' | 'vendor_universe'
+type AdminTab = 'prospects' | 'tenants' | 'users' | 'variants' | 'audit' | 'vendor_universe'
 
 export function AdminPanel({ onClose }: { onClose: () => void }) {
   const currentUser = useStore((s) => s.currentUser)
-  const [tab, setTab] = useState<AdminTab>('tenants')
+  const [tab, setTab] = useState<AdminTab>('prospects')
 
   const isSuperAdmin = currentUser?.role === 'superadmin'
 
   const tabs: { id: AdminTab; label: string; superadminOnly?: boolean }[] = [
+    { id: 'prospects', label: 'Prospects' },
     { id: 'tenants', label: 'Tenants' },
     { id: 'users', label: 'Users' },
     { id: 'variants', label: 'Prompt Variants', superadminOnly: true },
@@ -142,6 +144,7 @@ export function AdminPanel({ onClose }: { onClose: () => void }) {
 
         {/* Body */}
         <div style={{ padding: '32px', maxHeight: 'calc(100vh - 220px)', overflow: 'auto' }}>
+          {tab === 'prospects' && <AdminProspects />}
           {tab === 'tenants' && <AdminTenants />}
           {tab === 'users' && <AdminUsers />}
           {tab === 'variants' && isSuperAdmin && <AdminVariants />}

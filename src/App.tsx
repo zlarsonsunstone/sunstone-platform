@@ -14,8 +14,15 @@ import { ProfileReview } from '@/components/ProfileReview'
 import { ProspectConfirmation } from '@/pages/ProspectConfirmation'
 import { ReconPage } from '@/pages/ReconPage'
 import { StagesPage } from '@/pages/StagesPage'
+import PublicIntake from '@/pages/PublicIntake'
 
 export default function App() {
+  // /start - public self-serve prospect intake. No auth required.
+  const isStartPath = window.location.pathname === '/start' || window.location.pathname === '/start/'
+  if (isStartPath) {
+    return <PublicIntake />
+  }
+
   // Intercept prospect-view URLs before auth check.
   const prospectMatch = window.location.pathname.match(/^\/prospect\/([A-Za-z0-9_-]+)\/?$/)
   if (prospectMatch) {
