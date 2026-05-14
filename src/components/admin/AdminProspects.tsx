@@ -2,7 +2,18 @@ import { useEffect, useState } from 'react'
 import { supabase } from '@/lib/supabase'
 import { CreateProspectWizard } from './CreateProspectWizard'
 
-interface ProspectRow {
+// Per DOCTRINE.md D1, the external-user funnel has three states:
+//   tenant   - created in system, Recon Report not yet delivered
+//   prospect - Recon Report delivered, payment not received
+//   client   - paid (shown elsewhere, not here)
+//
+// This page shows pre-Client external users (Tenants and Prospects). The
+// "Prospects" tab label is retained for now; a rename pass is queued for
+// a later cosmetic session.
+
+type FunnelState = 'tenant' | 'prospect'
+
+interface FunnelRow {
   tenant_id: string
   tenant_name: string
   client_color: string
@@ -13,10 +24,11 @@ interface ProspectRow {
   created_at: string
   user_id: string | null
   user_email: string | null
+  engagement_state: FunnelState
 }
 
 export function AdminProspects() {
-  const [rows, setRows] = useState<ProspectRow[]>([])
+  const [rows, setRows] = useState<FunnelRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [wizardOpen, setWizardOpen] = useState(false)
@@ -26,16 +38,21 @@ export function AdminProspects() {
     setLoading(true)
     setError(null)
     try {
-      // Join tenants + prospect_context + first user
+      // Pull tenants, prospect contexts, and external users (Tenants + Prospects only).
       const { data: tenants } = await supabase.from('tenants').select('id, name, client_color, created_at')
       const { data: contexts } = await supabase.from('prospect_context').select('*')
-      const { data: users } = await supabase.from('users').select('id, email, home_tenant_id, engagement_state').eq('engagement_state', 'prospect')
+      const { data: users } = await supabase
+        .from('users')
+        .select('id, email, home_tenant_id, engagement_state')
+        .in('engagement_state', ['tenant', 'prospect'])
 
       const ctxByTenant = new Map((contexts || []).map((c: any) => [c.tenant_id, c]))
       const userByTenant = new Map((users || []).map((u: any) => [u.home_tenant_id, u]))
 
-      const merged: ProspectRow[] = (tenants || [])
-        .filter((t: any) => ctxByTenant.has(t.id))   // only tenants that have prospect context (i.e. prospects, not full clients)
+      // A tenant appears in the funnel if it has at least one external user.
+      // Tenants without users are workspace shells (managed via AdminTenants).
+      const merged: FunnelRow[] = (tenants || [])
+        .filter((t: any) => userByTenant.has(t.id))
         .map((t: any) => {
           const c = ctxByTenant.get(t.id) as any
           const u = userByTenant.get(t.id) as any
@@ -43,20 +60,21 @@ export function AdminProspects() {
             tenant_id: t.id,
             tenant_name: t.name,
             client_color: t.client_color,
-            primary_contact_name: c.primary_contact_name || null,
-            primary_contact_email: c.primary_contact_email || null,
-            active_stage: c.active_stage || 1,
-            discovery_awards_count: c.discovery_awards_count || null,
+            primary_contact_name: c?.primary_contact_name || null,
+            primary_contact_email: c?.primary_contact_email || null,
+            active_stage: c?.active_stage || 1,
+            discovery_awards_count: c?.discovery_awards_count || null,
             created_at: t.created_at,
             user_id: u?.id || null,
             user_email: u?.email || null,
+            engagement_state: (u?.engagement_state as FunnelState) || 'tenant',
           }
         })
         .sort((a, b) => (b.created_at || '').localeCompare(a.created_at || ''))
 
       setRows(merged)
     } catch (e: any) {
-      setError(e?.message || 'Failed to load prospects')
+      setError(e?.message || 'Failed to load funnel')
     } finally {
       setLoading(false)
     }
@@ -64,23 +82,30 @@ export function AdminProspects() {
 
   useEffect(() => { load() }, [])
 
+  const tenantCount = rows.filter(r => r.engagement_state === 'tenant').length
+  const prospectCount = rows.filter(r => r.engagement_state === 'prospect').length
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <div>
-          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Prospects</h2>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600 }}>Funnel</h2>
           <p style={{ margin: '4px 0 0 0', fontSize: 12, color: '#666' }}>
-            Companies currently in the Sunstone reconnaissance flow.
+            External users in the Sunstone reconnaissance flow.
+            {' '}
+            <span style={{ color: '#333' }}>{tenantCount} tenant{tenantCount === 1 ? '' : 's'}</span>
+            {' · '}
+            <span style={{ color: '#333' }}>{prospectCount} prospect{prospectCount === 1 ? '' : 's'}</span>
           </p>
         </div>
         <button onClick={() => setWizardOpen(true)} style={{ background: '#1F3A52', color: 'white', border: 'none', borderRadius: 6, padding: '9px 16px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-          + Add new prospect
+          + Add new tenant
         </button>
       </div>
 
       {latestCreated && (
         <div style={{ background: '#FEF3C7', border: '1px solid #F6CE6A', borderRadius: 8, padding: 12, marginBottom: 16, fontSize: 13 }}>
-          <strong>New prospect created.</strong> Login: {latestCreated.email} · Temporary password: <span style={{ fontFamily: 'monospace', background: 'white', padding: '2px 6px', borderRadius: 4 }}>{latestCreated.password}</span>
+          <strong>New tenant created.</strong> Login: {latestCreated.email} · Temporary password: <span style={{ fontFamily: 'monospace', background: 'white', padding: '2px 6px', borderRadius: 4 }}>{latestCreated.password}</span>
           <button onClick={() => setLatestCreated(null)} style={{ marginLeft: 12, background: 'transparent', border: 'none', cursor: 'pointer', color: '#666' }}>dismiss</button>
         </div>
       )}
@@ -88,16 +113,17 @@ export function AdminProspects() {
       {error && <div style={{ background: '#FEEBEB', padding: 10, borderRadius: 6, marginBottom: 12, color: '#7A1F2A', fontSize: 13 }}>{error}</div>}
 
       {loading ? (
-        <div style={{ padding: 40, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading prospects...</div>
+        <div style={{ padding: 40, textAlign: 'center', color: '#888', fontSize: 13 }}>Loading funnel...</div>
       ) : rows.length === 0 ? (
         <div style={{ padding: 40, textAlign: 'center', color: '#888', fontSize: 13, border: '1px dashed #ddd', borderRadius: 8 }}>
-          No prospects yet. Click "Add new prospect" to create one.
+          No tenants or prospects yet. Click "Add new tenant" to create one.
         </div>
       ) : (
         <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
           <thead>
             <tr style={{ borderBottom: '1px solid #eee', textAlign: 'left' }}>
               <th style={th}>Company</th>
+              <th style={th}>State</th>
               <th style={th}>Primary contact</th>
               <th style={th}>Stage</th>
               <th style={th}>Awards</th>
@@ -117,11 +143,12 @@ export function AdminProspects() {
                     </div>
                   </div>
                 </td>
+                <td style={td}><StateBadge state={r.engagement_state} /></td>
                 <td style={td}>
                   {r.primary_contact_name || '—'}
                   {r.primary_contact_email && <div style={{ fontSize: 11, color: '#888' }}>{r.primary_contact_email}</div>}
                 </td>
-                <td style={td}><Badge>Stage {r.active_stage}</Badge></td>
+                <td style={td}><StageBadge>Stage {r.active_stage}</StageBadge></td>
                 <td style={td}>{r.discovery_awards_count ?? '—'}</td>
                 <td style={td}><span style={{ fontSize: 11, color: '#888' }}>{new Date(r.created_at).toLocaleDateString()}</span></td>
                 <td style={td}>
@@ -150,6 +177,15 @@ export function AdminProspects() {
 const th: React.CSSProperties = { padding: '8px 12px', fontWeight: 600, color: '#666', fontSize: 11, letterSpacing: '0.04em', textTransform: 'uppercase' }
 const td: React.CSSProperties = { padding: '10px 12px', verticalAlign: 'top' }
 
-function Badge({ children }: { children: React.ReactNode }) {
+function StageBadge({ children }: { children: React.ReactNode }) {
   return <span style={{ background: '#F0EBE0', color: '#8C7233', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{children}</span>
+}
+
+function StateBadge({ state }: { state: FunnelState }) {
+  const styles: Record<FunnelState, { bg: string; fg: string; label: string }> = {
+    tenant: { bg: '#E5EEF5', fg: '#1F3A52', label: 'Tenant' },
+    prospect: { bg: '#FCE9D2', fg: '#8C5223', label: 'Prospect' },
+  }
+  const s = styles[state]
+  return <span style={{ background: s.bg, color: s.fg, padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>{s.label}</span>
 }
