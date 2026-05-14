@@ -23,7 +23,7 @@ export interface User {
   home_tenant_id: string | null
   admin_tenant_scope: string[] | null  // null = unscoped, [] = none, [...] = specific
   display_preferences: DisplayPreferences
-  engagement_state: 'prospect' | 'client'   // prospect: Stages flow; client: full client tabs
+  engagement_state: 'tenant' | 'prospect' | 'client'   // see DOCTRINE.md D1. tenant: pre-Recon. prospect: Recon delivered, pre-payment. client: paid.
   narrative_preference: 'narrative' | 'plain'  // captured from Sunstone Story entry choice
   created_at: string
   last_login_at: string | null
