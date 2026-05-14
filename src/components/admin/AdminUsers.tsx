@@ -47,9 +47,10 @@ export function AdminUsers() {
         u.full_name || u.email,
         tenantName(u.home_tenant_id)
       )
-      // Navigate to the impersonated user's home view.
-      // Prospects: /stages. Clients: dashboard (root). Admins/superadmins: same dashboard.
-      if (u.engagement_state === 'prospect') {
+      // Navigate to the impersonated user's home view (DOCTRINE.md D1, D2).
+      // Tenants and Prospects use /stages (Captain's Log).
+      // Clients fall through to /. Admins/superadmins also use /.
+      if (u.engagement_state === 'tenant' || u.engagement_state === 'prospect') {
         window.location.href = '/stages'
       } else {
         window.location.href = '/'
