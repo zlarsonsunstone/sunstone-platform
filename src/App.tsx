@@ -213,11 +213,12 @@ export default function App() {
     )
   }
 
-  // Prospect auto-redirect: if user is a prospect and lands on the root or
-  // an admin-style path, route them to /stages (their home).
+  // Pre-Client auto-redirect (DOCTRINE.md D1, D2): Tenants and Prospects
+  // both use the 12-stage Captain's Log as their home. If they land on the
+  // root or an admin-style path, route them to /stages.
   // Note: admin/superadmin and clients fall through to the regular Dashboard.
-  const isProspect = currentUser.engagement_state === 'prospect' && currentUser.role === 'user'
-  if (isProspect && !isReconPath && !isStagesPath && !isPrelimReviewPath && !isAdminSubmissionsPath && !isProfileReviewPath) {
+  const isPreClient = (currentUser.engagement_state === 'tenant' || currentUser.engagement_state === 'prospect') && currentUser.role === 'user'
+  if (isPreClient && !isReconPath && !isStagesPath && !isPrelimReviewPath && !isAdminSubmissionsPath && !isProfileReviewPath) {
     window.location.replace('/stages')
     return null
   }
