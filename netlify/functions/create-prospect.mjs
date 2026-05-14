@@ -121,7 +121,10 @@ export const handler = async (event) => {
     return json(500, { error: 'Auth user creation failed: ' + e.message })
   }
 
-  // 3. Insert v2.users row linked to auth user
+  // 3. Insert v2.users row linked to auth user.
+  // Per DOCTRINE.md D1: new external users start as 'tenant' (no Recon
+  // Report delivered yet). Promotion to 'prospect' happens via explicit
+  // Admin action when Recon Report is delivered (Stage 9 completion).
   try {
     const { error: uErr } = await admin
       .schema('v2')
@@ -132,7 +135,7 @@ export const handler = async (event) => {
         full_name: pc.full_name,
         role: 'user',
         home_tenant_id: tenantId,
-        engagement_state: 'prospect',
+        engagement_state: 'tenant',
       })
     if (uErr) throw uErr
   } catch (e) {
