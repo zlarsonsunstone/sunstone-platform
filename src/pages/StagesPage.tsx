@@ -8,12 +8,15 @@
  * Each stage's content is data-driven from v2.prospect_context (per-tenant).
  * Pending/empty fields show as "Pending..." muted text.
  *
- * Prospects (engagement_state='prospect') see stages 1-10. Stages 11-12 are
- * visible but locked with an "Available after engagement" label.
+ * Tenants and Prospects (engagement_state IN ('tenant','prospect')) see stages 1-10
+ * unlocked. Stages 11-12 are visible but locked with an "Available after
+ * engagement" label.
  *
  * Clients (engagement_state='client') see all 12 stages unlocked.
  *
- * The Stage of Discovery has the "Open the Dartboard Tool" button that
+ * See DOCTRINE.md D1 (Three States) and D2 (12-Stage Captain's Log).
+ *
+ * The Stage of Discovery (Stage 6) has the "Open the Dartboard Tool" button that
  * routes to /recon (the cluster-view Dartboard Tool).
  */
 
