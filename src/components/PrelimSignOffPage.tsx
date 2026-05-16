@@ -375,7 +375,7 @@ export function PrelimSignOffPage() {
           <h1 style={h1Style}>This link is no longer active.</h1>
           <p style={introStyle}>{error}</p>
           <p style={introStyle}>
-            Please email <strong>zack@sunstoneadvisory.co</strong> and we'll send you a fresh link.
+            Please email <strong>zack@sunstoneag.com</strong> and we'll send you a fresh link.
           </p>
         </div>
       </div>
@@ -411,7 +411,7 @@ export function PrelimSignOffPage() {
 
           <p style={{ ...introStyle, marginTop: '24px', fontSize: '14px' }}>
             If something on this profile needs changing, email us at{' '}
-            <strong>zack@sunstoneadvisory.co</strong> and we'll re-open it.
+            <strong>zack@sunstoneag.com</strong> and we'll re-open it.
           </p>
         </div>
       </div>
